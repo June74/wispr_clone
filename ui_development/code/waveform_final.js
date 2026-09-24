@@ -1,5 +1,5 @@
 /* Frequency Lanes on Quiet Pillars — the dictation card's waveform.
-   Spec: ui_development/audio_waveform_component.md (reference source: ui_development/pillars_codex.js, waveforms_codex.js)
+   Spec: the approved "audio waveform component" document (Frequency Lanes on Quiet Pillars), kept in git history.
 
    At rest: 29 still pillars (2px tall). While listening, loudness sets height and the
    frequency spectrum decides WHICH pillars rise (low → left, high → right), with a small

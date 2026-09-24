@@ -1,17 +1,19 @@
-# Wispr Clone — UI demo
+# Wispr Clone — UI demo (final)
+
+Final snapshot: `index_final.html`, `styles_final.css`, `app_final.js`, `waveform_final.js`, `verify_final.mjs`.
+Page screenshots: `../screenshots/`. This folder is self-contained: open `index_final.html` (fonts in `assets/`).
 
 A static, dependency-free prototype for design review. All data is mock data; nothing is
 recorded, sent or stored (except your theme choice in `localStorage`).
 
-**Open:** double-click `index.html` (or `file:///…/ui_development/demo/index.html`).
-Designed for desktop windows ≥ 1100 × 700.
+**Open:** double-click `index_final.html` in this folder. Designed for desktop windows ≥ 1100 × 700.
 
 Deep links for review: `?page=home|general|recording|models|cleanup|dictionary|privacy|history`, `&theme=light|dark`.
 The design-system sheet is review-only and has no nav entry: `?page=styleguide`.
 
 ## What changed in v2
-- **Colour:** muted plum primary on warm neutral surfaces, adopted from Astra's concept (`../DESIGN_codex.md`).
-- **Font:** Geist variable, copied from `../assets_codex/` into `assets/`, with its OFL licence.
+- **Colour:** muted plum primary on warm neutral surfaces, adopted from Astra's concept.
+- **Font:** Geist variable, bundled in `assets/`, with its OFL licence.
 - **Dictation card:** the gradient hero became a quiet plum "stage": waveform, caption, a primary *Start dictation* button and a shortcut hint.
 - **Recording, Models and Text cleanup** were rebuilt to match the reference screenshots. The rail + settings-column layout is unchanged.
 
@@ -21,7 +23,7 @@ The design-system sheet is review-only and has no nav entry: `?page=styleguide`.
 |---|---|---|
 | Dictate | **Start dictation**, or **Ctrl + Shift + Space** | idle → listening (red ping, live waveform, timer, floating pill) → *Polishing your words* (spinner, disabled button) → success toast + new item |
 | Dictate | **Esc** or *Discard* while listening | Cancel path |
-| Dictate | Start dictation and speak | **Frequency Lanes waveform** (spec: `../audio_waveform_component.md`): louder → taller pillars; low sounds lift the left, high sounds the right; silence settles to the still Quiet Pillars. Your browser asks for the microphone; if declined/unavailable it plays a labelled synthetic phrase ("simulated input") |
+| Dictate | Start dictation and speak | **Frequency Lanes waveform** (spec: the approved *audio waveform component* document, recorded in git history): louder → taller pillars; low sounds lift the left, high sounds the right; silence settles to the still Quiet Pillars. Your browser asks for the microphone; if declined/unavailable it plays a labelled synthetic phrase ("simulated input") |
 | Sidebar | Panel button / **Ctrl + B**; click empty strip space or logo | Collapses to icon strip with hover labels; reopens; persists |
 | Sidebar | Quick search / **Ctrl + K** | Page switcher with keyboard navigation |
 | Recording | Test microphone | Segmented level meter → "Sounds clear" (green); AirPods → "A little quiet" (yellow + shake) |
@@ -36,7 +38,7 @@ The design-system sheet is review-only and has no nav entry: `?page=styleguide`.
 | Dictionary / Privacy | Add term / Delete all… | Modal over a blurred plum scrim |
 | `?page=styleguide` | — | Ramp, type scale, every button state, micro-animations |
 
-**Automated check:** `node demo/verify.mjs` (from `ui_development/`) drives the flows above in headless Chromium, asserts the results and writes `screenshots/`. It reuses the Playwright install already in `../.tools_codex`.
+**Automated check:** `verify_final.mjs` drives the flows above in headless Chromium and asserts the results. It needs Playwright, which is **not** included (the previous local install was removed); the UI itself does not need it. To use it: install Playwright (`npm i -D playwright && npx playwright install chromium`) and adjust the import at the top of the script.
 
 ## Design decisions
 
@@ -128,7 +130,7 @@ Wispr Flow (floating pill, "hold to talk" hero), OpenWhispr (model/cleanup split
 badges), LM Studio (rail + contextual column), Linear & Raycast settings (row anatomy, ghost
 actions), and common Mobbin/Dribbble settings patterns (grouped cards, caption headers).
 
-## Waveform (`waveform.js`)
+## Waveform (`waveform_final.js`)
 - Implements the selected spec exactly: 29 pillars, 3 px round strokes, 9 px pitch, 2 px rest height, 340×72 canvas
   (680×144 backing), opacity `0.30 + 0.55·sin(πi/28)`, FFT 2048, 32 log bands 80 Hz–6 kHz, 45/150 ms level and
   45/110 ms pillar attack/release, ~30 fps, and ~4 fps stepped updates under reduced motion.

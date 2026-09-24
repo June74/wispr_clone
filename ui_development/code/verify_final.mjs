@@ -1,11 +1,16 @@
 // Drives the demo in headless Chromium, asserts key flows, saves screenshots.
-// Reuses the Playwright + browser already installed in ../.tools_codex (no new install).
-// Run: node demo/verify.mjs   (from ui_development/)
+// Requires Playwright (not bundled). The earlier local install at ui_development/.tools_codex was removed;
+// install Playwright and point the import below at it before running: node code/verify_final.mjs
+// Test captures go to a temp folder; the curated images live in ../screenshots.
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import os from 'node:os';
+import { mkdirSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
-const tools = path.join(here, '../.tools_codex');
+const tools = path.join(here, '../../.tools_codex');
+const shotsDir = path.join(os.tmpdir(), 'wispr-final-verify');
+mkdirSync(shotsDir, { recursive: true });
 process.env.PLAYWRIGHT_BROWSERS_PATH = path.join(tools, 'browsers');
 const { chromium } = await import(pathToFileURL(path.join(tools, 'node_modules/playwright/index.mjs')).href);
 const browser = await chromium.launch({ headless: true, env: { ...process.env, LD_LIBRARY_PATH: path.join(tools, 'libs/usr/lib/x86_64-linux-gnu') } });
@@ -13,8 +18,8 @@ const page = await (await browser.newContext({ viewport: { width: 1360, height: 
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-const url = (q) => pathToFileURL(path.join(here, 'index.html')).href + '?' + q;
-const shot = async (name, full = false) => { await page.waitForTimeout(450); await page.screenshot({ path: path.join(here, 'screenshots', `${name}.png`), fullPage: full }); };
+const url = (q) => pathToFileURL(path.join(here, 'index_final.html')).href + '?' + q;
+const shot = async (name, full = false) => { await page.waitForTimeout(450); await page.screenshot({ path: path.join(shotsDir, `${name}.png`), fullPage: full }); };
 const pass = (m) => console.log('PASS', m);
 
 try {
@@ -252,7 +257,7 @@ try {
     let peak = 0;
     for (let i = 0; i < 20; i++) { await mp.waitForTimeout(100); peak = Math.max(peak, ...(await mp.evaluate(() => window.__wave.state().heights))); }
     assert.ok(peak > 4, `live mic moves the pillars (peak ${peak.toFixed(1)})`);
-    await mp.screenshot({ path: path.join(here, 'screenshots', 'waveform-mic-dark.png') });
+    await mp.screenshot({ path: path.join(shotsDir, 'waveform-mic-dark.png') });
     await mp.click('#rec-btn');
     await mp.waitForFunction(() => window.__wave.state().mode === 'idle' && window.__wave.state().heights.every((h) => h === 2), null, { timeout: 3000 });
     await micBrowser.close();
