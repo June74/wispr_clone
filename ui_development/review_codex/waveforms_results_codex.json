@@ -1,0 +1,19 @@
+{
+  "date": "2026-09-23T22:10:55.267Z",
+  "checks": [
+    "Ten distinct defaults, each matching zero-input animation state",
+    "Every design reacts to input; all default previews remain still",
+    "Default and animated cards keep identical component geometry",
+    "Light/dark comparison sheets and full component captured",
+    "Timed sample animates only talking previews and stops cleanly",
+    "Real microphone-analysis code reacts to a synthetic capture fixture and settles in silence; Escape releases input",
+    "Reduced-motion mode and explicit sample control",
+    "Overview and component layout fit 1024 px desktop",
+    "Denied microphone permission offers a working sample fallback",
+    "Canceling a pending microphone request releases the eventual stream",
+    "Exported a silent overview video with speech-shaped motion and pauses",
+    "No page/console errors or failed assets"
+  ],
+  "errors": [],
+  "limits": "Live path tested using Chromium synthetic microphone capture, not a physical microphone or speech detector."
+}

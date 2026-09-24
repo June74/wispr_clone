@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wispr · Quiet Pillars · 5 motion studies</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles_codex.css">
+  <link rel="stylesheet" href="waveforms_codex.css">
+  <link rel="stylesheet" href="pillars_codex.css">
+  <script src="pillars_codex.js" defer></script>
+  <script src="waveforms_codex.js" defer></script>
+</head>
+<body class="waveform-lab pillars-lab">
+  <header class="lab-header">
+    <div><span class="eyebrow">WISPR / QUIET PILLARS · MOTION STUDIES</span><h1>One familiar shape. Five ways to move.</h1><p>The same Quiet Pillars at rest. Loudness changes their size; sound detail changes which pillars move.</p></div>
+    <button class="btn" id="theme-toggle" aria-label="Toggle color theme">Dark mode</button>
+  </header>
+  <div class="lab-controls">
+    <div class="row"><button class="btn primary" id="use-mic">Use microphone</button><button class="btn" id="play-sample">Restart sample</button><button class="btn" id="stop-input">Stop input</button></div>
+    <div class="row"><label class="sensitivity" for="sensitivity">Mic sensitivity <input id="sensitivity" type="range" min="0.5" max="3" value="1.5" step="0.1"><output id="sensitivity-value">1.5×</output></label><button class="btn" id="overview" aria-pressed="false">Waveform overview</button></div>
+  </div>
+  <div class="input-info"><div class="row"><span class="input-dot" aria-hidden="true"></span><span id="input-status" role="status">Sample preview · synthetic speech-shaped input</span></div><span id="signal-status">Quiet</span><span class="level-track" aria-hidden="true"><i id="input-level"></i></span></div>
+  <p class="privacy-note">Sample playback is silent and includes pauses. “Use microphone” asks for browser permission; live audio is analyzed locally, never saved or sent. Stop input or press Esc to release it.</p>
+  <div class="sample-selector"><label for="sample-pattern">Sample input</label><select id="sample-pattern"><option value="phrasing">Natural phrasing</option><option value="volume">Quiet → loud</option><option value="pitch">Low → high frequencies</option><option value="silence">Silence</option></select><span id="sample-description">Synthetic input · no audio playback. The same signal drives every sample.</span></div>
+  <div id="input-error" class="notice error" role="alert" hidden></div>
+  <nav id="design-index" aria-label="Waveform designs"></nav>
+  <main id="comparisons"></main>
+  <footer class="lab-footer"><span>CODEX · QUIET PILLARS / MOTION 01–05</span><span id="motion-note">Fast response, soft release. Silence returns to stillness.</span></footer>
+</body>
+</html>
