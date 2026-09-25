@@ -171,3 +171,14 @@ Impact fragment `tests/_attribution/impact/httpx.toml`: `dependency = "httpx"`, 
 `modules = ["cleanup.lmstudio_cleanup"]`, features cleanup after dictation / retry cleanup / model
 readiness, `error_codes = ["cleanup_unavailable", "cleanup_timeout"]`, action = check the httpx pin
 in uv.lock.
+
+## Coordinator decisions after RED review
+
+1. Word tokens (rules 2 and 7): `re.findall(r"[\w']+", text)` lowercased (Unicode `\w`, apostrophes
+   kept inside words, all other punctuation ignored). `don't` is one token and counts as a negation.
+2. Sentence start (rule 6): the first token of the text, or the first token after `.`, `!` or `?`
+   followed by whitespace. Capitalized tokens elsewhere are names.
+3. Overlap: a token may trigger several rules (e.g. `config.yaml` is a path and an identifier);
+   every failing rule is listed.
+4. Counts: protected tokens (numbers, paths, identifiers, names) are multisets like negations —
+   the cleaned text must contain each at least as many times as the original.

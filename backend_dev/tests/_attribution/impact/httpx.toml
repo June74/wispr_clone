@@ -1,0 +1,6 @@
+dependency = "httpx"
+kind = "library"
+modules = ["cleanup.lmstudio_cleanup"]
+features = ["cleanup after dictation", "retry cleanup", "model readiness"]
+error_codes = ["cleanup_unavailable", "cleanup_timeout"]
+action = "Check the httpx pin in uv.lock"
