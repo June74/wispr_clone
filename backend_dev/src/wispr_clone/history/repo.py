@@ -18,9 +18,9 @@ from wispr_clone.contracts.run import (
     RunStatus,
 )
 from wispr_clone.history.retention import (
+    MAX_RUNS,
     expires_at,
     is_expired,
-    runs_to_evict,
 )
 from wispr_clone.storage import Connection, Database, IntegrityError
 
@@ -155,9 +155,14 @@ class HistoryRepo:
                 expiry_groups = [("expired", tuple(expired))] if expired else []
                 return _run(existing), expiry_groups, expired, [], True
             rows = conn.execute(
-                "SELECT id, created_at FROM runs ORDER BY created_at, id"
+                "SELECT r.id, r.created_at FROM runs r WHERE NOT EXISTS "
+                "(SELECT 1 FROM insertion_attempts a "
+                "WHERE a.run_id=r.id AND a.outcome=?) "
+                "ORDER BY r.created_at, r.id",
+                (AttemptOutcome.IN_FLIGHT.value,),
             ).fetchall()
-            count = runs_to_evict([float(row[1]) for row in rows])
+            live_count = int(conn.execute("SELECT count(*) FROM runs").fetchone()[0])
+            count = min(len(rows), max(0, live_count + 1 - MAX_RUNS))
             evicted = [str(row[0]) for row in rows[:count]]
             _delete_rows(conn, evicted)
             conn.execute(
@@ -242,6 +247,22 @@ class HistoryRepo:
                 values[key] = cast(RunStatus, values[key]).value
             if key == "cleanup_status" and isinstance(values.get(key), CleanupStatus):
                 values[key] = cast(CleanupStatus, values[key]).value
+        for key, enum_type in (
+            ("status", RunStatus),
+            ("cleanup_status", CleanupStatus),
+        ):
+            if key in values:
+                try:
+                    values[key] = enum_type(cast(str, values[key])).value
+                except (TypeError, ValueError):
+                    raise _error(ErrorCode.VALIDATION, key) from None
+        if "output_selection" in values and values["output_selection"] not in (
+            None,
+            "original",
+            "adjusted",
+            "cleaned",
+        ):
+            raise _error(ErrorCode.VALIDATION, "output_selection")
         if "destination" in values:
             values["destination"] = (
                 _json(values["destination"])
@@ -296,7 +317,10 @@ class HistoryRepo:
             raise _error(ErrorCode.RUN_EXPIRED, "run")
         target_json = _json(target) if target is not None else None
 
-        def claim(conn: Connection) -> ClaimResult:
+        def claim(conn: Connection) -> tuple[ClaimResult | None, tuple[str, ...]]:
+            expired_inside = tuple(_expire(conn, self._clock()))
+            if run_id in expired_inside:
+                return None, expired_inside
             run = conn.execute("SELECT id FROM runs WHERE id=?", (run_id,)).fetchone()
             if run is None:
                 raise _error(ErrorCode.RUN_NOT_FOUND, "run")
@@ -306,7 +330,7 @@ class HistoryRepo:
             if existing is not None:
                 if existing[1] != run_id:
                     raise _error(ErrorCode.VALIDATION, "request_id")
-                return ClaimResult(_attempt(existing), True)
+                return ClaimResult(_attempt(existing), True), expired_inside
             if kind not in ("automatic", "explicit"):
                 raise _error(ErrorCode.VALIDATION, "kind")
             seq = int(
@@ -340,9 +364,16 @@ class HistoryRepo:
                 "SELECT * FROM insertion_attempts WHERE attempt_id=?", (attempt_id,)
             ).fetchone()
             assert row is not None
-            return ClaimResult(_attempt(row), False)
+            return ClaimResult(_attempt(row), False), expired_inside
 
-        result = await self._db.write(claim)
+        result, expired_inside = await self._db.write(claim)
+        if expired_inside:
+            self._publish([("expired", expired_inside)])
+            await self._remove_paths(await self._pending_paths_for_ids(expired_inside))
+            self._defer_evictions(expired_inside)
+        if result is None:
+            await self._refresh_next_expiry()
+            raise _error(ErrorCode.RUN_EXPIRED, "run")
         await self._refresh_next_expiry()
         return result
 
@@ -368,7 +399,9 @@ class HistoryRepo:
             assert updated is not None
             return _attempt(updated)
 
-        return await self._db.write(resolve)
+        result = await self._db.write(resolve)
+        await self._refresh_next_expiry()
+        return result
 
     async def attempts(self, run_id: str) -> tuple[AttemptRecord, ...]:
         rows = await self._db.read(
@@ -429,11 +462,22 @@ class HistoryRepo:
                 if requested
                 else ()
             )
+            if requested and not found and len(requested) == 1:
+                raise _error(ErrorCode.RUN_NOT_FOUND, "run")
             paths = _delete_rows(conn, list(found))
             return found, tuple(paths)
 
         ids, paths = await self._db.write(delete)
-        pending = await self._remove_paths(paths)
+        await self._remove_paths(paths)
+        pending = await self._db.read(
+            lambda conn: sum(
+                conn.execute(
+                    "SELECT 1 FROM pending_deletions WHERE path=?", (path,)
+                ).fetchone()
+                is not None
+                for path in paths
+            )
+        )
         if ids:
             self._publish([("deleted", ids)])
         await self._refresh_next_expiry()
@@ -601,7 +645,12 @@ class HistoryRepo:
 
     async def _refresh_next_expiry(self) -> None:
         value: object = await self._db.read(
-            lambda conn: conn.execute("SELECT MIN(created_at) FROM runs").fetchone()[0]
+            lambda conn: conn.execute(
+                "SELECT MIN(r.created_at) FROM runs r WHERE NOT EXISTS "
+                "(SELECT 1 FROM insertion_attempts a "
+                "WHERE a.run_id=r.id AND a.outcome=?)",
+                (AttemptOutcome.IN_FLIGHT.value,),
+            ).fetchone()[0]
         )
         self._next_expiry = None if value is None else expires_at(float(str(value)))
 
@@ -610,7 +659,18 @@ def _expire(conn: Connection, now: float) -> list[str]:
     rows = conn.execute(
         "SELECT id, audio_path, created_at FROM runs ORDER BY created_at, id"
     ).fetchall()
-    expired = [str(row[0]) for row in rows if is_expired(float(row[2]), now)]
+    protected = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT DISTINCT run_id FROM insertion_attempts WHERE outcome=?",
+            (AttemptOutcome.IN_FLIGHT.value,),
+        ).fetchall()
+    }
+    expired = [
+        str(row[0])
+        for row in rows
+        if str(row[0]) not in protected and is_expired(float(row[2]), now)
+    ]
     _delete_rows(conn, expired)
     return expired
 
@@ -673,19 +733,25 @@ def _run(row: object) -> RunRecord:
 
 def _attempt(row: object) -> AttemptRecord:
     data: tuple[Any, ...] = tuple(row)  # type: ignore[arg-type]
-    target = _decode(data[4], nullable=True)
-    if target is not None and not isinstance(target, dict):
-        raise WisprError(ErrorCode.STORAGE_ERROR, "history", "stored attempt")
-    return AttemptRecord(
-        str(data[0]),
-        str(data[1]),
-        str(data[2]),
-        str(data[3]),
-        target,
-        float(data[5]),
-        _optional_float(data[6]),
-        AttemptOutcome(data[7]),
-    )
+    ident = str(data[0]) if data else "unknown"
+    try:
+        target = _decode(data[4], nullable=True)
+        if target is not None and not isinstance(target, dict):
+            raise ValueError
+        return AttemptRecord(
+            ident,
+            str(data[1]),
+            str(data[2]),
+            str(data[3]),
+            cast(dict[str, object] | None, target),
+            float(data[5]),
+            _optional_float(data[6]),
+            AttemptOutcome(data[7]),
+        )
+    except (ValueError, TypeError, IndexError, json.JSONDecodeError):
+        raise WisprError(
+            ErrorCode.STORAGE_ERROR, "history", f"stored attempt {ident}"
+        ) from None
 
 
 def _decode(value: object, *, nullable: bool) -> object:
