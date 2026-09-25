@@ -142,3 +142,11 @@ not a wispr_clone code fix.
 `docs/verification/ops-local-models.md` (Sol boundary): date, revision, OS, GPU driver, LM Studio
 model list (ids + state), free VRAM before/after, every tier G result with timings, and every skip
 with its reason. No transcript text.
+
+## Coordinator decisions during the tier G run
+
+1. The coordinator ran tier G (sandboxed agents cannot reach the GPU or write the Windows venv) and
+   wrote `docs/verification/ops-local-models.md` from the real output.
+2. P-TCPP-002/003 and T-STT-A01 deferred: 2.4 GB free VRAM with the user's desktop apps and LM
+   Studio running; loading Voxtral (+≈2.1 GB) would leave ≈0.3 GB. They run when VRAM allows or the
+   user asks. The PR does not claim them.
