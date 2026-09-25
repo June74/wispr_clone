@@ -27,6 +27,18 @@ class ImportPlan:
     skipped_duplicates: tuple[int, ...]
 
 
+class _JSONObject(dict[str, object]):
+    """JSON object retaining whether the source repeated any keys."""
+
+    def __init__(self, pairs: list[tuple[str, object]]) -> None:
+        super().__init__()
+        self.has_duplicates = False
+        for key, value in pairs:
+            if key in self:
+                self.has_duplicates = True
+            self[key] = value
+
+
 def _error(why: str) -> WisprError:
     return WisprError(ErrorCode.VALIDATION, "dictionary.import", why)
 
@@ -45,20 +57,31 @@ def export_dictionary(entries: Sequence[DictionaryEntry]) -> str:
             for item in entries
         ],
     }
-    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    has_surrogate = any(
+        any(0xD800 <= ord(char) <= 0xDFFF for char in value)
+        for item in entries
+        for value in (item.spelling, item.note, *item.aliases)
+    )
+    return json.dumps(payload, ensure_ascii=has_surrogate, indent=2) + "\n"
 
 
 def parse_import(text: str, existing: Sequence[DictionaryEntry]) -> ImportPlan:
     """Validate an entire import document and return its duplicate-filtered plan."""
-    if len(text.encode("utf-8")) > MAX_IMPORT_BYTES:
+    try:
+        encoded_size = len(text.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise _error("invalid json") from None
+    if encoded_size > MAX_IMPORT_BYTES:
         raise _error("too large")
     try:
-        payload = json.loads(text)
+        payload = json.loads(text, object_pairs_hook=_JSONObject)
     except (json.JSONDecodeError, UnicodeError):
         raise _error("invalid json") from None
     if (
         not isinstance(payload, dict)
+        or getattr(payload, "has_duplicates", False)
         or payload.get("format") != EXPORT_FORMAT
+        or type(payload.get("version")) is not int
         or payload.get("version") != EXPORT_VERSION
         or "entries" not in payload
         or not isinstance(payload["entries"], list)
@@ -72,6 +95,7 @@ def parse_import(text: str, existing: Sequence[DictionaryEntry]) -> ImportPlan:
     for index, raw in enumerate(raw_entries):
         if (
             not isinstance(raw, dict)
+            or getattr(raw, "has_duplicates", False)
             or set(raw) - {"spelling", "aliases", "note"}
             or "spelling" not in raw
             or not isinstance(raw["spelling"], str)

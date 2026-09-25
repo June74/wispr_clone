@@ -32,6 +32,8 @@ def validate_entries(entries: Sequence[DictionaryEntry]) -> None:
     seen_spellings: dict[str, int] = {}
     seen_terms: dict[str, int] = {}
     for index, entry in enumerate(entries):
+        if not isinstance(entry, DictionaryEntry):
+            raise _validation(f"entry {index}: spelling")
         spelling = entry.spelling.strip()
         if not spelling or len(entry.spelling) > 100:
             raise _validation(f"entry {index}: spelling")
@@ -77,29 +79,45 @@ def _after_ok(text: str, index: int) -> bool:
     )
 
 
-def _normalized_with_spans(text: str) -> tuple[str, list[int], list[int]]:
+def _normalized_with_spans(
+    text: str,
+) -> tuple[str, list[int], list[int], set[int], set[int]]:
     chars: list[str] = []
     starts: list[int] = []
     ends: list[int] = []
+    cluster_starts: set[int] = set()
+    cluster_ends: set[int] = set()
     pending_space: tuple[int, int] | None = None
-    for source_index, source_char in enumerate(text):
+    source_index = 0
+    while source_index < len(text):
+        source_char = text[source_index]
         if source_char.isspace():
             if chars and pending_space is None:
                 pending_space = (source_index, source_index + 1)
             elif pending_space is not None:
                 pending_space = (pending_space[0], source_index + 1)
+            source_index += 1
             continue
         if pending_space is not None:
             chars.append(" ")
             starts.append(pending_space[0])
             ends.append(pending_space[1])
+            cluster_starts.add(len(chars) - 1)
+            cluster_ends.add(len(chars))
             pending_space = None
-        folded = unicodedata.normalize("NFKC", source_char).casefold()
+        cluster_end = source_index + 1
+        while cluster_end < len(text) and unicodedata.combining(text[cluster_end]) != 0:
+            cluster_end += 1
+        cluster_starts.add(len(chars))
+        cluster = text[source_index:cluster_end]
+        folded = unicodedata.normalize("NFKC", cluster).casefold()
         for char in folded:
             chars.append(char)
             starts.append(source_index)
-            ends.append(source_index + 1)
-    return "".join(chars), starts, ends
+            ends.append(cluster_end)
+        cluster_ends.add(len(chars))
+        source_index = cluster_end
+    return "".join(chars), starts, ends, cluster_starts, cluster_ends
 
 
 @dataclass(slots=True)
@@ -124,13 +142,17 @@ def apply_dictionary(text: str, entries: Sequence[DictionaryEntry]) -> str:
                 node = node.children.setdefault(char, _TrieNode())
             node.replacement = entry.spelling
 
-    folded, starts, ends = _normalized_with_spans(text)
+    folded, starts, ends, cluster_starts, cluster_ends = _normalized_with_spans(text)
     replacements: list[tuple[int, int, str]] = []
     source_cursor = 0
     folded_index = 0
     while folded_index < len(folded):
         source_start = starts[folded_index]
-        if source_start < source_cursor or not _before_ok(text, source_start):
+        if (
+            folded_index not in cluster_starts
+            or source_start < source_cursor
+            or not _before_ok(text, source_start)
+        ):
             folded_index += 1
             continue
         node = trie
@@ -142,7 +164,7 @@ def apply_dictionary(text: str, entries: Sequence[DictionaryEntry]) -> str:
             replacement = node.replacement
             if replacement is not None:
                 source_end = ends[cursor - 1]
-                if _after_ok(text, source_end):
+                if cursor in cluster_ends and _after_ok(text, source_end):
                     candidate = (source_end - source_start, replacement, source_end)
                     if best is None or candidate[0] > best[0]:
                         best = candidate
