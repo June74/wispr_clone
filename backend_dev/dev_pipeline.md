@@ -312,7 +312,7 @@ dependency = "transcribe-cpp"  # kind: library (in-process, CUDA) running Voxtra
 kind = "library"
 modules = ["stt.voxtral_transcribe_cpp", "pipeline.run_controller (via stt.base)", "application.model_service (health)"]
 features = ["live dictation", "retry_stt from saved WAV", "Models page: test / readiness"]
-error_codes = ["STT_UNAVAILABLE", "STT_MODEL_LOAD_FAILED", "STT_TIMEOUT"]
+error_codes = ["stt_unavailable", "model_load_failed", "stt_timeout"]   # real ErrorCode values
 action = "Check the transcribe-cpp wheel pin in uv.lock, the GGUF SHA-256 (scripts/check_local_models.py) and free VRAM; not a wispr_clone code fix"
 ```
 
@@ -361,7 +361,7 @@ Third-party:
   our code:   conformance suite on FakeCleanup PASSED; cleanup.lmstudio_cleanup follows the documented contract
   affects:    cleanup.lmstudio_cleanup -> pipeline.run_controller -> application.model_service
   features:   cleanup after dictation, retry cleanup, Models page test button
-  user sees:  run waits in awaiting_cleanup_choice (original kept), ErrorCode CLEANUP_UNAVAILABLE
+  user sees:  run waits in awaiting_cleanup_choice (original kept), ErrorCode cleanup_unavailable
   action:     load the model in LM Studio or check its idle-unload setting; not a wispr_clone code fix
 ```
 
