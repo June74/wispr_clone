@@ -150,3 +150,10 @@ with its reason. No transcript text.
 2. P-TCPP-002/003 and T-STT-A01 deferred: 2.4 GB free VRAM with the user's desktop apps and LM
    Studio running; loading Voxtral (+≈2.1 GB) would leave ≈0.3 GB. They run when VRAM allows or the
    user asks. The PR does not claim them.
+
+## Coordinator decisions after verification
+
+3. `check_lmstudio` never follows redirects (an opener without the redirect handler); a 3xx is
+   reported as status `"error"` with detail `"redirect"`, `ok=False`, and no second request.
+4. HTTP ≥ 400 or an unreadable/non-JSON body → status `"error"` (detail `"http <code>"` or
+   `"bad response"`), `ok=False`. `"not_running"` stays reserved for connection refused / timeout.

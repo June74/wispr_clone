@@ -9,9 +9,11 @@ import io
 import json
 import subprocess
 import sys
+from email.message import Message
 from pathlib import Path
-from urllib.error import URLError
-from urllib.request import Request
+from urllib.error import HTTPError, URLError
+from urllib.request import BaseHandler, ProxyHandler, Request, build_opener
+from urllib.response import addinfourl
 
 import pytest
 
@@ -124,6 +126,59 @@ def test_T_OPS_003_lmstudio_get_only_and_loaded_state(checker):
         assert request.get_method() == "GET"
         assert request.full_url == "http://127.0.0.1:1234/api/v0/models"
         assert timeout == 3.0
+
+
+@pytest.mark.unit
+@pytest.mark.invariant
+def test_T_OPS_003_lmstudio_redirect_never_contacts_another_host(checker):
+    requests = []
+
+    class FakeTransport(BaseHandler):
+        handler_order = 100
+
+        def http_open(self, request):
+            requests.append(request.full_url)
+            if request.full_url == "http://127.0.0.1:1234/api/v0/models":
+                headers = Message()
+                headers["Location"] = "http://192.0.2.44/models"
+                response = addinfourl(
+                    io.BytesIO(b""),
+                    headers,
+                    request.full_url,
+                    302,
+                )
+                response.msg = "Found"
+                return response
+            response = addinfourl(
+                io.BytesIO(
+                    json.dumps(
+                        {"data": [{"id": checker.PINNED_MODEL, "state": "loaded"}]}
+                    ).encode()
+                ),
+                Message(),
+                request.full_url,
+                200,
+            )
+            response.msg = "OK"
+            return response
+
+    opener = build_opener(ProxyHandler({}), FakeTransport())
+    result = checker.check_lmstudio(opener=opener.open)
+
+    assert requests == ["http://127.0.0.1:1234/api/v0/models"]
+    assert result.ok is False
+
+
+@pytest.mark.unit
+def test_T_OPS_003_lmstudio_http_500_is_invalid_response(checker):
+    def server_error(request, timeout):
+        raise HTTPError(
+            request.full_url, 500, "synthetic server error", Message(), None
+        )
+
+    result = checker.check_lmstudio(opener=server_error)
+
+    assert (result.status, result.ok) == ("invalid_response", False)
 
 
 @pytest.mark.unit
