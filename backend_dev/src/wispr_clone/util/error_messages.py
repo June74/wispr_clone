@@ -14,6 +14,9 @@ _MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.DUPLICATE_REQUEST: "This action was already received.",
     ErrorCode.DEVICE_LEASE_CONFLICT: "The microphone is busy with another task.",
     ErrorCode.MICROPHONE_UNAVAILABLE: "The selected microphone is unavailable.",
+    ErrorCode.MICROPHONE_PERMISSION_DENIED: (
+        "Enable microphone access for Wispr Clone in Windows privacy settings."
+    ),
     ErrorCode.MICROPHONE_DISCONNECTED: "The microphone was disconnected.",
     ErrorCode.AUDIO_QUEUE_OVERFLOW: "Audio could not be processed quickly enough.",
     ErrorCode.NO_SPEECH_DETECTED: "No speech was detected in this recording.",
@@ -47,6 +50,7 @@ _ACTIONS: dict[ErrorCode, tuple[str, ...]] = {
     ErrorCode.DUPLICATE_REQUEST: ("refresh_state",),
     ErrorCode.DEVICE_LEASE_CONFLICT: ("wait",),
     ErrorCode.MICROPHONE_UNAVAILABLE: ("choose_mic", "open_settings"),
+    ErrorCode.MICROPHONE_PERMISSION_DENIED: ("open_settings", "choose_mic"),
     ErrorCode.MICROPHONE_DISCONNECTED: ("choose_mic", "retry"),
     ErrorCode.AUDIO_QUEUE_OVERFLOW: ("retry", "dismiss"),
     ErrorCode.NO_SPEECH_DETECTED: ("retry_stt", "dismiss"),

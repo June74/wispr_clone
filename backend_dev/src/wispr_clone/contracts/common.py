@@ -19,6 +19,7 @@ class ErrorCode(StrEnum):
     DUPLICATE_REQUEST = "duplicate_request"
     DEVICE_LEASE_CONFLICT = "device_lease_conflict"
     MICROPHONE_UNAVAILABLE = "microphone_unavailable"
+    MICROPHONE_PERMISSION_DENIED = "microphone_permission_denied"
     MICROPHONE_DISCONNECTED = "microphone_disconnected"
     AUDIO_QUEUE_OVERFLOW = "audio_queue_overflow"
     NO_SPEECH_DETECTED = "no_speech_detected"
@@ -71,7 +72,8 @@ class ThirdPartyError(Exception):
         self.operation = operation
         self.detail = detail
         self.error_code = error_code
-        super().__init__(f"{dependency} {operation} failed: {detail}")
+        # Exception text can reach logs; keep caller-supplied detail structured only.
+        super().__init__(f"{dependency} {operation} failed ({error_code.value})")
 
 
 class WisprError(Exception):
@@ -81,4 +83,5 @@ class WisprError(Exception):
         self.error_code = error_code
         self.where = where
         self.why = why
-        super().__init__(f"{error_code.value} at {where}: {why}")
+        # `why` may contain user content, so do not put it in exception text.
+        super().__init__(f"{error_code.value} at {where}")
