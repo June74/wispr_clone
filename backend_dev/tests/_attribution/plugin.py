@@ -150,6 +150,23 @@ def _probe_status(config: pytest.Config, dist: str) -> tuple[list[str], bool, bo
     return passed, failed, skipped
 
 
+def _matching_fake_passed(item: pytest.Item) -> bool:
+    """Whether the equivalent fake passed setup, call and teardown."""
+    nodeid = item.nodeid.replace("[real]", "[fake]")
+    if nodeid == item.nodeid:
+        return False
+    for candidate in getattr(item.config, "_attribution_items", []):
+        if candidate.nodeid != nodeid:
+            continue
+        reports = getattr(candidate, "_attribution_reports", [])
+        return {report.when for report in reports} == {
+            "setup",
+            "call",
+            "teardown",
+        } and all(report.passed for report in reports)
+    return False
+
+
 def _invariant(item: pytest.Item) -> str | None:
     marker = item.get_closest_marker("invariant")
     return str(marker.args[0]) if marker and marker.args else None
@@ -166,6 +183,21 @@ def _classify(
         if call.excinfo is not None
         else _frames(report)
     )
+    if report.when != "call":
+        row: dict[str, Any] = {
+            "nodeid": item.nodeid,
+            "dist": None,
+            "version": None,
+            "where": None,
+            "probes": [],
+            "verdict": "OURS",
+            "category": "logic",
+            "phase": report.when,
+        }
+        if frames:
+            path, line, function = frames[-1]
+            row["where"] = f"{path}:{line} in {function}"
+        return row
     # pytest's traceback includes its own runner and hook frames. Attribution is
     # based only on the test frame and calls made below it.
     test_index = next(
@@ -252,6 +284,9 @@ def _classify(
             base.update(
                 verdict="NOT OURS", category=_impact(dist).get("kind", "library")
             )
+        elif passed and _matching_fake_passed(item):
+            base.update(verdict="OURS", category="fake-drift")
+            base["fake"] = "tests/fakes/"
         elif passed:
             base.update(verdict="OURS", category="adapter-misuse")
         else:
@@ -333,6 +368,8 @@ def pytest_terminal_summary(
         terminalreporter.write_line(f"  reproduce: uv run pytest {path} -k {name}")
         if row.get("where"):
             terminalreporter.write_line(f"  where: {row['where']}")
+        if row.get("fake"):
+            terminalreporter.write_line(f"  fake: {row['fake']}")
         if row.get("invariant"):
             terminalreporter.write_line(f"  invariant: {row['invariant']}")
         if row.get("phase"):
