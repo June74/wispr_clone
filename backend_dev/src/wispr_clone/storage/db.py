@@ -29,6 +29,7 @@ class Database:
         )
         self._conn: sqlite3.Connection | None = None
         self._opened = False
+        self._opening = False
         self._closed = False
         self._schema_version = 0
 
@@ -44,8 +45,9 @@ class Database:
 
     async def open(self) -> None:
         """Create/configure the connection and apply migrations on its owner thread."""
-        if self._opened or self._closed:
+        if self._opened or self._opening or self._closed:
             raise WisprError(ErrorCode.STORAGE_ERROR, "storage.db", "already opened")
+        self._opening = True
 
         def initialize() -> int:
             try:
@@ -86,8 +88,10 @@ class Database:
                 )
             self._shutdown_executor()
             self._closed = True
+            self._opening = False
             raise
         self._opened = True
+        self._opening = False
 
     def _close_connection(self) -> None:
         if self._conn is not None:
