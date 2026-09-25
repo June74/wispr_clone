@@ -1,0 +1,1 @@
+"""STT adapter unit tests."""
