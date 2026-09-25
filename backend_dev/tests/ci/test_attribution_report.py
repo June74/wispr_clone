@@ -7,6 +7,7 @@ Required CLI: python scripts/attribution_report.py OUT.md INPUT.json [...].
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -187,3 +188,55 @@ def test_T_CI_006_private_fields_and_captured_text_never_enter_markdown(
         "PRIVATE_TRANSCRIPT_004",
     ):
         assert sentinel not in markdown
+
+
+def test_T_CI_003_malformed_json_is_reported_without_losing_valid_rows(
+    tmp_path: Path,
+) -> None:
+    valid = _input(
+        tmp_path, "unit-linux", [_row("tests/unit/test_ok.py::test_T_OK_001")]
+    )
+    syntax_error = tmp_path / "attribution-probes-linux.json"
+    syntax_error.write_text("[{", encoding="utf-8")
+    invalid_utf8 = tmp_path / "attribution-probes-windows.json"
+    invalid_utf8.write_bytes(b"\xff")
+
+    out = tmp_path / "summary.md"
+    result = _cli(out, valid, syntax_error, invalid_utf8)
+    assert result.returncode == 0, result.stderr
+    markdown = out.read_text(encoding="utf-8")
+    assert "test_T_OK_001" in markdown
+    for job in ("probes-linux", "probes-windows"):
+        assert any(
+            job in line and "no report" in line.lower()
+            for line in markdown.splitlines()
+        )
+
+
+def test_T_CI_004_duplicate_nodeid_across_three_jobs_has_one_table_row(
+    tmp_path: Path,
+) -> None:
+    nodeid = "tests/unit/test_shared.py::test_T_SHARED_001"
+    inputs = [
+        _input(tmp_path, job, [_row(nodeid)])
+        for job in ("unit-linux", "unit-windows", "probes-linux")
+    ]
+
+    markdown = _build_report(inputs)
+    assert markdown.count(f"| {nodeid} |") == 1
+    assert "1 failure" in markdown
+
+
+def test_T_CI_004_nodeid_cannot_inject_markdown_into_table(tmp_path: Path) -> None:
+    nodeid = (
+        "tests/unit/test_markdown.py::test_T_CI_004"
+        "[pipe|line\n[visit](https://example.invalid)<br>]"
+    )
+    markdown = _build_report([_input(tmp_path, "unit-linux", [_row(nodeid)])])
+    row = next(line for line in markdown.splitlines() if "test_T_CI_004[pipe" in line)
+
+    assert row.count("\\|") == 1
+    assert len(re.findall(r"(?<!\\)\|", row)) == 5
+    assert "line [visit]" in row
+    assert "](https://example.invalid)" not in row
+    assert "<br>" not in row
