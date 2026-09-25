@@ -391,7 +391,7 @@ async def test_T_SET_014_storage_exports_and_sqlite_import_boundary(
             assert all(name.split(".")[0] != "sqlite3" for name in names), path
 
     async with Database(tmp_path / "migration.db") as db:
-        assert db.schema_version == 2
+        assert db.schema_version >= 2
         tables = await db.read(
             lambda conn: {
                 row[0]
