@@ -63,6 +63,18 @@ def test_T_AUD_004_fft_bands_track_level_and_silence():
 
 
 @pytest.mark.unit
+def test_T_AUD_004_too_short_chunk_returns_finite_levels():
+    meter = importlib.import_module("wispr_clone.audio.level_meter")
+    for source in (np.array([], dtype=np.float32), np.array([0.5], dtype=np.float32)):
+        levels = meter.band_levels(source)
+        assert len(levels) == meter.BAND_COUNT
+        assert all(
+            type(level) is float and np.isfinite(level) and 0 <= level <= 1
+            for level in levels
+        )
+
+
+@pytest.mark.unit
 def test_T_AUD_005_wav_writer_valid_after_normal_and_partial_close(tmp_path):
     writer_module = importlib.import_module("wispr_clone.audio.wav_writer")
     values = np.array([-1.0, -0.5, 0.0, 0.5, 1.0], dtype=np.float32)

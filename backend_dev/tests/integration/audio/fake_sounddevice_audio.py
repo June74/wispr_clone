@@ -7,15 +7,22 @@ import numpy as np
 
 
 class FakeStatus:
-    def __init__(self, detail="", *, input_overflow=False):
+    def __init__(self, detail="", *, input_overflow=False, input_underflow=False):
         self.detail = detail
         self.input_overflow = input_overflow
+        self.input_underflow = input_underflow
 
     def __bool__(self):
-        return bool(self.detail or self.input_overflow)
+        return bool(self.detail or self.input_overflow or self.input_underflow)
 
     def __str__(self):
-        return self.detail or ("input overflow" if self.input_overflow else "")
+        return self.detail or (
+            "input overflow"
+            if self.input_overflow
+            else "input underflow"
+            if self.input_underflow
+            else ""
+        )
 
 
 class FakeInputStream:
@@ -28,6 +35,7 @@ class FakeInputStream:
         self.stopped = False
         self.closed = False
         self.audio_thread_ident = None
+        self.finished = False
         module.streams.append(self)
 
     def start(self):
@@ -41,6 +49,13 @@ class FakeInputStream:
 
     def close(self):
         self.closed = True
+
+    def finish_on_its_own(self):
+        """Simulate PortAudio ending a stream without an application stop."""
+        self.finished = True
+        callback = self.kwargs.get("finished_callback")
+        if callback is not None:
+            callback()
 
     def fire(self, data, status=None):
         """Deliver one copied test buffer synchronously via a bounded audio thread."""

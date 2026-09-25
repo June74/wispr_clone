@@ -266,6 +266,85 @@ async def test_T_AUD_002_008_device_error_releases_lease_and_reports_disconnect(
 
 
 @pytest.mark.integration
+@pytest.mark.asyncio
+async def test_T_AUD_008_streaming_resampling_preserves_continuous_tone():
+    capture_mod, lease_mod = audio_modules()
+    resample_mod = importlib.import_module("wispr_clone.audio.resample")
+    fake = make_fake_sounddevice()
+    capture = capture_mod.AudioCapture(lease_mod.DeviceLease(), module=fake)
+    capture.start()
+    rate = 48_000
+    source = np.sin(2 * np.pi * 1000 * np.arange(rate) / rate).astype(np.float32)
+    for block in np.array_split(source, [3840 * index for index in range(1, 13)]):
+        fake.streams[0].fire(block)
+    capture.stop()
+    actual = np.concatenate([chunk.samples for chunk in await drain(capture)])
+    expected = resample_mod.to_mono_16k(source, rate)
+    assert abs(len(actual) - len(expected)) <= 1
+    # Leave the global filter startup/finish region out of the steady-state check.
+    np.testing.assert_allclose(actual[256:-256], expected[256:-256], atol=1e-3)
+    for edge in range(1280, len(actual) - 1280, 1280):
+        assert (
+            np.max(np.abs(actual[edge - 8 : edge + 8] - expected[edge - 8 : edge + 8]))
+            < 1e-3
+        )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_T_AUD_008_input_underflow_keeps_audio_and_allows_normal_stop():
+    capture_mod, lease_mod = audio_modules()
+    lease = lease_mod.DeviceLease()
+    fake = make_fake_sounddevice()
+    fake.devices[1]["default_samplerate"] = 16_000
+    capture = capture_mod.AudioCapture(lease, module=fake)
+    capture.start()
+    fake.streams[0].fire(
+        np.full(1280, 0.25, dtype=np.float32), FakeStatus(input_underflow=True)
+    )
+    fake.streams[0].fire(np.full(1280, 0.5, dtype=np.float32))
+    capture.stop()
+    chunks = await drain(capture)
+    assert len(chunks) == 2
+    assert np.mean(chunks[0].samples) == pytest.approx(0.25, abs=0.01)
+    assert np.mean(chunks[1].samples) == pytest.approx(0.5, abs=0.01)
+    assert lease.holder is None
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_T_AUD_002_008_unexpected_stream_finish_reports_disconnect():
+    capture_mod, lease_mod = audio_modules()
+    lease = lease_mod.DeviceLease()
+    fake = make_fake_sounddevice()
+    capture = capture_mod.AudioCapture(lease, module=fake)
+    capture.start()
+    fake.streams[0].finish_on_its_own()
+    with pytest.raises(ThirdPartyError) as caught:
+        await drain(capture)
+    assert caught.value.error_code == ErrorCode.MICROPHONE_DISCONNECTED
+    assert lease.holder is None
+    assert fake.streams[0].closed
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_T_AUD_002_closing_consumer_releases_live_stream_and_lease():
+    capture_mod, lease_mod = audio_modules()
+    lease = lease_mod.DeviceLease()
+    fake = make_fake_sounddevice()
+    fake.devices[1]["default_samplerate"] = 16_000
+    capture = capture_mod.AudioCapture(lease, module=fake)
+    capture.start()
+    fake.streams[0].fire(np.ones(1280, dtype=np.float32))
+    consumer = capture.chunks()
+    assert len((await anext(consumer)).samples) == 1280
+    await consumer.aclose()
+    assert lease.holder is None
+    assert fake.streams[0].closed
+
+
+@pytest.mark.integration
 def test_T_AUD_008_device_list_filters_inputs_and_import_failure(monkeypatch):
     devices = importlib.import_module("wispr_clone.audio.devices")
     fake = make_fake_sounddevice()
