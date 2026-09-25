@@ -97,3 +97,10 @@ Authorization: edit only writable paths; no git writes; coordinator commits, pus
    wispr_clone frame they are `OURS · logic` at the test's failing line.
 7. A probe that passes, including a strict XPASS, means "the dependency behaved as probed". Only a
    probe that fails (or errors) makes the verdict NOT OURS.
+
+## Coordinator decision after hosted Windows CI
+
+8. Python runs in UTF-8 mode everywhere: Windows CI failed 7 diag tests because the report's `·`
+   was written in cp1252 and decoded as UTF-8. Sol's pytester subprocess helper sets
+   `PYTHONUTF8=1` in the child environment; Luna sets `PYTHONUTF8: "1"` as a workflow-level `env`
+   in ci.yml. The report keeps the `·` from pipeline §5.5.
