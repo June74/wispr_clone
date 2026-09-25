@@ -15,7 +15,7 @@ def test_P_PYNPUT_001_listener_symbols_and_lifecycle() -> None:
     assert importlib.metadata.version("pynput") == "1.8.2"
     for name in ("ctrl_l", "ctrl_r", "alt_gr", "cmd", "space", "esc", "f24"):
         assert hasattr(keyboard.Key, name), name
-    assert hasattr(keyboard.KeyCode, "char")
+    assert keyboard.KeyCode.from_char("a").char == "a"
     listener = keyboard.Listener(
         on_press=lambda _key: None, on_release=lambda _key: None
     )
