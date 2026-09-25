@@ -145,3 +145,17 @@ def parse_import(text: str, existing: Sequence[DictionaryEntry]) -> ImportPlan
    inside the single character "ﬃ" (NFKC "ffi") and replaced the whole character, dropping text.
    A term that covers only part of one source character's normalized expansion never matches
    ("ﬃ" + alias "ff" → unchanged; alias "ffi" → replaced).
+
+## Coordinator decisions after verification
+
+5. Matching works on source CLUSTERS, not single code points: a base character plus every
+   following combining mark (`unicodedata.combining(c) != 0`) is normalized together (NFKC +
+   casefold) and is the smallest unit a match may start or end on. So `café` matches `café`,
+   and finding 4 (never split one source character's expansion) holds for clusters too.
+6. Import strictness: `version` must be a real `int` (`true` is not `1`) → "format"; duplicate JSON
+   keys are rejected (`object_pairs_hook`): at the top level → "format", inside an entry →
+   "entry <i>: shape".
+7. Lone surrogates (U+D800–U+DFFF) are never valid dictionary text: in `validate_entries` a
+   spelling/alias/note containing one fails with that field's rule ("entry <i>: spelling" etc.);
+   `parse_import` input text that cannot be encoded as UTF-8 → "invalid json" (never a raw
+   `UnicodeEncodeError`). Export therefore always produces valid UTF-8 JSON.

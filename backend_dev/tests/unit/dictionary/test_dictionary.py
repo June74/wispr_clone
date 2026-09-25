@@ -50,6 +50,26 @@ def test_T_DIC_002_does_not_replace_inside_identifiers_paths_or_numbers() -> Non
 
 
 @pytest.mark.unit
+@pytest.mark.invariant("Dictionary matches must cover complete source characters")
+@pytest.mark.parametrize("alias", ("ff", "fi"), ids=("partial_end", "partial_start"))
+def test_T_DIC_002_does_not_match_part_of_a_ligature(alias: str) -> None:
+    from wispr_clone.dictionary.apply import DictionaryEntry, apply_dictionary
+
+    # NFKC expands the one source character to "ffi". Neither prefix nor suffix
+    # may consume that character unless the whole expansion matches.
+    entry = DictionaryEntry("Replacement", (alias,))
+    assert apply_dictionary("ﬃ", (entry,)) == "ﬃ"
+
+
+@pytest.mark.unit
+def test_T_DIC_001_matches_canonically_composed_source_text() -> None:
+    from wispr_clone.dictionary.apply import DictionaryEntry, apply_dictionary
+
+    entry = DictionaryEntry("Café", ("café",))
+    assert apply_dictionary("cafe\u0301", (entry,)) == "Café"
+
+
+@pytest.mark.unit
 def test_T_DIC_003_leftmost_longest_is_independent_of_entry_order() -> None:
     from wispr_clone.dictionary.apply import DictionaryEntry, apply_dictionary
 
@@ -100,6 +120,7 @@ def test_T_DIC_004_keeps_original_and_entries_and_is_idempotent() -> None:
 
 @pytest.mark.unit
 def test_T_DIC_005_import_validates_all_before_returning_and_skips_duplicates() -> None:
+    from wispr_clone.contracts.common import ErrorCode, WisprError
     from wispr_clone.dictionary.apply import DictionaryEntry
     from wispr_clone.dictionary.import_export import (
         EXPORT_FORMAT,
@@ -107,8 +128,6 @@ def test_T_DIC_005_import_validates_all_before_returning_and_skips_duplicates() 
         MAX_IMPORT_ENTRIES,
         parse_import,
     )
-
-    from wispr_clone.contracts.common import ErrorCode, WisprError
 
     existing = (DictionaryEntry("Existing"),)
 
@@ -186,9 +205,8 @@ def test_T_DIC_005_import_validates_all_before_returning_and_skips_duplicates() 
 
 @pytest.mark.unit
 def test_T_DIC_006_validates_conflicts_and_length_limits() -> None:
-    from wispr_clone.dictionary.apply import DictionaryEntry, validate_entries
-
     from wispr_clone.contracts.common import ErrorCode, WisprError
+    from wispr_clone.dictionary.apply import DictionaryEntry, validate_entries
 
     cases = (
         (
@@ -257,3 +275,59 @@ def test_T_DIC_007_export_import_round_trip_preserves_order_and_unicode() -> Non
     plan = parse_import(exported, [])
     assert plan.to_add == entries
     assert plan.skipped_duplicates == ()
+
+
+@pytest.mark.unit
+def test_T_DIC_005_rejects_boolean_format_version() -> None:
+    from wispr_clone.contracts.common import ErrorCode, WisprError
+    from wispr_clone.dictionary.import_export import parse_import
+
+    raw = '{"format":"wispr-clone-dictionary","version":true,"entries":[]}'
+    with pytest.raises(WisprError) as caught:
+        parse_import(raw, ())
+    assert caught.value.error_code == ErrorCode.VALIDATION
+    assert caught.value.where == "dictionary.import"
+    assert caught.value.why == "format"
+
+
+@pytest.mark.unit
+def test_T_DIC_005_rejects_duplicate_json_entry_keys() -> None:
+    from wispr_clone.contracts.common import ErrorCode, WisprError
+    from wispr_clone.dictionary.import_export import parse_import
+
+    raw = (
+        '{"format":"wispr-clone-dictionary","version":1,"entries":'
+        '[{"spelling":"First","spelling":"Second"}]}'
+    )
+    with pytest.raises(WisprError) as caught:
+        parse_import(raw, ())
+    assert caught.value.error_code == ErrorCode.VALIDATION
+    assert caught.value.where == "dictionary.import"
+    assert caught.value.why == "entry 0: shape"
+
+
+@pytest.mark.unit
+def test_T_DIC_005_rejects_unencodable_import_as_invalid_json() -> None:
+    from wispr_clone.contracts.common import ErrorCode, WisprError
+    from wispr_clone.dictionary.import_export import parse_import
+
+    with pytest.raises(WisprError) as caught:
+        parse_import("\ud800", ())
+    assert caught.value.error_code == ErrorCode.VALIDATION
+    assert caught.value.where == "dictionary.import"
+    assert caught.value.why == "invalid json"
+
+
+@pytest.mark.unit
+def test_T_DIC_007_imported_unicode_exports_as_utf8_json() -> None:
+    from wispr_clone.dictionary.import_export import export_dictionary, parse_import
+
+    # JSON can spell a lone surrogate using ASCII escapes. An accepted import
+    # must still be exportable as UTF-8 JSON for the interchange format.
+    raw = (
+        '{"format":"wispr-clone-dictionary","version":1,"entries":'
+        '[{"spelling":"\\ud800"}]}'
+    )
+    plan = parse_import(raw, ())
+    exported = export_dictionary(plan.to_add)
+    assert exported.encode("utf-8")
