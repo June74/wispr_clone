@@ -187,7 +187,9 @@ def test_T_KEY_006_auto_repeat_never_refires_until_key_up(mode: str) -> None:
     assert delivered == (["start", "stop"] if mode == "hold" else ["start"])
     service.handle(hotkeys.KeyAction.DOWN, "space")
     _drain(posted)
-    assert delivered == ["start", "stop"]
+    assert delivered == (
+        ["start", "stop", "start"] if mode == "hold" else ["start", "stop"]
+    )
 
 
 @pytest.mark.unit
