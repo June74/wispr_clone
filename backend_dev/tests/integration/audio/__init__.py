@@ -1,0 +1,1 @@
+"""Audio integration acceptance tests."""

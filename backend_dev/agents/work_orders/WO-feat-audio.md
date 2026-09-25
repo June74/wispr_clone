@@ -175,3 +175,13 @@ Impact fragments: `numpy.toml` (modules `audio.resample`, `audio.level_meter`, `
 they actually import numpy), `soxr.toml` (`audio.resample`), `sounddevice.toml` (`audio.devices`,
 `audio.capture`); error codes from the pinned ones; actions point at the uv.lock pins and, for
 sounddevice, the Windows microphone privacy setting and device connection.
+
+## Coordinator decisions after RED review
+
+1. `band_levels` exact formula: window = Hann of the chunk length; amplitude spectrum
+   `A = |rfft(x * w)| * 2 / sum(w)` (so a full-scale sine at a bin centre reads amplitude ≈ 1.0);
+   band edges = `numpy.geomspace(80, 7600, BAND_COUNT + 1)`; a band's value is the PEAK `A` among
+   its bins (a band with no bins takes the nearest bin); `dB = 20*log10(max(peak, 1e-12))`;
+   level = `clip((dB + 60) / 60, 0, 1)`. So a full-scale tone → ≈ 1.0 in its band, a −30 dBFS tone
+   → ≈ 0.5, silence → 0.0. Tests use tones on exact FFT bin centres for 1,280-sample chunks at
+   16 kHz (12.5 Hz spacing), e.g. 1,000 Hz.

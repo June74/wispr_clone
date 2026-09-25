@@ -1,0 +1,6 @@
+dependency = "soxr"
+kind = "library"
+modules = ["audio.resample"]
+features = ["microphone sample-rate conversion", "live dictation"]
+error_codes = ["microphone_unavailable"]
+action = "Check the soxr pin in uv.lock and the installed native wheel"
