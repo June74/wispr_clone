@@ -70,6 +70,7 @@ def test_T_CON_002_required_failure_behaviors_have_error_codes() -> None:
         "run_deleted",
         "duplicate_request",
         "device_lease_conflict",
+        "microphone_permission_denied",
         "microphone_unavailable",
         "microphone_disconnected",
         "audio_queue_overflow",
@@ -95,7 +96,7 @@ def test_T_CON_002_required_failure_behaviors_have_error_codes() -> None:
 
 
 @pytest.mark.unit
-def test_T_CON_contracts_import_only_stdlib_or_contracts() -> None:
+def test_T_CON_006_contracts_import_only_stdlib_or_contracts() -> None:
     contracts_dir = Path(__file__).resolve().parents[3] / "src/wispr_clone/contracts"
     for path in contracts_dir.glob("*.py"):
         module = ast.parse(path.read_text(encoding="utf-8"))
