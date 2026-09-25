@@ -165,3 +165,12 @@ in uv.lock, not a wispr_clone fix.
 3. `microphone_id`, when not None, is 1..256 characters (device IDs are short; an unbounded
    string is a needless storage/validation risk).
    IPv4-mapped loopback (`[::ffff:127.0.0.1]`) and an upper-case scheme stay accepted.
+
+## Coordinator decisions after verification
+
+4. Upgrade steps receive a deep copy of the data (`copy.deepcopy`), so a step can never mutate the
+   caller's mapping, nested values included. A step that returns anything other than a `dict`, or
+   raises, → `VALIDATION`.
+5. `is_loopback_endpoint` returns False for any URL containing whitespace or ASCII control
+   characters (checked on the raw string before parsing; `urlsplit` silently strips `\t\n\r`).
+6. Findings 1-3 from the demo are confirmed by Sol's tests (ports, user info, microphone_id 1..256).

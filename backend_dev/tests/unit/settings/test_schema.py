@@ -133,6 +133,37 @@ def test_T_SET_004_upgrade_version_zero_without_mutating_input() -> None:
 
 
 @pytest.mark.unit
+def test_T_SET_004_upgrade_step_must_return_a_dict() -> None:
+    def upgrade(_old: dict[str, object]) -> list[tuple[str, object]]:
+        return [("schema_version", 1)]
+
+    with pytest.raises(WisprError) as caught:
+        schema().parse_settings(
+            {"schema_version": 0}, TestCatalog(), upgrade_steps={0: upgrade}
+        )
+    assert caught.value.error_code == ErrorCode.VALIDATION
+    assert caught.value.where == "settings.schema"
+
+
+@pytest.mark.unit
+def test_T_SET_004_upgrade_cannot_mutate_nested_input_data() -> None:
+    payload: dict[str, object] = {
+        "schema_version": 0,
+        "legacy": {"private": "original"},
+    }
+
+    def upgrade(old: dict[str, object]) -> dict[str, object]:
+        legacy = old["legacy"]
+        assert isinstance(legacy, dict)
+        legacy["private"] = "changed"
+        return {"schema_version": 1}
+
+    parsed = schema().parse_settings(payload, TestCatalog(), upgrade_steps={0: upgrade})
+    assert parsed.schema_version == 1
+    assert payload == {"schema_version": 0, "legacy": {"private": "original"}}
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "payload",
     [
@@ -207,3 +238,24 @@ def test_T_SET_005_settings_value_is_frozen() -> None:
     with pytest.raises(ValidationError):
         settings.theme = "dark"
     assert settings.theme == "light"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "microphone_id", ["", "m" * 257], ids=["empty", "257-characters"]
+)
+def test_T_SET_005_microphone_id_length_is_bounded(microphone_id: str) -> None:
+    assert_error({**valid_data(), "microphone_id": microphone_id}, ErrorCode.VALIDATION)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "microphone_id", [None, "m", "m" * 256], ids=["default", "one", "256-characters"]
+)
+def test_T_SET_005_microphone_id_length_boundaries_are_valid(
+    microphone_id: str | None,
+) -> None:
+    parsed = schema().parse_settings(
+        {**valid_data(), "microphone_id": microphone_id}, TestCatalog()
+    )
+    assert parsed.microphone_id == microphone_id

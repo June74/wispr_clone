@@ -81,6 +81,8 @@ def test_T_REG_001_duplicate_and_empty_ids_rejected() -> None:
         ("http://127.0.0.1:1234/v1", True),
         ("http://127.0.0.5:1234", True),
         ("http://[::1]:1234", True),
+        ("http://[::ffff:127.0.0.1]:1234", True),
+        ("HTTP://127.0.0.1:1234", True),
         ("https://127.0.0.1", True),
         ("http://localhost:1234", False),
         ("http://0.0.0.0:1234", False),
@@ -91,6 +93,10 @@ def test_T_REG_001_duplicate_and_empty_ids_rejected() -> None:
         ("not a url", False),
         ("http://[::1", False),
         ("http:///missing-host", False),
+        ("http://127.0.0.1:99999", False),
+        ("http://127.0.0.1:0", False),
+        ("http://127.0.0.1:not-a-port", False),
+        ("http://user:pw@127.0.0.1:1234", False),
     ],
 )
 def test_T_REG_002_loopback_endpoint_truth_table(url: str, expected: bool) -> None:
@@ -111,3 +117,38 @@ def test_T_REG_002_local_remote_endpoint_rejected_cloud_accepted() -> None:
     models = module.ModelRegistry([cloud])
     assert models.list_models() == (cloud,)
     assert models.is_local("cloud") is False
+
+
+@pytest.mark.unit
+@pytest.mark.invariant("local endpoint loopback")
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "http://127.0.0.1:99999",
+        "http://127.0.0.1:0",
+        "http://127.0.0.1:not-a-port",
+        "http://user:pw@127.0.0.1:1234",
+    ],
+)
+def test_T_REG_002_local_model_rejects_invalid_port_or_user_info(
+    endpoint: str,
+) -> None:
+    module = registry()
+    local = module.ModelInfo("local", "cleanup", "Local", True, "lmstudio", endpoint)
+    with pytest.raises(WisprError) as caught:
+        module.ModelRegistry([local])
+    assert caught.value.error_code == ErrorCode.NON_LOOPBACK_ENDPOINT
+    assert caught.value.where == "models.registry"
+
+
+@pytest.mark.unit
+@pytest.mark.invariant("local endpoint loopback")
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:1234\nX-Injected: value",
+        "http://127.0.0.1:1234\tX-Injected: value",
+    ],
+)
+def test_T_REG_002_rejects_url_with_control_characters(url: str) -> None:
+    assert registry().is_loopback_endpoint(url) is False
