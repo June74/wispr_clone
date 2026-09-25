@@ -70,6 +70,53 @@ def test_T_ARCH_001_reports_cycle_across_package_modules(tmp_path: Path) -> None
 
 
 @pytest.mark.unit
+@pytest.mark.invariant("Only imports executed at module import time form cycles")
+@pytest.mark.parametrize(
+    ("second_source", "has_cycle"),
+    [
+        ("from wispr_clone.pipeline import first\n", True),
+        (
+            "def use_first():\n    from wispr_clone.pipeline import first\n",
+            False,
+        ),
+        (
+            "from typing import TYPE_CHECKING\n"
+            "if TYPE_CHECKING:\n"
+            "    from wispr_clone.pipeline import first\n",
+            False,
+        ),
+        (
+            "import typing\n"
+            "if typing.TYPE_CHECKING:\n"
+            "    from wispr_clone.pipeline import first\n",
+            False,
+        ),
+    ],
+    ids=("module-level", "function-local", "type-checking", "typing-qualified"),
+)
+def test_T_ARCH_001_cycle_uses_module_import_time_edges(
+    tmp_path: Path, second_source: str, has_cycle: bool
+) -> None:
+    root = _tree(
+        tmp_path,
+        {
+            "pipeline/first.py": "from wispr_clone.pipeline import second\n",
+            "pipeline/second.py": second_source,
+        },
+    )
+
+    result = _check(root)
+
+    if has_cycle:
+        assert result.returncode == 1, (result.stdout, result.stderr)
+        assert "import cycle" in result.stdout
+        _diagnostic(result, "pipeline/first.py", 1)
+    else:
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        assert result.stdout.strip() == ""
+
+
+@pytest.mark.unit
 @pytest.mark.invariant("Packages import only permitted application packages")
 def test_T_ARCH_002_clean_package_tree_passes(tmp_path: Path) -> None:
     root = _tree(
@@ -112,6 +159,27 @@ def test_T_ARCH_002_reports_hotkeys_to_pipeline_import(
     assert result.returncode == 1, (result.stdout, result.stderr)
     diagnostic = _diagnostic(result, "hotkeys/bad.py", line)
     assert "wispr_clone.hotkeys.bad -> wispr_clone.pipeline:" in diagnostic
+
+
+@pytest.mark.unit
+@pytest.mark.invariant("Boundary rules include imports inside functions")
+def test_T_ARCH_002_reports_function_local_forbidden_import(tmp_path: Path) -> None:
+    root = _tree(
+        tmp_path,
+        {
+            "hotkeys/bad.py": (
+                "def use_pipeline():\n    from wispr_clone.pipeline import run\n"
+            ),
+            "pipeline/run.py": "value = 1\n",
+        },
+    )
+
+    result = _check(root)
+
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    diagnostic = _diagnostic(result, "hotkeys/bad.py", 2)
+    assert "wispr_clone.hotkeys.bad -> wispr_clone.pipeline:" in diagnostic
+    assert diagnostic.endswith("package dependency is not allowed")
 
 
 @pytest.mark.unit
