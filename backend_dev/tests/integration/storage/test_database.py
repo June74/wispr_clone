@@ -1,15 +1,49 @@
 """Real-file contracts for the single SQLite writer (WO-feat-storage)."""
 
+import ast
 import asyncio
 import importlib
 import sqlite3
 import threading
 from contextlib import closing
 from pathlib import Path
+from typing import get_type_hints
 
 import pytest
 
 from wispr_clone.contracts.common import ErrorCode, WisprError
+
+
+def test_T_STO_001_migrations_export_connection_type() -> None:
+    from wispr_clone.storage import migrations
+
+    assert migrations.Connection is sqlite3.Connection
+
+
+def test_T_STO_001_migration_modules_do_not_import_sqlite3() -> None:
+    from wispr_clone.storage import migrations
+
+    migration_files = sorted(Path(migrations.__file__).parent.glob("m*.py"))
+    assert migration_files
+    for path in migration_files:
+        syntax = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports = (
+            node
+            for node in ast.walk(syntax)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+        )
+        for node in imports:
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            else:
+                names = [node.module or ""]
+            assert all(name.split(".")[0] != "sqlite3" for name in names), path
+
+
+def test_T_STO_001_base_migration_uses_connection_type() -> None:
+    from wispr_clone.storage.migrations import m001_base
+
+    assert get_type_hints(m001_base.apply)["conn"] is sqlite3.Connection
 
 
 def test_T_STO_001_order_discovery_and_idempotent_migrations(
@@ -109,6 +143,38 @@ async def test_T_STO_003_concurrent_writes_are_serial_on_one_thread(
     assert markers == [marker for _ in range(count) for marker in ("enter", "exit")]
     assert len(thread_ids) == 1
     assert loop_thread not in thread_ids
+
+
+@pytest.mark.asyncio
+async def test_T_STO_003_write_returns_inserted_row_id(tmp_path: Path) -> None:
+    from wispr_clone.storage import Database
+
+    async with Database(tmp_path / "return_row_id.db") as db:
+        await db.write(
+            lambda conn: conn.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY)")
+        )
+
+        def insert(conn: sqlite3.Connection) -> int:
+            return conn.execute("INSERT INTO sample DEFAULT VALUES").lastrowid
+
+        row_id = await db.write(insert)
+        persisted_ids = await db.read(
+            lambda conn: [row[0] for row in conn.execute("SELECT id FROM sample")]
+        )
+
+    assert row_id == 1
+    assert persisted_ids == [row_id]
+
+
+@pytest.mark.asyncio
+async def test_T_STO_005_write_returns_callback_tuple(tmp_path: Path) -> None:
+    from wispr_clone.storage import Database
+
+    result = ("claim", 7)
+    async with Database(tmp_path / "return_tuple.db") as db:
+        returned = await db.write(lambda conn: result)
+
+    assert returned is result
 
 
 @pytest.mark.asyncio
