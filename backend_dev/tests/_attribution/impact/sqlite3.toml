@@ -1,0 +1,6 @@
+dependency = "sqlite3"
+kind = "library"
+modules = ["storage.db", "storage.migrations"]
+features = ["settings persistence", "dictionary persistence", "history persistence"]
+error_codes = ["storage_error"]
+action = "Check the SQLite library version and database disk/permissions before changing wispr_clone code"

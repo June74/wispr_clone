@@ -151,3 +151,13 @@ report version "not installed". SQLite is a real third-party C library shipped i
   satisfy T-DIAG-009, keeping every existing T-DIAG test green. For other stdlib names the version
   is `"Python <platform.python_version()> stdlib"`.
 </content>
+
+## Coordinator decisions after RED review
+
+1. `m001_base.py` defines `NAME = "base"` next to `VERSION = 1`; `discover_migrations()` uses the
+   module's `NAME` for `Migration.name`.
+2. The runner module (`storage/migrations/__init__.py`) imports `sqlite3` itself (it needs
+   `sqlite3.Connection`), so the fragment's `modules = ["storage.db", "storage.migrations"]` is right.
+3. Verify step: every test/probe connection opened with `sqlite3.connect` must be closed
+   (`contextlib.closing`); `with sqlite3.connect(...)` only ends a transaction and leaves the file
+   open, which can break temp-dir cleanup on Windows.
