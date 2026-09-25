@@ -61,3 +61,8 @@ Handoff: coordinator.
 3. Cycle detection uses only imports that execute at module import time: exclude imports inside
    function/method bodies and inside `if TYPE_CHECKING:` blocks (also `typing.TYPE_CHECKING`).
    Sol adds a T-ARCH-001 test pinning this before Luna implements it.
+
+## Coordinator decision after hosted Windows CI
+
+4. Report paths always use forward slashes (`Path.as_posix()`), on every OS, so output is identical
+   on Linux and Windows. Windows CI failed 8 tests only because paths printed as `hotkeys\bad.py`.
