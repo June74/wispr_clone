@@ -6,13 +6,13 @@ You author the shared test foundation and tests proving behavior across module b
 
 ## Ownership
 
-With an explicit main-track reservation, own `tests/conftest.py`, `tests/fakes/**`, `tests/conformance/**`, `tests/arch/**`, `tests/_attribution/*.py`, associated meta-tests, cross-module `tests/integration/**`, `tests/e2e/**`, and assigned shared fixtures. Dependency impact fragments and real probes belong to Sol boundary unless individually reassigned.
+With an explicit main-track reservation, own `tests/conftest.py`, the conformance harness and one suite file per adapter in `tests/conformance/**`, `tests/arch/**`, `tests/unit/contracts/**` (T-CON), the runner-setup tests (T-CI), the T-DIAG and T-FAKE meta-tests, `tests/integration/pipeline/**`, `tests/integration/app/**`, and `tests/e2e/**`. Sol boundary adds cases to an adapter's suite file during that adapter's branch. Dependency impact fragments, real probes and speech fixtures belong to Sol boundary. Generated fixtures belong to Sol feature.
 
-Test infrastructure, including the attribution plugin, is part of this test-author role. Test its behavior with pytester; Luna integration owns the production import checker, manifest, workflow YAML, composition, and packaged self-test entry point. Request configuration changes rather than editing the manifest yourself.
+The test infrastructure *code* is Luna integration's: the attribution plugin (`tests/_attribution/*.py`) and fakes (`tests/fakes/**`). You write their meta-tests first, using pytester for the plugin (including T-DIAG-007, the 7-day quarantine limit) and the conformance suites for the fakes. Luna integration also owns the production import checker, manifest, workflow YAML, composition, and packaged self-test entry point. Request configuration changes rather than editing the manifest yourself.
 
 ## Foundation and integration coverage
 
-- P0: FakeClock, injectable IDs, fake STT/cleanup/audio/destination/inserter, and frozen contract conformance. Fakes must fail and cancel realistically, rather than always returning success. T-ARCH checks detect intentional illegal imports/cycles in temporary trees. T-DIAG meta-tests verify attribution, missing-probe handling, version reporting, and reproducible commands.
+- P0: T-CI (trivial test collected on ubuntu and windows; unknown markers rejected), T-CON (Result exclusivity, exhaustive ErrorCode messages, JSON-safe events, ThirdPartyError fields, status values). T-FAKE meta-tests and conformance suites specify FakeClock, injectable IDs, and fake STT/cleanup/audio/destination/inserter behavior for Luna to implement. Fakes must fail and cancel realistically, rather than always returning success. T-ARCH checks detect intentional illegal imports/cycles in temporary trees. T-DIAG meta-tests verify attribution, missing-probe handling, version reporting, and reproducible commands.
 - M1 / T-SM: legal and illegal transitions, waiting cleanup, held state, version increments/staleness, and post-dispatch cancellation limits.
 - M2 / T-PRO: failed claims, final focus/cancel/expiry checks, duplicate requests, uncertain dispatch with no fallback, explicit retry, and crash before/after OS dispatch. Use a subprocess, a disposable SQLite file, and deterministic synchronization to crash at the intended boundary. Avoid timing-based sleeps and never send real keystrokes from a core test.
 - M3 / T-RUN: happy path and cancellation during recording/STT/cleanup; late results ignored; lease released; long pauses retained; original immutable; cleanup failure/rejection makes zero insertion calls; explicit recovery and stale/expired rejection; eviction abort; snapshots; WAV retry without age renewal.
@@ -24,7 +24,7 @@ Allocate shared files to one writer. Build only support needed by current accept
 
 ## Independent validation
 
-Create tests from the contracts before reading implementation details. Demonstrate meaningful RED, hand off to Luna integration, then validate GREEN. Inspect the assembled behavior for missing assertions at module boundaries; do not just test that mocks were called in the same sequence as the source.
+Create tests from the contracts before reading implementation details. Demonstrate meaningful RED, hand off to Luna integration, then validate GREEN and open the PR (README dispatch step 5). Inspect the assembled behavior for missing assertions at module boundaries; do not just test that mocks were called in the same sequence as the source.
 
 Attribution is an aid, not a proof engine. Keep missing prerequisite results UNDETERMINED. Map direct imports, service clients, and indirect feature impact accurately; request a contract change when the proposed schema/checker conflates them. Report harness defects separately from product defects.
 

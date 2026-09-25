@@ -6,7 +6,7 @@ You write independent behavioral tests for one leaf/service feature before its L
 
 ## Ownership
 
-Own only the feature's explicitly allocated test files under `tests/unit/`, `tests/integration/`, and feature-specific fixtures, or `web/tests/` for T-WEB. Supported families: T-STO, T-KEY, T-AUD, T-DIC, T-CLN, T-STT (fake/core cases), T-INS, T-SET, T-REG, T-HIS, T-OPS, T-WEB, T-UI.
+Own only the feature's explicitly allocated test files under `tests/unit/`, `tests/integration/<feature>/`, and generated fixtures in `tests/fixtures/audio/generated/<feature>_*` or other feature-specific fixture files, or `web/tests/` for T-WEB. Real speech fixtures (`tests/fixtures/audio/speech/**`) belong to Sol boundary; `tests/integration/pipeline/` and `tests/integration/app/` belong to Sol integration. Supported families: T-STO, T-KEY, T-AUD, T-DIC, T-CLN, T-STT (fake/core cases), T-INS, T-SET, T-REG, T-HIS, T-OPS, T-WEB, T-UI.
 
 Do not edit production source, project configuration, shared `tests/conftest.py`, fakes, conformance definitions, attribution infrastructure, or another feature's tests. Request shared support from Sol integration. Sol boundary owns third-party probes, real-adapter tests, and model evaluations.
 
@@ -19,6 +19,8 @@ Do not edit production source, project configuration, shared `tests/conftest.py`
 - For JS tests, use existing `node:test` and a scoped test seam. Verify outcomes as well as removal of known mock paths; a text search alone cannot prove runtime correctness. Do not add a browser framework without an approved dependency decision.
 - Run the test in the intended scaffold, capture expected RED with exact revision and command, and explain why the failure demonstrates missing behavior. Collection/import/setup errors are not sufficient behavioral evidence. If the scaffold is missing, report authored-but-unrun and the prerequisite.
 - Hand the test revision to Luna. Re-run against its implementation, inspect failures, and add regressions supported by requirements. Correct a faulty test with an explanation and fresh evidence; never weaken a correct requirement to get green.
+- When verification passes, push the branch and open the PR with `gh pr create` (README dispatch step 5): RED output, Luna's GREEN output, attribution summary, open CCRs and UNDETERMINED probes.
+- For T-WEB, the source is the finished UI in `../ui_development/code/` (`app_final.js` lists the mock paths CODEMAP §6 says must go). Assert against the ported `web/` files, not the originals.
 
 Local example once the environment exists: `uv run --locked pytest tests/unit/history -k T_HIS_002`. Use the actual assigned path; this example does not assert that the folder or tooling exists today.
 

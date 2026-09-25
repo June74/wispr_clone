@@ -17,11 +17,12 @@ Test IDs and expected assertions:
 Probe IDs / conformance cases / sole impact-fragment owner:
 RED owner (GPT-6 Sol) and test revision:
 GREEN owner (GPT-6 Luna):
-Verification owner (GPT-6 Sol):
+Verification owner and PR opener (GPT-6 Sol):
+Shared branch worktree (Sol and Luna take turns):
 Required tiers / OS / devices / servers:
 Exact check commands (from existing project config):
 Existing authorization for commits, installs, downloads, interop, push/PR:
-Resource lease (heavy job/GPU owner; RAM/VRAM snapshot if applicable):
+Resource lease (heavy job; GPU runs go through Sol boundary; RAM/VRAM snapshot if applicable):
 Shared-file reservations and dependent work orders:
 CCRs / unresolved decisions:
 Handoff destination and expected evidence:

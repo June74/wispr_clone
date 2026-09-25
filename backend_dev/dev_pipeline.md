@@ -22,6 +22,11 @@ Status: **planning only**. This document plans how the backend in [CODEMAP.md](C
 
 ```mermaid
 flowchart TB
+  subgraph F["Phase −1: Feasibility (coordinator + Sol boundary, disposable scripts)"]
+    direction LR
+    F1[G1 WSL repo + Windows venv] --> F2[G2 both models on GPU] --> F3[G3 HUD focus] --> F4[G4 destination + clipboard]
+  end
+
   subgraph P0["Phase 0: Foundation (main agent, sequential)"]
     direction LR
     S0[Scaffold + CI skeleton] --> C0[contracts/ frozen v1] --> A0[Attribution plugin + fakes + import checker]
@@ -58,6 +63,7 @@ flowchart TB
     M1[M1 state_machine] --> M2[M2 insertion_protocol] --> M3[M3 run_controller a→f] --> M4[M4 application layer] --> M5[M5 app.py composition] --> M6[M6 E2E + packaging]
   end
 
+  F --> P0
   P0 --> W1
   P0 --> M1
   B1 --> W2
@@ -86,7 +92,7 @@ flowchart TB
   M6 --> CD
 ```
 
-**In one sentence:** the main agent builds the frozen foundation first. Branch agents then build standalone pieces in parallel, test-first, while the main agent builds the state machine. The main agent then does all cross-cutting integration. Every change passes the same CI, and every failure is labeled **OURS**, **NOT OURS** or **UNDETERMINED**.
+**In one sentence:** disposable feasibility checks prove the host and model plan first, then the main agent builds the frozen foundation. Branch agents then build standalone pieces in parallel, test-first, while the main agent builds the state machine. The main agent then does all cross-cutting integration. Every change passes the same CI, and every failure is labeled **OURS**, **NOT OURS** or **UNDETERMINED**.
 
 ---
 
@@ -116,7 +122,7 @@ flowchart LR
   4. There are no new dependencies beyond the approved baseline.
   5. There are no skipped tests without a stated reason marker.
   6. CI is green.
-- **A flaky test is a bug.** Quarantine (`@pytest.mark.quarantine(issue=…)`) is allowed for at most 7 days and never for a core invariant test.
+- **A flaky test is a bug.** Quarantine (`@pytest.mark.quarantine(issue=…, since="YYYY-MM-DD")`) is allowed for at most 7 days and never for a core invariant test. The attribution plugin fails collection when a quarantine is older than 7 days (T-DIAG-007), so CI enforces the limit (§4.2 triage automation).
 
 ### 2.2 What "replicable" means for every core test
 
@@ -134,7 +140,8 @@ flowchart LR
 
 - `main` is protected: PR only, required checks, linear history, no force-push. It must always build.
 - Short-lived branches: `feat/<area>`, `ops/<area>`, `main/<Mx>` (main-agent integration), `fix/<test-id>`.
-- Each agent works in its own **git worktree**, for example `git worktree add ../wc-storage feat/storage`, so agents never share a working directory.
+- Each **branch** has one **git worktree**, for example `git worktree add ../wc-storage feat/storage`. Sol and Luna take turns in it (RED → GREEN → verify is sequential), so there are never two writers at once and no commits move between worktrees.
+- The Sol agent that verifies GREEN pushes the branch and opens the PR with `gh pr create` (agents/README.md, dispatch step 5).
 - Merge order follows the waves. Branch agents never merge. Only the main agent merges, after review.
 
 ---
@@ -210,6 +217,16 @@ flowchart LR
 ```
 
 **Required checks on `main`:** `static`, `unit (ubuntu)`, `unit (windows)`, `probes (ubuntu)`, `probes (windows)`, `attribution-report`, and `web` when applicable. GPU tiers are **not** required on PRs, since the runner may be offline. They are required before a release tag (§4.3).
+
+**Triage automation (GitHub Actions, decision 2026-09-24).** Actions detects maintenance work; the coordinator decides the response:
+
+| Signal | Automation | Coordinator response |
+|---|---|---|
+| `nightly.yml` fails (dependency drift or hosted probes) | The job opens or updates one GitHub issue labelled `triage` with the attribution summary (`gh issue create/comment`, `permissions: issues: write`) | Issue a `fix/<test-id>` work order (Sol RED → Luna GREEN) or pin the dependency |
+| A quarantine is older than 7 days | Collection fails in `ci.yml` (T-DIAG-007) | Fix the test or the code; a quarantine is never extended silently |
+| Release tag | `release.yml` drafts the release; the tier H checklist goes in `docs/verification/<version>.md` | Coordinator fills the record with the user; the user approves `release` |
+
+Actions cannot write fixes. It only makes the work visible.
 
 ### 4.3 Continuous delivery (the "CD" part)
 
@@ -327,7 +344,7 @@ Code-native:
 ```text
 [ATTRIBUTION] OURS · logic
   test:       T-PRO-004 duplicate request_id cannot dispatch twice
-  reproduce:  uv run pytest tests/integration/test_insertion_protocol.py -k T_PRO_004
+  reproduce:  uv run pytest tests/integration/pipeline/test_insertion_protocol.py -k T_PRO_004
   where:      src/wispr_clone/pipeline/insertion_protocol.py:88 in attempt()
   invariant:  at most one automatic dispatch per run (CODEMAP §4 step 1)
   why:        FakeInserter.dispatch called 2 times, expected 1; second call reached dispatch
@@ -365,6 +382,17 @@ The attribution system is itself built test-first (Phase 0, `T-DIAG-*`) with `py
 
 Features grow from small pure pieces to connected orchestration. Test IDs are planned. Each line is a behavior the test must assert. **Bold** IDs are core invariants that can never be quarantined.
 
+### Phase −1: Feasibility (coordinator + Sol boundary, blocks Phase 0)
+
+CODEMAP slice 0. Disposable scripts under `experiments/` (never imported by `src/`, not merged as product code). Each check ends with a result recorded in the CODEMAP gate table. A failed check triggers the CODEMAP decision rule (§7 "Decision rule") before P0 starts. These checks do not need the P0 scaffold.
+
+| # | Gate | Check | Exit evidence |
+|---|---|---|---|
+| −1.1 | G1 runtime location (**decided:** WSL repo + Windows-local venv) | Windows Python 3.12 + `uv.exe` creates a venv on the Windows disk (`UV_PROJECT_ENVIRONMENT=%LOCALAPPDATA%\wispr_clone\venv`) for the checkout at `\\wsl.localhost\<distro>\home\injun\projects\wispr_clone\backend_dev`; import pywin32, pynput, sounddevice, pywebview; run a trivial pytest | Commands, versions and timings recorded; path or performance problems noted |
+| −1.2 | G2 inference | Start vLLM (Voxtral Mini 4B Realtime 2602) and Ollama (Llama 3.1 8B) **together** on the RTX 5080; stream a WAV from Windows to WSL `127.0.0.1` | Free VRAM before and after, peak usage, first-token and total latency; LAN IP unreachable. Needs the one-time model-download approval (§3) |
+| −1.3 | G3 native UI | A disposable pywebview HUD shows, updates and hides without taking focus from Notepad and VS Code | Observed focus result per app (human-observed, tier H style) |
+| −1.4 | G4 destination | Capture and verify a destination snapshot; write the clipboard with the 3 exclusion formats; check Win+V | Which apps can be verified; clipboard history exclusion observed |
+
 ### Phase 0: Foundation (main agent, sequential, blocks everything)
 
 | # | Feature | Owned paths | Tests (write first) |
@@ -372,7 +400,7 @@ Features grow from small pure pieces to connected orchestration. Test IDs are pl
 | 0.1 | Scaffold | `pyproject.toml`, `uv.lock`, `.python-version`, `tests/conftest.py`, `.github/workflows/ci.yml` (static + unit only) | T-CI-001 trivial test collected and passes on ubuntu and windows; T-CI-002 all markers registered (unknown marker = error via `--strict-markers`) |
 | 0.2 | Contracts v1 | `contracts/common.py, events.py, run.py`, `config.py`, `util/error_messages.py` | **T-CON-001** `Result` is exactly one of ok/error; **T-CON-002** every `ErrorCode` has a message and recovery actions (exhaustive); T-CON-003 every event payload JSON-serializes with data-only types; T-CON-004 `ThirdPartyError` carries dependency + operation; T-CON-005 `RunStatus`/`AttemptOutcome` values match CODEMAP §4/§5 |
 | 0.3 | Import-boundary checker | `scripts/check_imports.py`, `tests/arch/` | **T-ARCH-001** import graph acyclic (`graphlib`); **T-ARCH-002** each module imports only its CODEMAP §3 allowed deps (a seeded bad import in a temp tree reports file:line); T-ARCH-003 `contracts/`, `config`, `util` import nothing above them |
-| 0.4 | Attribution plugin | `tests/_attribution/` | T-DIAG-001 fake-only failure → OURS with src frame; T-DIAG-002 failing probe → NOT OURS with version; T-DIAG-003 adapter fail + probe pass → OURS adapter-misuse; T-DIAG-004 probe skipped → UNDETERMINED; T-DIAG-005 report prints reproduce command; T-DIAG-006 impact map in sync with imports |
+| 0.4 | Attribution plugin | `tests/_attribution/` | T-DIAG-001 fake-only failure → OURS with src frame; T-DIAG-002 failing probe → NOT OURS with version; T-DIAG-003 adapter fail + probe pass → OURS adapter-misuse; T-DIAG-004 probe skipped → UNDETERMINED; T-DIAG-005 report prints reproduce command; T-DIAG-006 impact map in sync with imports; T-DIAG-007 a quarantine older than 7 days fails collection |
 | 0.5 | Shared fakes + conformance harness | `tests/fakes/`, `tests/conformance/` | T-FAKE-001 `FakeClock` advances deterministically and fires scheduled callbacks in order; T-FAKE-002 `FakeEventSink` records events in order; conformance suites defined (empty) for STT, cleanup, inserter, audio source |
 | 0.6 | Full CI skeleton | `.github/workflows/ci.yml, nightly.yml, release.yml` | CI runs all tiers on an empty suite and `attribution-report` renders "0 failures" |
 
@@ -386,11 +414,11 @@ Features grow from small pure pieces to connected orchestration. Test IDs are pl
 | `feat/hotkeys` | `contracts/shortcuts.py`, `hotkeys/hotkey_service.py` | T-KEY-001 parse valid bindings, reject malformed/conflicting ones; T-KEY-002 hold mode: down→start, up→stop; T-KEY-003 toggle mode; T-KEY-004 cancel binding; **T-KEY-005** non-binding keys are discarded: no log record, no buffer, no callback; T-KEY-006 OS key auto-repeat does not restart a run | P-PYNPUT-001 |
 | `feat/audio` | `audio/*` incl. `device_lease.py` | **T-AUD-001** lease is exclusive (capture vs mic test) and returns a conflict error; T-AUD-002 lease released on error/cancel; T-AUD-003 resample keeps duration and tone; T-AUD-004 level meter bands for a known sine; T-AUD-005 WAV header valid after cancel; **T-AUD-006** queue overflow ends the run with an explicit error, never a silent drop; T-AUD-007 the audio callback only enqueues (no I/O in the callback) | P-NUMPY, P-SOXR, P-SD |
 | `feat/dictionary-core` | `dictionary/apply.py`, `import_export.py` (pure parts) | T-DIC-001 whole-word alias replacement; **T-DIC-002** no replacement inside unrelated phrases; T-DIC-003 overlapping aliases, longest match deterministic; **T-DIC-004** input string never mutated (original preserved); T-DIC-005 import validates the whole input before accepting and reports duplicates; T-DIC-006 conflicting aliases rejected; T-DIC-007 export→import round trip | — |
-| `feat/cleanup` | `cleanup/prompt_builder.py, guard.py, ollama_cleanup.py` | T-CLN-001 prompt has glossary + instructions, never history; **T-CLN-002** guard rejects a dropped negation ("Do not delete that file"); **T-CLN-003** guard rejects changed numbers, names, paths, identifiers; T-CLN-004 guard rejects added content or an answer to a spoken question; T-CLN-005 timeout → `ThirdPartyError(ollama, "chat", …)`; T-CLN-006 cancel aborts the in-flight request; conformance suite on fake and real | P-HTTPX-001, P-OLLAMA-* |
-| `feat/stt` | `stt/base.py, voxtral_realtime.py` (fake WebSocket server in tests) | T-STT-001 session opens with the configured format; T-STT-002 chunks sent in order; T-STT-003 finish returns the final text; T-STT-004 server close mid-stream → `ThirdPartyError(vllm, …)`; **T-STT-005** cancel closes the socket and late messages are ignored; T-STT-006 `transcribe_file` replays a WAV exactly like live input; T-STT-A01 (tier G) real adapter transcribes the fixture | P-WS-001, P-VLLM-* |
+| `feat/cleanup` | `cleanup/prompt_builder.py, guard.py, ollama_cleanup.py` | T-CLN-001 prompt has glossary + instructions, never history; **T-CLN-002** guard rejects a dropped negation ("Do not delete that file"); **T-CLN-003** guard rejects changed numbers, names, paths, identifiers; T-CLN-004 guard rejects added content or an answer to a spoken question; T-CLN-005 timeout → `ThirdPartyError(ollama, "chat", …)`; T-CLN-006 cancel aborts the in-flight request; conformance suite on fake and real | P-HTTPX-001 (P-OLLAMA-* owned by `ops/model-servers`) |
+| `feat/stt` | `stt/base.py, voxtral_realtime.py` (fake WebSocket server in tests) | T-STT-001 session opens with the configured format; T-STT-002 chunks sent in order; T-STT-003 finish returns the final text; T-STT-004 server close mid-stream → `ThirdPartyError(vllm, …)`; **T-STT-005** cancel closes the socket and late messages are ignored; T-STT-006 `transcribe_file` replays a WAV exactly like live input; T-STT-A01 (tier G) real adapter transcribes the fixture | P-WS-001 (P-VLLM-* owned by `ops/model-servers`) |
 | `feat/insertion-win` | `insertion/*` | **T-INS-001** destination snapshot stores a title hash, never the title; T-INS-002 verifier reports change on handle/process change; **T-INS-003** matching title hash alone is not sufficient; **T-INS-004** every transcript clipboard write sets the 3 exclusion formats; **T-INS-005** strategy fixed before dispatch, and ambiguous paste never falls back to typing; T-INS-006 Unicode `SendInput` event builder is correct (pure) | P-WIN32-* |
 | `feat/settings-models` | `settings/schema.py`, `models/registry.py` | T-SET-001 defaults validate; T-SET-002 invalid shortcut rejected via the shortcuts contract; **T-SET-003** local-only forbids selecting a cloud model; T-SET-004 older schema version upgrades; T-REG-001 registry lists selected models with local flags; **T-REG-002** local endpoints must be loopback | P-PYD-001 |
-| `ops/model-servers` | `scripts/*.sh`, `.env.example` | T-OPS-001 shellcheck clean; **T-OPS-002** start scripts pass `--host 127.0.0.1` (static check); T-OPS-003 `.env.example` has names only, no values | P-GPU, P-NET, P-VLLM-001, P-OLLAMA-001 |
+| `ops/model-servers` | `scripts/*.sh`, `scripts/.env.example` | T-OPS-001 shellcheck clean; **T-OPS-002** start scripts pass `--host 127.0.0.1` (static check); T-OPS-003 `scripts/.env.example` has names only, no values | P-GPU, P-NET, P-VLLM-*, P-OLLAMA-* (sole owner of all model-server probes and the `vllm`/`ollama` impact fragments) |
 | **main: M1** | `pipeline/state_machine.py` | see §8 | — |
 
 ### Wave 2: storage-backed services (parallel; start when `feat/storage` merges)
@@ -405,7 +433,7 @@ Features grow from small pure pieces to connected orchestration. Test IDs are pl
 
 | Branch | Feature | Key tests |
 |---|---|---|
-| `feat/web-runtime` | `web/*` from the prototype, with mock paths removed | T-WEB-001 no mock history/dictionary arrays or simulated timers remain (static); **T-WEB-002** no `getUserMedia`, so the waveform takes backend levels only; T-WEB-003 renders the `state_get` snapshot; **T-WEB-004** "inserted" toast only on a confirmed backend outcome event; **T-WEB-005** failed cleanup shows retry / use original / copy / cancel and no insertion toast; T-WEB-006 reconnect calls `state_get` and never replays mutations; T-WEB-007 only green animates, blue/yellow/red stationary |
+| `feat/web-runtime` | `web/*` ported from the finished UI in `../ui_development/code/` (`index_final.html`, `styles_final.css`, `app_final.js`, `waveform_final.js`, `assets/geist.ttf` + `OFL-Geist.txt`), with mock paths removed (CODEMAP §6 table). `ui_development/` stays read-only; `../ui_development/screenshots/` is the appearance reference | T-WEB-001 no mock history/dictionary arrays or simulated timers remain (static); **T-WEB-002** no `getUserMedia`, so the waveform takes backend levels only; T-WEB-003 renders the `state_get` snapshot; **T-WEB-004** "inserted" toast only on a confirmed backend outcome event; **T-WEB-005** failed cleanup shows retry / use original / copy / cancel and no insertion toast; T-WEB-006 reconnect calls `state_get` and never replays mutations; T-WEB-007 only green animates, blue/yellow/red stationary |
 | `feat/ui-host` | `ui/bridge.py, events.py, windows.py, overlay.py` (fake webview module in unit tests) | **T-UI-001** bridge rejects unknown and malformed commands; T-UI-002 event serializer is data-only (no code interpolation); **T-UI-003** HUD window created with no `js_api`; **T-UI-004** navigation to non-bundled URLs blocked, CSP set; T-UI-005 release config has `debug=False`, no HTTP server |
 
 ### Main-agent integration track (M1–M6)
@@ -505,7 +533,7 @@ gitGraph
   commit id: "M6 E2E + package" tag: "v0.1.0"
 ```
 
-**Concurrency advice:** wave 1 has 9 branches. Run **4–5 agents at once**, because main-agent review is the bottleneck. Start with the branches that unblock the most work: `feat/storage` → `feat/settings-models` → `feat/dictionary-core` → `feat/insertion-win` → `feat/stt`.
+**Concurrency (decision 2026-09-24):** wave 1 has 9 branches. Start with **2 feature work orders at once, plus the M-track** (M1 runs alongside them and does not count toward the 2). Each feature is sequential inside (Sol RED → Luna GREEN → Sol verify), so this means about 2 features in progress. Raise to 3 only after measuring RAM headroom (agents/HARDWARE.md). Start with the branches that unblock the most work: `feat/storage` → `feat/settings-models` → `feat/dictionary-core` → `feat/insertion-win` → `feat/stt`.
 
 ### 7.2 Work orders and file ownership
 
@@ -513,22 +541,29 @@ A branch agent may create or edit **only its owned paths**. Everything else is r
 
 | Branch | Owned paths (write) | May import (CODEMAP §3) | Depends on | Size |
 |---|---|---|---|---|
-| `feat/storage` | `src/wispr_clone/storage/**`, `tests/**/storage/**`, `tests/probes/sqlite/**`, `tests/_attribution/impact/sqlite.toml` | contracts, config, util | P0 | S |
+| `feat/storage` | `src/wispr_clone/storage/**` (migration runner + `migrations/001_base.py`), `tests/**/storage/**`, `tests/probes/sqlite/**`, `tests/_attribution/impact/sqlite.toml` | contracts, config, util | P0 | S |
 | `feat/hotkeys` | `contracts/shortcuts.py`, `hotkeys/**`, its tests/probe/impact | contracts | P0 | S |
 | `feat/audio` | `audio/**`, its tests/probes/impacts | contracts | P0 | M |
 | `feat/dictionary-core` | `dictionary/apply.py`, `dictionary/import_export.py`, tests | contracts | P0 | S |
-| `feat/cleanup` | `cleanup/**`, `tests/eval/cleanup/**`, tests/probes/impact | contracts | P0 | M |
-| `feat/stt` | `stt/**`, `tests/fixtures/audio/**`, tests/probes/impact | contracts | P0 | M |
+| `feat/cleanup` | `cleanup/**`, `tests/eval/cleanup/**`, `tests/probes/httpx/**`, `impact/httpx.toml` | contracts | P0 | M |
+| `feat/stt` | `stt/**`, `tests/fixtures/audio/generated/stt_*`, `tests/probes/websockets/**`, `impact/websockets.toml` | contracts | P0 | M |
 | `feat/insertion-win` | `insertion/**`, tests/probes/impact | contracts | P0 | M |
 | `feat/settings-models` | `settings/schema.py`, `models/**`, tests | contracts (incl. shortcuts interface stub) | P0 | S |
-| `ops/model-servers` | `scripts/**` (except `check_imports.py`), `tests/probes/{vllm,ollama,net,gpu}/**` | — | P0 | S |
-| `feat/settings-store` | `settings/store.py`, tests | storage, contracts | storage, settings-models | S |
-| `feat/dictionary-repo` | `dictionary/repo.py`, tests | storage | storage, dictionary-core | S |
-| `feat/history` | `history/**`, tests | storage, contracts | storage | L |
+| `ops/model-servers` | `scripts/**` (except `check_imports.py`), `tests/probes/{vllm,ollama,net,gpu}/**`, `impact/{vllm,ollama}.toml`, `tests/fixtures/audio/speech/**` (LibriVox clip + `SOURCES.md`) | — | P0 | S |
+| `feat/settings-store` | `settings/store.py`, `storage/migrations/002_settings.py`, tests | storage, contracts | storage, settings-models | S |
+| `feat/dictionary-repo` | `dictionary/repo.py`, `storage/migrations/003_dictionary.py`, tests | storage | storage, dictionary-core | S |
+| `feat/history` | `history/**`, `storage/migrations/004_history.py`, tests | storage, contracts | storage | L |
 | `feat/web-runtime` | `web/**`, `web/tests/**` | command/event contract | P0, frozen command table | M |
 | `feat/ui-host` | `ui/**`, tests | `application.api` interface (faked), contracts | P0 | M |
 
 **Main-agent-only files:** `pyproject.toml`, `uv.lock`, `contracts/common.py, events.py, run.py`, `config.py`, `util/**`, `tests/conftest.py`, `tests/fakes/**`, `tests/conformance/**` (suite definitions), `tests/_attribution/*.py`, `.github/**`, `scripts/check_imports.py`, `pipeline/**`, `application/**`, `app.py`, `__main__.py`, `packaging/**`.
+
+**Single-writer rules (decisions 2026-09-24):**
+
+- **Migrations:** `feat/storage` owns the migration runner and `001_base.py`. Each wave-2 branch owns exactly one pre-numbered migration file (002 settings, 003 dictionary, 004 history). The coordinator allocates any later number. A migration only adds its own tables, so the three wave-2 branches never edit the same file.
+- **Audio fixtures:** generated signals (tones, silence) go in `tests/fixtures/audio/generated/<feature>_*` and are written by Sol feature for that feature. Real speech goes in `tests/fixtures/audio/speech/**` with `SOURCES.md` and is written only by Sol boundary on `ops/model-servers`.
+- **Model-server probes:** every P-VLLM, P-OLLAMA, P-NET and P-GPU probe and the `vllm`/`ollama` impact fragments belong to `ops/model-servers`. `feat/stt` and `feat/cleanup` use their results and do not write them.
+- **Integration test folders:** `tests/integration/<feature>/` belongs to that feature's Sol feature author. `tests/integration/pipeline/` and `tests/integration/app/` belong to Sol integration.
 
 Why this split works: Phase 0 installs the **whole approved dependency baseline** from DEPENDENCIES.md at once, so no branch edits `pyproject.toml`/`uv.lock`, the most common parallel merge conflict. Impact fragments are one file per dependency for the same reason.
 
@@ -541,6 +576,8 @@ A branch agent that needs a new `ErrorCode`, event field or shared type **does n
 3. The main agent lands the contract change on `main`. The branch rebases and removes the `xfail`.
 
 ### 7.4 Work-order template (the prompt given to each branch agent)
+
+With the Luna (code) / Sol (tests) split, the full template is [agents/WORK_ORDER.md](agents/WORK_ORDER.md). The block below summarizes the fields every order must carry.
 
 ```text
 ROLE: branch agent for <branch>. You own ONLY: <owned paths>.
@@ -560,6 +597,7 @@ DONE WHEN: Definition of Done §2.1 holds. PR description contains red output, g
 - Review every PR against the CODEMAP invariants, using the `ai-dev-system/agents/independent-reviewer.md` contract, and apply contract change requests.
 - Merge in the §7.1 order. After each merge, run the full suite plus conformance suites on `main`, which is the integration test of that merge.
 - Keep `tests/fakes/` honest: every fake passes the same conformance suite as its real adapter (fake-drift detection, §5.2).
+- Own triage: respond to `triage` issues and expired quarantines raised by GitHub Actions (§4.2) with `fix/<test-id>` work orders, and keep `docs/verification/<version>.md` for releases.
 
 ---
 
@@ -593,11 +631,12 @@ These steps pull several branches together or own cross-cutting control, so only
 | 2 | **Dependency baseline approved**: DEPENDENCIES.md runtime + dev packages, mypy as the type checker | Phase 0 writes `pyproject.toml`/`uv.lock` once. Optional `keyring` stays out until a cloud adapter is chosen (CODEMAP G7) |
 | 3 | **Main agent merges on its own** once CI is green and its review is done | Branch protection requires the checks in §4.2. The main agent merges with `gh pr merge --squash` only after both. Branch agents still never merge |
 | 4 | **`gh` installed** (v2.101.0, `~/.local/bin/gh`, checksum-verified) with the `workflow` scope, needed to push `.github/workflows/` | Agents push branches and open/merge PRs through `gh` |
-| 5 | **Tier G/E runs locally** on this WSL machine (RTX 5080). No self-hosted runner | `nightly.yml` keeps only hosted jobs. The agent runs `uv run pytest -m "gpu or adapter or e2e"`, then attaches `attribution.json` and its summary to the PR (integration steps) or `docs/verification/<version>.md` (release). §4.4 runner rules do not apply. Model downloads still need a one-time approval of the exact models and sizes when `ops/model-servers` reaches setup |
-| 6 | **Public-domain speech fixture** | Use a short LibriVox excerpt (LibriVox recordings are public domain). Record the source URL, reader and PD statement in `tests/fixtures/audio/SOURCES.md`, trimmed to ≤10 s and converted to 16 kHz mono. Not LibriSpeech, which is CC BY 4.0 rather than public domain |
+| 5 | **Tier G/E runs locally** on this WSL machine (RTX 5080). No self-hosted runner | `nightly.yml` keeps only hosted jobs. **Sol boundary is the single GPU owner** (decision 2026-09-24): it starts and stops the model servers and runs `uv run pytest -m "gpu or adapter or e2e"`, then attaches `attribution.json` and its summary to the PR (integration steps) or `docs/verification/<version>.md` (release). §4.4 runner rules do not apply. Model downloads still need a one-time approval of the exact models and sizes when `ops/model-servers` reaches setup |
+| 6 | **Public-domain speech fixture** | Use a short LibriVox excerpt (LibriVox recordings are public domain). Record the source URL, reader and PD statement in `tests/fixtures/audio/speech/SOURCES.md`, trimmed to ≤10 s and converted to 16 kHz mono. Not LibriSpeech, which is CC BY 4.0 rather than public domain |
+| 7 | **G1 decided: WSL repo + Windows-local venv** | One checkout in WSL. Windows Python 3.12 runs it through `\\wsl.localhost\…` with its venv on the Windows disk (`UV_PROJECT_ENVIRONMENT`). The app's runtime data (SQLite, WAVs) already lives under `%LOCALAPPDATA%` (CODEMAP §5), not on the WSL share. Windows-tier tests from WSL use `uv.exe` through interop (§3). Verified in Phase −1.1 |
+| 8 | **Phase −1 feasibility added** before P0 (§6) | Nothing is scaffolded until G1–G4 have evidence |
+| 9 | **Agent ownership decisions** (review of agents/ vs this pipeline) | Recorded in §2.3, §4.2, §7.1, §7.2 and [agents/README.md](agents/README.md) |
 
-**Still open:** settle CODEMAP gate G1 (Windows-side clone vs WSL checkout with a Windows venv) before M5. Earlier waves run in WSL and hosted CI.
+**First steps once approved:** Phase −1.1 → −1.4 (disposable), then P0.1 → P0.2 → P0.3 → P0.4 → P0.5 → P0.6 on `main/P0` (one PR each, TDD). Then launch wave 1 with 2 feature work orders while the main agent does M1.
 
-**First steps once approved:** P0.1 → P0.2 → P0.3 → P0.4 → P0.5 → P0.6 on `main/P0` (one PR each, TDD). Then launch wave 1 with 4–5 worktree agents while the main agent does M1.
-
-**This document extends CODEMAP §3's `tests/` layout** with `tests/arch/`, `tests/probes/`, `tests/conformance/`, `tests/fakes/`, `tests/_attribution/` and `tests/e2e/`, and adds `.github/workflows/` at the repo root. CODEMAP should be updated to match when Phase 0 lands.
+**This document extends CODEMAP §3's `tests/` layout** with `tests/arch/`, `tests/probes/`, `tests/conformance/`, `tests/fakes/`, `tests/_attribution/`, `tests/e2e/`, `tests/integration/{<feature>,pipeline,app}/` and `tests/fixtures/audio/{generated,speech}/`, adds `experiments/` for Phase −1, and adds `.github/workflows/` at the repo root. CODEMAP should be updated to match when Phase 0 lands.
