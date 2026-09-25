@@ -148,3 +148,9 @@ Impact fragment `tests/_attribution/impact/pynput.toml`: dependency `pynput`, ki
 `["hotkeys.pynput_listener"]`, features global dictation shortcut / cancel shortcut, error_codes
 `["validation"]` (no dedicated code exists; the listener failing to start is reported through
 setup), action = check the pynput pin in uv.lock and that the app runs on the interactive desktop.
+
+## Coordinator decisions after RED review
+
+1. `reset()` during an active hold (hold mode, started, not yet stopped) posts exactly one
+   `on_stop` and clears pressed state: a lost key-up (focus change, hook restart) must never leave
+   recording running. In toggle mode `reset()` only clears pressed state (no callback).

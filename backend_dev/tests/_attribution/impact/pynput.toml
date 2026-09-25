@@ -1,0 +1,6 @@
+dependency = "pynput"
+kind = "library"
+modules = ["hotkeys.pynput_listener"]
+features = ["global dictation shortcut", "cancel shortcut"]
+error_codes = ["validation"]
+action = "Check the pynput pin in uv.lock and that the app runs on the interactive desktop"
