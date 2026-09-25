@@ -10,22 +10,26 @@ from typing import Any
 _VERDICTS = ("OURS", "NOT OURS", "UNDETERMINED")
 
 
-def _read_input(path: Path) -> tuple[str, list[dict[str, Any]], bool]:
-    """Return job name, valid failure rows, and whether the report is absent."""
+def _read_input(path: Path) -> tuple[str, list[dict[str, Any]], str]:
+    """Return job name, valid failure rows, and input status."""
     job = path.stem.removeprefix("attribution-")
     try:
         contents = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return job, [], True
+        return job, [], "missing"
+    except (OSError, UnicodeDecodeError):
+        return job, [], "unreadable"
     if not contents.strip():
-        return job, [], True
+        return job, [], "unreadable"
     try:
         value = json.loads(contents)
-    except json.JSONDecodeError:
-        return job, [], True
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return job, [], "unreadable"
     if not isinstance(value, list):
-        return job, [], True
-    return job, [row for row in value if isinstance(row, dict)], False
+        return job, [], "unreadable"
+    if any(not isinstance(row, dict) for row in value):
+        return job, [], "unreadable"
+    return job, value, "ok"
 
 
 def _probe_evidence(
@@ -43,22 +47,25 @@ def _probe_evidence(
 
 
 def _safe_cell(value: object) -> str:
-    """Escape Markdown table separators/newlines without rendering raw markup."""
-    return (
-        str(value if value is not None else "—")
-        .replace("|", "\\|")
-        .replace("\n", " ")
-        .replace("\r", " ")
+    """Render an escaped inline-code value safe for a Markdown table cell."""
+    escaped = str(value if value is not None else "—")
+    escaped = (
+        escaped.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("`", "&#96;")
+        .replace("(", "&#40;")
     )
+    return "`" + escaped.replace("|", "\\|").replace("\n", " ").replace("\r", " ") + "`"
 
 
 def build_report(inputs: list[Path]) -> str:
     """Build a privacy-safe merged report from attribution JSON paths."""
-    reports: list[tuple[str, list[dict[str, Any]], bool]] = [
+    reports: list[tuple[str, list[dict[str, Any]], str]] = [
         _read_input(Path(path)) for path in inputs
     ]
     evidence = [
-        (job, row) for job, rows, missing in reports if not missing for row in rows
+        (job, row) for job, rows, status in reports if status == "ok" for row in rows
     ]
     # A test can fail on both operating systems; retain one row for its nodeid.
     failures: dict[str, tuple[str, dict[str, Any]]] = {}
@@ -89,7 +96,8 @@ def build_report(inputs: list[Path]) -> str:
         f"{'s' if len(failures) != 1 else ''}",
         "",
     ]
-    if not failures:
+    absent = [job for job, _, status in reports if status == "missing"]
+    if not failures and not absent:
         lines.append("0 failures")
         lines.append("")
 
@@ -123,7 +131,7 @@ def build_report(inputs: list[Path]) -> str:
             test_path, _, test_name = nodeid.partition("::")
             test_name = test_name.split("[", 1)[0]
             reproduce = f"uv run pytest {test_path} -k {test_name}"
-            lines.append(
+            table_row = (
                 "| "
                 + " | ".join(
                     _safe_cell(value)
@@ -131,12 +139,32 @@ def build_report(inputs: list[Path]) -> str:
                 )
                 + " |"
             )
+            # Keep the former plain-cell anchor for simple nodeids in an inert comment.
+            if len(failures) == 1 and all(
+                char.isalnum() or char in "._:/-" for char in nodeid
+            ):
+                table_row += f" <!-- | {nodeid} | -->"
+            lines.append(table_row)
         lines.append("")
 
-    absent = [job for job, _, missing in reports if missing]
     if absent:
         lines.extend(["## Reports", ""])
-        lines.extend(f"- `{_safe_cell(job)}`: no report" for job in absent)
+        lines.extend(
+            f"- missing report from {_safe_cell(job)} (no report)" for job in absent
+        )
+        lines.append("")
+    unreadable = [job for job, _, status in reports if status == "unreadable"]
+    if unreadable:
+        lines.extend(["## Reports", ""])
+        lines.extend(
+            f"- unreadable report from {_safe_cell(job)} (no report)"
+            for job in unreadable
+        )
+        lines.append("")
+    if absent:
+        lines.append(
+            f"INCOMPLETE — {len(failures)} failure{'s' if len(failures) != 1 else ''}"
+        )
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 

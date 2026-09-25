@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
@@ -42,6 +44,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
@@ -68,6 +72,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
@@ -98,6 +104,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
@@ -115,5 +123,9 @@ jobs:
       - name: Render run summary
         working-directory: backend_dev
         run: |
-          uv run python scripts/attribution_report.py ../attribution-summary.md ../attribution-inputs/*.json
+          uv run python scripts/attribution_report.py ../attribution-summary.md \
+            ../attribution-inputs/attribution-unit-ubuntu-latest.json \
+            ../attribution-inputs/attribution-unit-windows-latest.json \
+            ../attribution-inputs/attribution-probes-ubuntu-latest.json \
+            ../attribution-inputs/attribution-probes-windows-latest.json
           cat ../attribution-summary.md >> "$GITHUB_STEP_SUMMARY"
