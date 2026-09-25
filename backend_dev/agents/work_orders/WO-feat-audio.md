@@ -185,3 +185,16 @@ sounddevice, the Windows microphone privacy setting and device connection.
    level = `clip((dB + 60) / 60, 0, 1)`. So a full-scale tone → ≈ 1.0 in its band, a −30 dBFS tone
    → ≈ 0.5, silence → 0.0. Tests use tones on exact FFT bin centres for 1,280-sample chunks at
    16 kHz (12.5 Hz spacing), e.g. 1,000 Hz.
+
+## Coordinator review of GREEN (binding)
+
+2. Streaming resampling: capture keeps ONE `soxr.ResampleStream(source_rate, 16000, 1,
+   dtype="float32", quality="HQ")` per capture and feeds every block through it (flush with
+   `last=True` on stop), so block boundaries have no filter edge artifacts. `to_mono_16k` stays
+   for one-shot use. Test: a continuous 1 kHz tone at 48 kHz captured in 80 ms blocks equals (within
+   1e-3 after the filter delay) one-shot resampling of the same signal, and has no spikes at block
+   edges.
+3. Callback status: only `input_overflow` means overflow. Other flags (e.g. `input_underflow`) are
+   ignored (no error, no drop). A disconnect is detected when the stream ends without stop/cancel
+   (the fake's `finished_callback` / an `sd.CallbackAbort`-style stop) or when `start()`/`read`
+   raises; then `MICROPHONE_DISCONNECTED`.
