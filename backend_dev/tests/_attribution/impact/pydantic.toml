@@ -1,0 +1,6 @@
+dependency = "pydantic"
+kind = "library"
+modules = ["settings.schema"]
+features = ["settings validation and upgrade", "local-only enforcement"]
+error_codes = ["validation", "cloud_model_forbidden"]
+action = "Check the pydantic pin in uv.lock; not a wispr_clone code fix"
