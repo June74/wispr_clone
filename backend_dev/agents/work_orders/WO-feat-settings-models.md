@@ -155,3 +155,13 @@ Impact fragment `tests/_attribution/impact/pydantic.toml`: `dependency = "pydant
 enforcement; `error_codes = ["validation", "cloud_model_forbidden"]`; action = check the pydantic pin
 in uv.lock, not a wispr_clone fix.
 </content>
+
+## Coordinator findings from a demo of the GREEN code (binding)
+
+1. `is_loopback_endpoint` must also return False when the port is invalid (e.g. `:99999`,
+   `:0`, non-numeric) — reading `urlsplit(...).port` raises for these today but is never read.
+2. It must return False when the URL carries user info (`http://user:pw@127.0.0.1:1234`):
+   credentials never belong in settings or the registry.
+3. `microphone_id`, when not None, is 1..256 characters (device IDs are short; an unbounded
+   string is a needless storage/validation risk).
+   IPv4-mapped loopback (`[::ffff:127.0.0.1]`) and an upper-case scheme stay accepted.
