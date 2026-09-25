@@ -51,3 +51,13 @@ RED rule: the script does not exist yet; a failing subprocess (missing file) is 
 Authorization: edit only writable paths; no git writes; coordinator commits, pushes, opens PR.
 Handoff: coordinator.
 ```
+
+## Coordinator decisions after verification
+
+1. Relative imports inside a package `__init__.py` resolve relative to that package itself
+   (Python semantics). Fix the resolution defect Sol's tests expose.
+2. Boundary (direction) rules apply to EVERY import, including imports inside functions and under
+   `if TYPE_CHECKING:`: they still couple packages.
+3. Cycle detection uses only imports that execute at module import time: exclude imports inside
+   function/method bodies and inside `if TYPE_CHECKING:` blocks (also `typing.TYPE_CHECKING`).
+   Sol adds a T-ARCH-001 test pinning this before Luna implements it.
