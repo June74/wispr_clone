@@ -111,3 +111,9 @@ class SettingsStore:
 2. `tests/integration/storage/test_database.py::test_T_STO_001...` asserts discovery returns only
    version 1; that breaks for every wave-2 migration. RESERVED for Sol in this order: change it to
    assert the discovered versions are exactly `1..N` (contiguous, starting at 1, `m001_base` first).
+3. `update()` requires a loaded store and an existing row: before `load()`, or if the stored row
+   is missing, it raises `WisprError(ErrorCode.STORAGE_ERROR, "settings.store", "not loaded")`,
+   writes nothing, and leaves `current()` unchanged (recreating defaults would silently drop the
+   user's other settings). Decision 1 is RESERVED for Luna in this order:
+   `src/wispr_clone/storage/migrations/__init__.py` may gain the one line
+   `IntegrityError = sqlite3.IntegrityError`.

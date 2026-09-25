@@ -76,7 +76,6 @@ async def test_T_SET_011_recovers_only_settings_row(
     tmp_path: Path, raw: str, reason: str
 ) -> None:
     from wispr_clone.settings.store import SettingsStore
-
     from wispr_clone.storage.migrations import m001_base, m002_settings
 
     def unrelated(conn: sqlite3.Connection) -> None:
@@ -249,16 +248,135 @@ async def test_T_SET_013_upgrade_is_rewritten(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+@pytest.mark.parametrize("damage", ["missing", "invalid-json", "invalid-settings"])
+async def test_T_SET_012_update_rejects_damaged_stored_row_without_changing_cache(
+    tmp_path: Path, damage: str
+) -> None:
+    from wispr_clone.settings.store import SettingsStore
+
+    path = tmp_path / "damaged_update.db"
+    async with Database(path) as db:
+        store = SettingsStore(db, default_registry())
+        loaded = await store.load()
+        if damage == "missing":
+            await db.write(
+                lambda conn: conn.execute("DELETE FROM settings WHERE id = 1")
+            )
+            expected_row = None
+        else:
+            expected_row = (
+                "{broken"
+                if damage == "invalid-json"
+                else '{"schema_version":1,"cleanup_enabled":"false"}'
+            )
+            await db.write(
+                lambda conn: conn.execute(
+                    "UPDATE settings SET data = ? WHERE id = 1", (expected_row,)
+                )
+            )
+
+        with pytest.raises(WisprError):
+            await store.update({"theme": "dark"})
+        assert store.current() == loaded
+        assert await db.read(
+            lambda conn: conn.execute(
+                "SELECT data FROM settings WHERE id = 1"
+            ).fetchone()
+        ) == (None if expected_row is None else (expected_row,))
+        assert (
+            await db.read(
+                lambda conn: conn.execute(
+                    "SELECT COUNT(*) FROM settings_backup"
+                ).fetchone()[0]
+            )
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_T_SET_012_failed_write_keeps_cache_and_row(tmp_path: Path) -> None:
+    from wispr_clone.settings.store import SettingsStore
+
+    path = tmp_path / "failed_write.db"
+    async with Database(path) as db:
+        store = SettingsStore(db, default_registry())
+        original = await store.load()
+        original_row = _raw_settings(path)
+        await db.write(
+            lambda conn: conn.execute(
+                "CREATE TRIGGER reject_settings_update BEFORE UPDATE ON settings "
+                "BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END"
+            )
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            await store.update({"theme": "dark"})
+        assert store.current() == original
+        assert _raw_settings(path) == original_row
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_T_SET_012_load_racing_update_keeps_latest_value(tmp_path: Path) -> None:
+    from wispr_clone.settings.store import SettingsStore
+
+    path = tmp_path / "load_update_race.db"
+    async with Database(path) as db:
+        store = SettingsStore(db, default_registry())
+        await store.load()
+        loaded, updated = await asyncio.gather(
+            store.load(), store.update({"theme": "dark"})
+        )
+        assert loaded.theme in {"light", "dark"}
+        assert updated.theme == "dark"
+        assert store.current().theme == "dark"
+        assert json.loads(_raw_settings(path))["theme"] == "dark"
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_T_SET_012_error_text_excludes_cleanup_instructions(
+    tmp_path: Path,
+) -> None:
+    from wispr_clone.settings.store import SettingsStore
+
+    sentinel = "PRIVATE_SETTINGS_SENTINEL_71c0"
+    path = tmp_path / "private_error.db"
+    async with Database(path) as db:
+        store = SettingsStore(db, default_registry())
+        await store.load()
+        with pytest.raises(WisprError) as caught:
+            await store.update({"cleanup_instructions": sentinel * 100})
+        assert sentinel not in str(caught.value)
+        assert sentinel not in repr(caught.value)
+        assert store.current() == default_settings()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
 async def test_T_SET_014_storage_exports_and_sqlite_import_boundary(
     tmp_path: Path,
 ) -> None:
     import wispr_clone.settings.store as store_module
-
+    import wispr_clone.storage as storage_module
     from wispr_clone.storage import Connection, IntegrityError
+    from wispr_clone.storage import migrations as migration_package
     from wispr_clone.storage.migrations import m002_settings
 
     assert Connection is sqlite3.Connection
     assert IntegrityError is sqlite3.IntegrityError
+    assert migration_package.IntegrityError is IntegrityError
+    storage_path = Path(storage_module.__file__)
+    storage_syntax = ast.parse(
+        storage_path.read_text(encoding="utf-8"), filename=str(storage_path)
+    )
+    db_imports = [
+        alias.name
+        for node in ast.walk(storage_syntax)
+        if isinstance(node, ast.ImportFrom) and node.module == "wispr_clone.storage.db"
+        for alias in node.names
+    ]
+    assert db_imports == ["Database"]
     assert (m002_settings.VERSION, m002_settings.NAME) == (2, "settings")
     for module in (store_module, m002_settings):
         path = Path(module.__file__)

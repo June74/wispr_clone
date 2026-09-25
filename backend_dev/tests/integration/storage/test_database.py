@@ -71,8 +71,9 @@ def test_T_STO_001_order_discovery_and_idempotent_migrations(
         assert applied == [1, 2]
 
     discovered = runner.discover_migrations()
-    assert [item.version for item in discovered] == [1]
-    assert [item.name for item in discovered] == ["base"]
+    assert [item.version for item in discovered] == list(range(1, len(discovered) + 1))
+    assert discovered[0].name == "base"
+    assert discovered[0].apply.__module__.endswith(".m001_base")
 
     # Use disposable migration modules to exercise discovery without altering source.
     for case, filenames in [
