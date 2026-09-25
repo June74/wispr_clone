@@ -70,6 +70,34 @@ def test_T_ARCH_001_reports_cycle_across_package_modules(tmp_path: Path) -> None
 
 
 @pytest.mark.unit
+@pytest.mark.invariant("Sibling module imports form a cycle even within one package")
+def test_T_ARCH_001_reports_relative_sibling_module_cycle(tmp_path: Path) -> None:
+    root = _tree(
+        tmp_path,
+        {
+            "pipeline/first.py": "from . import second\n",
+            "pipeline/second.py": "from . import first\n",
+        },
+    )
+
+    result = _check(root)
+
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    assert any(
+        "wispr_clone.pipeline.first -> wispr_clone.pipeline.second: import cycle"
+        in line
+        for line in result.stdout.splitlines()
+    ), result.stdout
+    assert any(
+        "wispr_clone.pipeline.second -> wispr_clone.pipeline.first: import cycle"
+        in line
+        for line in result.stdout.splitlines()
+    ), result.stdout
+    _diagnostic(result, "pipeline/first.py", 1)
+    _diagnostic(result, "pipeline/second.py", 1)
+
+
+@pytest.mark.unit
 @pytest.mark.invariant("Only imports executed at module import time form cycles")
 @pytest.mark.parametrize(
     ("second_source", "has_cycle"),
