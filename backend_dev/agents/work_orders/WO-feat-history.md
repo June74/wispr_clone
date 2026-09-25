@@ -217,3 +217,13 @@ class HistoryRepo:
 | **T-HIS-013** (invariant) | `original_text` can be set once; changing it via `update_run` → `VALIDATION`; a direct SQL UPDATE is refused by the trigger |
 | T-HIS-014 | `create_run` with an existing `start_request_id` returns the same run, no new row, no event; `update_run` with an unknown/immutable field → `VALIDATION`; stale version → `STALE_VERSION`; no transcript/destination sentinel ever appears in an event or error |
 | T-HIS-015 | `m004_history` is version 4; history/ and the migration never import `sqlite3` (ast scan); T-DIC-013 re-check: with the real `m003_dictionary` in the list (once merged) dictionary rows survive `delete_all` |
+
+## Coordinator review of GREEN (binding)
+
+1. `DeleteResult.audio_pending` reports only the files of THIS deletion that could not be removed
+   (an older unrelated pending deletion must not make it True).
+2. `delete_run(unknown_id)` → `WisprError(RUN_NOT_FOUND, "history", "run")`; `delete_all()` on an
+   empty history is fine (`run_ids == ()`).
+3. `claim_attempt` rechecks expiry INSIDE its write transaction (a run that expires between the
+   expiry sweep and the claim must not get a claim) → `RUN_EXPIRED`.
+4. Sol fixes the ruff import-order finding in its own `test_history_deletion.py`.
