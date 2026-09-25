@@ -1,0 +1,67 @@
+[project]
+name = "wispr-clone"
+version = "0.1.0"
+description = "Local-first voice dictation application"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "httpx",
+    "numpy",
+    "pydantic",
+    "sounddevice",
+    "soxr",
+    "pywin32; sys_platform == 'win32'",
+    "pynput; sys_platform == 'win32'",
+    "pywebview; sys_platform == 'win32'",
+    "transcribe-cpp @ https://github.com/handy-computer/transcribe.cpp/releases/download/v0.2.3/transcribe_cpp-0.2.3-py3-none-any.whl ; sys_platform == 'win32'",
+    "transcribe-cpp-native-cu12 @ https://github.com/handy-computer/transcribe.cpp/releases/download/v0.2.3/transcribe_cpp_native_cu12-0.2.3-py3-none-win_amd64.whl ; sys_platform == 'win32'",
+]
+
+[dependency-groups]
+dev = [
+    "mypy",
+    "pyinstaller; sys_platform == 'win32'",
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/wispr_clone"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+testpaths = ["tests"]
+markers = [
+    "unit: fast isolated unit tests",
+    "integration: tests across multiple components",
+    "conformance: tests against a shared interface contract",
+    "probe: diagnostic environment or dependency probes",
+    "adapter: tests for an external-system adapter",
+    "windows: tests requiring Windows",
+    "gpu: tests requiring a GPU",
+    "e2e: end-to-end application tests",
+    "manual: checks requiring a human",
+    "feature: tests for a user-visible feature",
+    "invariant: tests of a required system invariant",
+    "quarantine: temporarily quarantined tests with a tracked expiry",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+extend-exclude = ["experiments/**"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+strict = true

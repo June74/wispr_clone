@@ -1,0 +1,1 @@
+"""Wispr Clone application package."""
