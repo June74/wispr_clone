@@ -88,3 +88,12 @@ Authorization: edit only writable paths; no git writes; coordinator commits, pus
    statement. When the invariant marker is present, `invariant:` is printed for OURS verdicts.
 4. `symptom:` shows the exception type and the first line of its message (privacy rule already
    allows this), never the placeholder text "failed failure".
+
+## Coordinator decisions after verification
+
+5. Errors in setup or teardown (fixtures) are attributed with the same rules as call failures, and
+   the report says which phase (`phase: setup|call|teardown`).
+6. Exceptions raised inside the Python standard library are never a third-party dependency; with no
+   wispr_clone frame they are `OURS · logic` at the test's failing line.
+7. A probe that passes, including a strict XPASS, means "the dependency behaved as probed". Only a
+   probe that fails (or errors) makes the verdict NOT OURS.
