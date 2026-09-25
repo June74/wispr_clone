@@ -115,6 +115,8 @@ def test_T_KEY_008_key_name_maps_supported_keys_and_discards_all_other_input() -
         keyboard.Key.media_play_pause,
         keyboard.KeyCode("!"),
         keyboard.KeyCode("é"),
+        keyboard.KeyCode("´"),
+        keyboard.KeyCode("\u0301"),
         keyboard.KeyCode("ab"),
         keyboard.KeyCode(None),
         object(),
@@ -137,3 +139,33 @@ def test_T_KEY_008_listener_import_is_lazy_and_stop_is_idempotent() -> None:
     instance = keyboard.Listener.instances[-1]
     assert instance.started == 1
     assert instance.stopped == 1
+
+
+@pytest.mark.unit
+def test_T_KEY_008_releasing_one_ctrl_side_keeps_other_side_held() -> None:
+    from wispr_clone.contracts.shortcuts import parse_binding
+    from wispr_clone.hotkeys.hotkey_service import HotkeyService
+    from wispr_clone.hotkeys.pynput_listener import PynputListener
+
+    keyboard = _fake_keyboard()
+    posted: list[Any] = []
+    service = HotkeyService(
+        dictation=parse_binding("ctrl+space"),
+        cancel=parse_binding("escape"),
+        mode="hold",
+        on_start=lambda: None,
+        on_stop=lambda: None,
+        on_cancel=lambda: None,
+        post=posted.append,
+    )
+    listener = PynputListener(service, module=keyboard)
+    listener.start()
+    instance = keyboard.Listener.instances[-1]
+    instance.on_press(keyboard.Key.ctrl_l)
+    instance.on_press(keyboard.Key.ctrl_r)
+    instance.on_release(keyboard.Key.ctrl_l)
+
+    assert service.tracked_keys == frozenset({"ctrl"})
+    instance.on_press(keyboard.Key.space)
+    assert len(posted) == 1
+    listener.stop()

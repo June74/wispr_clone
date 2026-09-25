@@ -82,3 +82,16 @@ def test_T_KEY_001_rejects_conflicting_bindings() -> None:
         caught.value.why,
     ) == (ErrorCode.VALIDATION, "shortcuts", "conflict")
     shortcuts.validate_bindings(binding, shortcuts.parse_binding("escape"))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("text", ["сtrl+space", "ctrl＋space", "ctrl++space"])
+def test_T_KEY_001_rejects_lookalikes_and_empty_chord_part(text: str) -> None:
+    from wispr_clone.contracts import shortcuts
+    from wispr_clone.contracts.common import ErrorCode, WisprError
+
+    with pytest.raises(WisprError) as caught:
+        shortcuts.parse_binding(text)
+    assert caught.value.error_code == ErrorCode.VALIDATION
+    assert caught.value.where == "shortcuts"
+    assert caught.value.why == "unknown key"

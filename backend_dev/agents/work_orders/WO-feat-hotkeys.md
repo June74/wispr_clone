@@ -166,3 +166,13 @@ setup), action = check the pynput pin in uv.lock and that the app runs on the in
 3. A cancel binding WITHOUT modifiers (e.g. `escape`) fires regardless of held modifiers, so Esc
    cancels while `ctrl+shift+space` is held in hold mode. A cancel binding WITH modifiers needs an
    exact modifier match like any other binding.
+
+## Coordinator decisions after verification
+
+4. Re-arming: after a hold ends (dictation key or any of its modifiers released), a new DOWN of
+   the dictation key with exactly its modifiers held starts again, including when the modifiers
+   stayed down the whole time or one modifier was released and pressed again.
+5. Left/right modifiers: `PynputListener` counts physical modifier keys per canonical name
+   (e.g. `ctrl_l`, `ctrl_r` → `ctrl`). It reports `DOWN ctrl` only when the first physical Ctrl
+   goes down and `UP ctrl` only when the last one is released. It stores only these per-modifier
+   counts (never other keys).
