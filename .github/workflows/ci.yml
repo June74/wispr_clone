@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+env:
+  PYTHONUTF8: "1"
+
 defaults:
   run:
     working-directory: backend_dev
