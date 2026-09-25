@@ -435,7 +435,11 @@ def check_impact_map_sync(src_root: Path, impact_dir: Path) -> None:
         for node in ast.walk(tree):
             top: str | None = None
             if isinstance(node, ast.Import):
-                top = node.names[0].name.split(".", 1)[0]
+                for imported in node.names:
+                    top = imported.name.split(".", 1)[0]
+                    if top and top != "wispr_clone":
+                        imports.setdefault(module, set()).add(top)
+                continue
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                 top = node.module.split(".", 1)[0]
             if top and top != "wispr_clone":
@@ -468,7 +472,13 @@ def check_impact_map_sync(src_root: Path, impact_dir: Path) -> None:
     for source_module, top_levels in imports.items():
         for top_level in top_levels:
             if top_level in sys.stdlib_module_names:
-                # Standard-library imports need attribution only when explicitly listed.
+                if top_level in fragments and source_module not in set(
+                    fragments[top_level][1]["modules"]
+                ):
+                    raise ValueError(
+                        f"{top_level} fragment {fragments[top_level][0].name} "
+                        f"does not list importing module {source_module}"
+                    )
                 continue
             distributions = set(
                 importlib.metadata.packages_distributions().get(top_level, [])

@@ -184,3 +184,13 @@ report version "not installed". SQLite is a real third-party C library shipped i
    it must be listed in that fragment (same rule as third-party dependencies).
 8. Decision 4 (transaction ended early) confirmed by Sol's tests for executescript, commit() in a
    migration, and commit() in a write callback.
+
+## Coordinator review of the fix round (binding)
+
+9. `Database.write` keeps the pinned signature `async def write(fn) -> T` and returns `fn`'s result
+   (the fix round changed it to `-> None`; history will need returned row ids/claims).
+10. Migration modules never import `sqlite3` (otherwise every wave-2 branch would have to edit the
+    single-owner `sqlite3.toml`, a parallel-merge conflict). The runner module exports
+    `Connection = sqlite3.Connection` (a type alias; `Migration.apply` is typed with it), and
+    migration modules annotate with `from wispr_clone.storage.migrations import Connection`.
+    `Any` is not acceptable. The `sqlite3` fragment keeps `modules = ["storage.db", "storage.migrations"]`.

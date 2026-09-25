@@ -73,6 +73,14 @@ class Database:
             )
         except Exception:
             if self._conn is not None:
+                try:
+                    loop = asyncio.get_running_loop()
+                    self._schema_version = await loop.run_in_executor(
+                        self._executor,
+                        self._read_schema_version,
+                    )
+                except Exception:
+                    pass
                 await asyncio.get_running_loop().run_in_executor(
                     self._executor, self._close_connection
                 )
@@ -86,19 +94,29 @@ class Database:
             self._conn.close()
             self._conn = None
 
+    def _read_schema_version(self) -> int:
+        if self._conn is None:
+            return self._schema_version
+        return int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+
     def _shutdown_executor(self) -> None:
         self._executor.shutdown(wait=True)
 
     async def _run(self, fn: Callable[[sqlite3.Connection], T], write: bool) -> T:
-        self._require_open()
+        conn = self._require_open()
 
         def execute() -> T:
-            conn = self._require_open()
             if not write:
                 return fn(conn)
             conn.execute("BEGIN IMMEDIATE")
             try:
                 result = fn(conn)
+                if not conn.in_transaction:
+                    raise WisprError(
+                        ErrorCode.STORAGE_ERROR,
+                        "storage.db",
+                        "transaction ended early",
+                    )
                 conn.execute("COMMIT")
                 return result
             except BaseException:
@@ -108,9 +126,9 @@ class Database:
 
         return await asyncio.get_running_loop().run_in_executor(self._executor, execute)
 
-    async def write(self, fn: Callable[[sqlite3.Connection], T]) -> T:
+    async def write(self, fn: Callable[[sqlite3.Connection], T]) -> None:
         """Run a callback in one immediate transaction."""
-        return await self._run(fn, True)
+        await self._run(fn, True)
 
     async def read(self, fn: Callable[[sqlite3.Connection], T]) -> T:
         """Run a callback on the writer thread without an explicit transaction."""

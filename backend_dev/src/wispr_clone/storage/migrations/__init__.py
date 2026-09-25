@@ -76,12 +76,20 @@ def apply_migrations(conn: sqlite3.Connection, migrations: Sequence[Migration]) 
         try:
             conn.execute("BEGIN IMMEDIATE")
             migration.apply(conn)
+            if not conn.in_transaction:
+                raise WisprError(
+                    ErrorCode.STORAGE_ERROR,
+                    f"migration {migration.version:03d}",
+                    "transaction ended early",
+                )
             conn.execute(f"PRAGMA user_version = {migration.version}")
             conn.execute("COMMIT")
             current = migration.version
         except Exception as error:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
+            if isinstance(error, WisprError):
+                raise
             raise WisprError(
                 ErrorCode.STORAGE_ERROR,
                 f"migration {migration.version:03d}",
