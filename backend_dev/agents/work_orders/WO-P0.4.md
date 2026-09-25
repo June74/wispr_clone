@@ -67,3 +67,12 @@ Check commands (from backend_dev/, UV_LINK_MODE=copy): uv sync --locked; uv run 
   uv run pytest -q -W error
 Authorization: edit only writable paths; no git writes; coordinator commits, pushes, opens PR.
 ```
+
+## Coordinator decisions after RED review
+
+1. Accepted API: `check_impact_map_sync(src_root: Path, impact_dir: Path) -> None` in
+   `tests/_attribution/plugin.py`; it raises `ValueError` (or `AssertionError`) naming the first
+   mismatch. `src_root` is the directory that contains the `wispr_clone` package.
+2. The conditional plugin registration in tests/conftest.py is allowed for RED only. In the verify
+   step Sol makes it unconditional (`pytest_plugins = ("pytester", "_attribution.plugin")`), so a
+   missing or broken plugin fails loudly.
