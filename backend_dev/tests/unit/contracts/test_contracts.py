@@ -1,6 +1,9 @@
 """Observable P0.2 contracts shared by the application and UI."""
 
+import ast
 import json
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -50,6 +53,69 @@ def test_T_CON_002_error_messages_cover_every_code() -> None:
         assert all(isinstance(action, str) and action.strip() for action in actions), (
             code
         )
+
+
+@pytest.mark.unit
+def test_T_CON_002_required_failure_behaviors_have_error_codes() -> None:
+    from wispr_clone.contracts.common import ErrorCode
+
+    required = {
+        "validation",
+        "unknown_command",
+        "stale_version",
+        "expired_command",
+        "previous_session_token",
+        "run_not_found",
+        "run_expired",
+        "run_deleted",
+        "duplicate_request",
+        "device_lease_conflict",
+        "microphone_unavailable",
+        "microphone_disconnected",
+        "audio_queue_overflow",
+        "no_speech_detected",
+        "stt_unavailable",
+        "model_load_failed",
+        "stt_timeout",
+        "stt_stream_closed",
+        "cleanup_unavailable",
+        "cleanup_timeout",
+        "cleanup_rejected",
+        "cloud_model_forbidden",
+        "non_loopback_endpoint",
+        "destination_unverifiable",
+        "destination_closed",
+        "destination_wait_limit_exceeded",
+        "insertion_failed",
+        "insertion_uncertain",
+        "storage_error",
+        "deletion_failed",
+    }
+    assert required <= {code.value for code in ErrorCode}
+
+
+@pytest.mark.unit
+def test_T_CON_contracts_import_only_stdlib_or_contracts() -> None:
+    contracts_dir = Path(__file__).resolve().parents[3] / "src/wispr_clone/contracts"
+    for path in contracts_dir.glob("*.py"):
+        module = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(module):
+            if isinstance(node, ast.Import):
+                names = (alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                assert node.level == 0, (path.name, node.module)
+                names = (node.module or "",)
+            else:
+                continue
+            for name in names:
+                assert (
+                    name == "wispr_clone.contracts"
+                    or name.startswith("wispr_clone.contracts.")
+                    or name.split(".", maxsplit=1)[0] in sys.stdlib_module_names
+                ), (
+                    path.name,
+                    name,
+                )
 
 
 EVENT_NAMES = {
@@ -158,6 +224,24 @@ def test_T_CON_004_boundary_exceptions_expose_fields() -> None:
     assert internal.error_code == code
     assert internal.where == "synthetic-boundary"
     assert internal.why == "synthetic invariant"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("error_kind", ["third_party", "wispr"])
+def test_T_CON_004_exception_messages_do_not_echo_private_detail(
+    error_kind: str,
+) -> None:
+    from wispr_clone.contracts.common import ErrorCode, ThirdPartyError, WisprError
+
+    private_text = "SYNTHETIC_PRIVATE_TRANSCRIPT"
+    if error_kind == "third_party":
+        error = ThirdPartyError(
+            "stt", "finalize", private_text, ErrorCode.STT_UNAVAILABLE
+        )
+    else:
+        error = WisprError(ErrorCode.VALIDATION, "command", private_text)
+
+    assert private_text not in str(error)
 
 
 @pytest.mark.unit
