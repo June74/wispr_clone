@@ -69,6 +69,7 @@ def imported_modules(
     node: ast.Import | ast.ImportFrom,
     importer: str,
     known_modules: set[str],
+    is_package: bool,
 ) -> list[str]:
     """Resolve imports into concrete modules where the tree identifies them."""
     if isinstance(node, ast.Import):
@@ -78,7 +79,7 @@ def imported_modules(
         importer,
         node.level,
         node.module,
-        importer == PACKAGE or importer.endswith(".__init__"),
+        is_package,
     )
     if not base.startswith(PACKAGE):
         return [base]
@@ -88,6 +89,57 @@ def imported_modules(
         if candidate in known_modules:
             results.append(candidate)
     return results
+
+
+class ImportVisitor(ast.NodeVisitor):
+    """Collect imports with whether they execute during module initialization."""
+
+    def __init__(self) -> None:
+        self.imports: list[tuple[ast.Import | ast.ImportFrom, bool]] = []
+        self.in_function = False
+        self.in_type_checking = False
+
+    def visit_Import(self, node: ast.Import) -> None:
+        self.imports.append((node, not self.in_function and not self.in_type_checking))
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self.imports.append((node, not self.in_function and not self.in_type_checking))
+
+    @staticmethod
+    def is_type_checking_test(test: ast.expr) -> bool:
+        return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+            isinstance(test, ast.Attribute)
+            and test.attr == "TYPE_CHECKING"
+            and isinstance(test.value, ast.Name)
+            and test.value.id == "typing"
+        )
+
+    def visit_If(self, node: ast.If) -> None:
+        previous = self.in_type_checking
+        if self.is_type_checking_test(node.test):
+            self.in_type_checking = True
+        for statement in node.body:
+            self.visit(statement)
+        self.in_type_checking = previous
+        for statement in node.orelse:
+            self.visit(statement)
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        # Decorators, defaults and annotations execute while defining the function.
+        for item in (*node.decorator_list, *node.args.defaults, *node.args.kw_defaults):
+            if item is not None:
+                self.visit(item)
+        previous = self.in_function
+        self.in_function = True
+        for statement in node.body:
+            self.visit(statement)
+        self.in_function = previous
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_function(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_function(node)
 
 
 def allowed(importer_package: str, imported_package: str) -> bool:
@@ -121,10 +173,11 @@ def check(root: Path) -> list[str]:
             )
             continue
 
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.Import, ast.ImportFrom)):
-                continue
-            for imported in imported_modules(node, importer, known_modules):
+        visitor = ImportVisitor()
+        visitor.visit(tree)
+        is_package = path.name == "__init__.py"
+        for node, module_time in visitor.imports:
+            for imported in imported_modules(node, importer, known_modules, is_package):
                 if not imported.startswith(f"{PACKAGE}.") and imported != PACKAGE:
                     continue
                 imported_package = imported.removeprefix(f"{PACKAGE}.").split(".", 1)[0]
@@ -147,7 +200,7 @@ def check(root: Path) -> list[str]:
                         f"{imported}: package dependency is not allowed"
                     )
 
-                if imported in known_modules:
+                if module_time and imported in known_modules and imported != importer:
                     graph[importer].add(imported)
                     edge_lines[(importer, imported)] = (path, node.lineno)
 
