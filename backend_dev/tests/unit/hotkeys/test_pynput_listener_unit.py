@@ -169,3 +169,30 @@ def test_T_KEY_008_releasing_one_ctrl_side_keeps_other_side_held() -> None:
     instance.on_press(keyboard.Key.space)
     assert len(posted) == 1
     listener.stop()
+
+
+@pytest.mark.unit
+def test_T_KEY_008_repeated_down_of_one_ctrl_side_does_not_leave_ctrl_held() -> None:
+    from wispr_clone.contracts.shortcuts import parse_binding
+    from wispr_clone.hotkeys.hotkey_service import HotkeyService
+    from wispr_clone.hotkeys.pynput_listener import PynputListener
+
+    keyboard = _fake_keyboard()
+    service = HotkeyService(
+        dictation=parse_binding("ctrl+space"),
+        cancel=parse_binding("escape"),
+        mode="hold",
+        on_start=lambda: None,
+        on_stop=lambda: None,
+        on_cancel=lambda: None,
+        post=lambda callback: None,
+    )
+    listener = PynputListener(service, module=keyboard)
+    listener.start()
+    instance = keyboard.Listener.instances[-1]
+    instance.on_press(keyboard.Key.ctrl_l)
+    instance.on_press(keyboard.Key.ctrl_l)
+    instance.on_release(keyboard.Key.ctrl_l)
+
+    assert service.tracked_keys == frozenset()
+    listener.stop()

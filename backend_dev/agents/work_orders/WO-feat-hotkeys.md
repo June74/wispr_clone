@@ -180,3 +180,8 @@ setup), action = check the pynput pin in uv.lock and that the app runs on the in
    never learns whether a posted callback has run, by decision 2). So `reset()` during that hold —
    even before the posted start is drained — posts `on_stop`; the app receives start then stop.
    The first block of T-KEY-007 (expects no stop in that case) predates decision 2 and is revised.
+7. Decision 5 refined: `PynputListener` tracks the SET of physical modifier keys down per
+   canonical name (e.g. {ctrl_l, ctrl_r}), not a count, because Windows auto-repeats modifier
+   DOWN events. Repeated DOWN of the same physical key changes nothing; `UP ctrl` is reported when
+   the set becomes empty. A new distinct press after a hold ends always re-arms (decision 4), even
+   if auto-repeat DOWNs of the dictation key arrived during the previous hold.

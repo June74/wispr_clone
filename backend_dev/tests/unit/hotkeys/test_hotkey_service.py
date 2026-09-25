@@ -191,6 +191,20 @@ def test_T_KEY_006_auto_repeat_never_refires_until_key_up(mode: str) -> None:
 
 
 @pytest.mark.unit
+def test_T_KEY_006_auto_repeat_does_not_suppress_next_distinct_hold() -> None:
+    from wispr_clone.contracts import shortcuts
+    from wispr_clone.hotkeys import hotkey_service as hotkeys
+
+    service, delivered, posted = _service(shortcuts, hotkeys, "hold")
+    _emit(service, hotkeys.KeyAction.DOWN, "ctrl", "shift", "space", "space")
+    service.handle(hotkeys.KeyAction.UP, "space")
+    service.handle(hotkeys.KeyAction.DOWN, "space")
+    _drain(posted)
+
+    assert delivered == ["start", "stop", "start"]
+
+
+@pytest.mark.unit
 def test_T_KEY_007_callbacks_only_via_post_and_reset_forgets_state() -> None:
     from wispr_clone.contracts import shortcuts
     from wispr_clone.hotkeys import hotkey_service as hotkeys
@@ -203,9 +217,9 @@ def test_T_KEY_007_callbacks_only_via_post_and_reset_forgets_state() -> None:
     service.reset()
     assert service.tracked_keys == frozenset()
     service.handle(hotkeys.KeyAction.UP, "space")
-    assert len(posted) == 1
+    assert len(posted) == 2
     _drain(posted)
-    assert delivered == ["start"]
+    assert delivered == ["start", "stop"]
 
     service, delivered, posted = _service(shortcuts, hotkeys, "hold")
     _emit(service, hotkeys.KeyAction.DOWN, "ctrl", "shift", "space")
