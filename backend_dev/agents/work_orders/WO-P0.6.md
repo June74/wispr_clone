@@ -55,3 +55,18 @@ Check commands (from backend_dev/, UV_LINK_MODE=copy): uv sync --locked; uv run 
 Authorization: edit only writable paths; no git writes; coordinator commits, pushes, opens PR,
   and applies branch protection after merge.
 ```
+
+## Coordinator decisions after verification (first hosted run: all 6 jobs green)
+
+1. Unreadable input (malformed JSON, invalid UTF-8, wrong shape) is reported as
+   "unreadable report from <job>" and never crashes the script; exit code stays 0.
+2. Everything user-controlled in the Markdown (nodeid, dist, where, reproduce) is escaped: shown as
+   inline code with backticks neutralised, HTML special characters escaped, newlines replaced, and
+   `|` escaped, so test names cannot inject links, HTML or table cells.
+3. The CI report step passes the EXPECTED artifact paths explicitly (one per unit/probes job and
+   OS), not a glob; a missing one is shown as "missing report from <job>" and the totals line says
+   "INCOMPLETE" instead of "0 failures".
+4. nightly.yml: `concurrency: {group: nightly-drift, cancel-in-progress: false}` and the issue step
+   finds an existing open issue by exact title before creating one.
+5. Every checkout in ci.yml and nightly.yml sets `persist-credentials: false`; the issue step gets
+   GH_TOKEN explicitly.
