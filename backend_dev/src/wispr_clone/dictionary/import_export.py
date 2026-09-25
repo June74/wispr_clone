@@ -57,12 +57,7 @@ def export_dictionary(entries: Sequence[DictionaryEntry]) -> str:
             for item in entries
         ],
     }
-    has_surrogate = any(
-        any(0xD800 <= ord(char) <= 0xDFFF for char in value)
-        for item in entries
-        for value in (item.spelling, item.note, *item.aliases)
-    )
-    return json.dumps(payload, ensure_ascii=has_surrogate, indent=2) + "\n"
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
 
 def parse_import(text: str, existing: Sequence[DictionaryEntry]) -> ImportPlan:

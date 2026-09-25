@@ -27,6 +27,10 @@ def _validation(why: str, where: str = "dictionary") -> WisprError:
     return WisprError(ErrorCode.VALIDATION, where=where, why=why)
 
 
+def _has_surrogate(text: str) -> bool:
+    return any(0xD800 <= ord(char) <= 0xDFFF for char in text)
+
+
 def validate_entries(entries: Sequence[DictionaryEntry]) -> None:
     """Validate entry lengths, uniqueness, and cross-entry ambiguity."""
     seen_spellings: dict[str, int] = {}
@@ -35,13 +39,14 @@ def validate_entries(entries: Sequence[DictionaryEntry]) -> None:
         if not isinstance(entry, DictionaryEntry):
             raise _validation(f"entry {index}: spelling")
         spelling = entry.spelling.strip()
-        if not spelling or len(entry.spelling) > 100:
+        if not spelling or len(entry.spelling) > 100 or _has_surrogate(entry.spelling):
             raise _validation(f"entry {index}: spelling")
         if len(entry.aliases) > 20 or any(
-            not alias.strip() or len(alias) > 100 for alias in entry.aliases
+            not alias.strip() or len(alias) > 100 or _has_surrogate(alias)
+            for alias in entry.aliases
         ):
             raise _validation(f"entry {index}: alias")
-        if len(entry.note) > 500:
+        if len(entry.note) > 500 or _has_surrogate(entry.note):
             raise _validation(f"entry {index}: note")
         normalized_spelling = normalize(entry.spelling)
         prior = seen_spellings.get(normalized_spelling)
