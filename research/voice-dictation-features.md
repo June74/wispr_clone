@@ -14,7 +14,7 @@ Status: planning only. This document records the agreed first-version scope for 
 
 - Support configurable global shortcuts for both hold-to-talk and press-to-start/press-to-stop operation.
 - Provide a configurable cancel shortcut that stops the current operation without inserting text, including cancellation during processing.
-- Remember the intended text destination when recording begins.
+- Remember the intended text destination when recording begins: the window, the browser tab when there is one, and the text field holding the cursor. That destination stays the target even if the user switches to other windows or tabs afterwards (see "Text insertion").
 - Capture microphone audio temporarily for transcription.
 - Allow normal pauses while recording; a pause does not automatically stop recording, submit text, or execute anything.
 - Allow the user to select an input device and test it with an audio-level indicator in the settings UI.
@@ -22,7 +22,7 @@ Status: planning only. This document records the agreed first-version scope for 
 
 ## Waveform overlay HUD
 
-- Display a small waveform overlay without stealing focus from the destination application.
+- Display a small waveform overlay without stealing focus from the destination application. (The deliberate, brief return to the destination described under "Text insertion" is separate from the overlay; the overlay itself never takes focus.)
 - Use **blue, stationary bars** when idle/not in use.
 - Use **green bars responding to the user's voice** while recording.
 - Use **yellow, stationary bars** while loading models, transcribing, or cleaning text.
@@ -60,9 +60,15 @@ Status: planning only. This document records the agreed first-version scope for 
 
 ## Text insertion and action boundaries
 
-- Check that the intended destination still matches the destination captured when recording began before automatic insertion.
-- Insert the completed text at the intended cursor when the destination can be verified.
-- If the destination changed or cannot be verified, hold the result for explicit copy or insertion into a user-selected destination.
+- The destination captured when recording began is the only automatic target. Text never goes into whatever window the user happens to be in when processing finishes.
+- If the user is still in the destination when the text is ready, verify it and insert at the intended cursor.
+- **If the user switched away (hybrid delivery, decided 2026-09-24),** the result waits for its destination and is delivered by whichever comes first:
+  - **Idle jump:** once the user has made no keyboard or mouse input for 1 second (configurable), the app brings the original window, and tab if any, to the front, verifies the text field, inserts once, and returns the user to the window and tab they were using. The return trip takes about half a second.
+  - **Return:** if the user switches back to the destination themselves, the text is inserted as soon as the field is verified.
+- Never jump back while the user is typing or using the mouse; wait instead.
+- If the destination was closed, cannot be found, or its text field cannot be verified, or delivery has waited longer than 10 minutes (configurable), hold the result for explicit copy or insertion into a user-selected destination.
+- The cancel shortcut also cancels a result that is waiting for delivery; it stays in temporary history.
+- Several waiting results are delivered one at a time, in the order they were recorded.
 - If insertion fails, retain the transcript and offer copy or retry.
 - Prevent duplicate automatic insertion of a run. If insertion success is uncertain, require an explicit recovery action rather than blindly retrying.
 - Retain results within the temporary-history limits so the user can copy them elsewhere.
@@ -106,10 +112,13 @@ flowchart TD
     N -->|Use original| O
     O --> Q[Retain run in temporary history; enforce age and count limits]
     M --> Q
-    Q --> R{Original destination still matches and is verifiable?}
-    R -->|Yes| S[Attempt insertion once]
-    R -->|No| T[Hold result for explicit copy or insertion elsewhere]
-    S -->|Success| U[Text appears at intended cursor]
+    Q --> R{User still in the original destination?}
+    R -->|Yes, field verified| S[Attempt insertion once]
+    R -->|No, switched away| PD[Wait for destination]
+    PD -->|User idle 1 s: bring destination back, verify field| S
+    PD -->|User returns to destination, field verified| S
+    PD -->|Closed, unverifiable, or waited over 10 min| T[Hold result for explicit copy or insertion elsewhere]
+    S -->|Success| U[Text appears at intended cursor; user returned to where they were]
     S -->|Failed or uncertain| V[Red stationary waveform: retain result; offer copy or explicit retry]
     V --> W[User chooses recovery action and verifies destination]
     T --> W
@@ -129,7 +138,7 @@ flowchart TD
 - Releasing the hold key or pressing stop ends capture. The waveform becomes yellow and remains still while the selected models process the recording.
 - The STT model produces the original transcript. Optional cleanup removes fillers while preserving meaning; the original remains available.
 - The run enters the temporary history, subject to both the 10-run limit and 24-hour expiration.
-- The app checks the destination again. If it still matches and can be verified, it inserts the output. Otherwise, it holds the output for the user's choice of destination.
+- If the user is still in the original destination, the app verifies it and inserts the output. If they switched away, the output waits for that destination: it is delivered once the user has been idle for a second (the app briefly brings the destination back and then returns them) or when they go back themselves. A closed or unverifiable destination, or a wait over 10 minutes, holds the output for the user's choice.
 - An insertion error preserves the output for copy or explicit retry. Cancellation suppresses insertion. Errors use a stationary red waveform, and the app returns to stationary blue when idle.
 - The final output is text inserted into the intended application or held/copied for the user, with no automatic submission or command execution.
 
@@ -146,7 +155,9 @@ flowchart TD
 - Only green recording bars animate; blue, yellow, and red states remain stationary.
 - Pauses do not unexpectedly terminate a recording.
 - Cleanup preserves the negation in “Do not delete that file” and preserves numbers, names, and technical terms.
-- Switching destinations during processing does not cause an unintended automatic paste.
+- Switching to another window or tab during recording or processing delivers the text into the original field exactly once, either after the user is idle for 1 second or when they return, and never into the window they switched to.
+- Nothing is inserted while the user is typing or using the mouse elsewhere, and the user ends up back in the window and tab they were using.
+- A closed or unverifiable destination holds the text instead of inserting it anywhere.
 - Failed or uncertain insertion does not cause automatic duplicate text.
 - Cleanup failure leaves the original transcript available.
 - Local STT and cleanup operate without internet after model setup.
