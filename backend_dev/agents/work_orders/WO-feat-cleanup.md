@@ -182,3 +182,12 @@ in uv.lock.
    every failing rule is listed.
 4. Counts: protected tokens (numbers, paths, identifiers, names) are multisets like negations —
    the cleaned text must contain each at least as many times as the original.
+
+## Coordinator review of GREEN (binding)
+
+5. Test module names must be unique across `tests/` (pytest's default import mode): Sol renames
+   `tests/unit/cleanup/test_cleanup.py` → `tests/unit/cleanup/test_cleanup_unit.py` (it collides
+   with `tests/conformance/test_cleanup.py`). The suite must pass with the plain CI command.
+6. Known limit, documented not fixed: if the user unloads the model in LM Studio between the
+   `/api/v0/models` check and the chat POST, LM Studio's just-in-time loading could still load it.
+   The window is one request long and LM Studio offers no per-request "do not load" flag.
