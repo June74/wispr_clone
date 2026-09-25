@@ -76,3 +76,15 @@ Authorization: edit only writable paths; no git writes; coordinator commits, pus
 2. The conditional plugin registration in tests/conftest.py is allowed for RED only. In the verify
    step Sol makes it unconditional (`pytest_plugins = ("pytester", "_attribution.plugin")`), so a
    missing or broken plugin fails loudly.
+
+## Coordinator findings from a manual demo of the GREEN plugin (binding)
+
+1. A plain `assert` failing inside a test function, with no wispr_clone frames and no third-party
+   call, was reported as `UNDETERMINED · pytest`. It must be `OURS · logic`. The test framework
+   (pytest, _pytest, pluggy, py, and tests/_attribution itself) is never a third-party suspect.
+2. The traceback walk considers only frames from the test function downward (the frames the test
+   caused), never the framework frames that invoked it.
+3. For OURS · logic with no src/wispr_clone frame, `where` is the test file:line of the failing
+   statement. When the invariant marker is present, `invariant:` is printed for OURS verdicts.
+4. `symptom:` shows the exception type and the first line of its message (privacy rule already
+   allows this), never the placeholder text "failed failure".
