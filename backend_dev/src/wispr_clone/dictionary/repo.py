@@ -102,14 +102,17 @@ class DictionaryRepo:
         def import_rows(conn: Connection) -> ImportPlan:
             current = _select_entries(conn)
             plan = parse_import(text, tuple(item.entry for item in current))
-            for entry in plan.to_add:
-                timestamp = self._clock()
-                conn.execute(
-                    "INSERT INTO dictionary_entries "
-                    "(spelling, normalized, aliases, note, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    _values(entry, timestamp, timestamp),
-                )
+            try:
+                for entry in plan.to_add:
+                    timestamp = self._clock()
+                    conn.execute(
+                        "INSERT INTO dictionary_entries "
+                        "(spelling, normalized, aliases, note, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        _values(entry, timestamp, timestamp),
+                    )
+            except IntegrityError:
+                raise _validation("import: duplicate") from None
             return plan
 
         return await self._db.write(import_rows)
@@ -124,15 +127,34 @@ def _select_entries(conn: Connection) -> tuple[StoredEntry, ...]:
         "SELECT id, spelling, aliases, note, created_at, updated_at "
         "FROM dictionary_entries ORDER BY id"
     ).fetchall()
-    return tuple(
-        StoredEntry(
-            int(row[0]),
-            DictionaryEntry(str(row[1]), tuple(json.loads(str(row[2]))), str(row[3])),
-            float(row[4]),
-            float(row[5]),
-        )
-        for row in rows
-    )
+    entries: list[StoredEntry] = []
+    for row in rows:
+        entry_id = row[0]
+        try:
+            if (
+                type(entry_id) is not int
+                or not isinstance(row[1], str)
+                or not isinstance(row[2], str)
+                or not isinstance(row[3], str)
+            ):
+                raise ValueError
+            aliases = json.loads(row[2])
+            if not isinstance(aliases, list) or any(
+                not isinstance(alias, str) for alias in aliases
+            ):
+                raise ValueError
+            entry = DictionaryEntry(row[1], tuple(aliases), row[3])
+            created_at = float(row[4])
+            updated_at = float(row[5])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise _stored_corrupt(entry_id) from None
+        try:
+            validate_entries((entry,))
+        except WisprError as error:
+            rule = error.why.partition(": ")[2]
+            raise _validation(f"stored entry id {entry_id}: {rule}") from None
+        entries.append(StoredEntry(entry_id, entry, created_at, updated_at))
+    return tuple(entries)
 
 
 def _values(
@@ -170,3 +192,7 @@ def _validate_candidate(
 
 def _validation(why: str) -> WisprError:
     return WisprError(ErrorCode.VALIDATION, "dictionary.repo", why)
+
+
+def _stored_corrupt(entry_id: object) -> WisprError:
+    return _validation(f"stored entry id {entry_id}: corrupt")
