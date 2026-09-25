@@ -161,3 +161,22 @@ Impact fragment `tests/_attribution/impact/transcribe_cpp.toml`: as in dev_pipel
 `transcribe-cpp`, kind library, modules `["stt.voxtral_transcribe_cpp"]`, features live dictation /
 retry_stt / model readiness, error_codes `stt_unavailable`, `model_load_failed`, `stt_stream_closed`,
 action pointing at the uv.lock pin, the GGUF SHA-256 and free VRAM).
+
+## Coordinator findings from reviewing GREEN against the real wheel (binding)
+
+Real public attributes of transcribe-cpp 0.2.3 (read from the installed wheel, 2026-09-25):
+- `Model`:   accepts, arch, backend, capabilities, close, device, session, supports, tokenize, variant (+ context manager)
+- `Session`: cancel, close, limits, run, run_batch, stream, was_aborted (+ context manager)
+- `Stream`:  feed, finalize, last_status, reset, revision, snapshot, state, text (+ context manager; **no `close`**)
+
+1. **Fake drift (critical):** the adapter calls `stream.close()`; the real `Stream` has no `close`,
+   so with the real library every `finish()` would raise `AttributeError` and be reported as an STT
+   failure. The fake hid it because it defines `Stream.close`. Rule: the adapter manages session
+   and stream lifetimes ONLY through the context-manager protocol (e.g. a `contextlib.ExitStack`
+   entered on the STT thread and closed there); it never calls `stream.close()`.
+2. The fake exposes no public attribute that the real class lacks. Sol adds a unit test asserting
+   each fake class's public attributes are a subset of the lists above, and P-TCPP-001 asserts the
+   real classes have every attribute the adapter uses (Stream: feed, finalize, text, `__enter__`,
+   `__exit__`; Session: run, stream, cancel, close, `__enter__`, `__exit__`; Model: session, close).
+3. `cancel()` never blocks the caller: if the native session is not open yet, it only marks the
+   session cancelled (the queued open/feeds then do nothing); it waits on nothing from the loop.
