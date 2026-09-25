@@ -37,6 +37,32 @@ def test_T_FAKE_001_clock_orders_callbacks_and_never_goes_backwards() -> None:
     assert clock.now() == 12.5
 
 
+def test_T_FAKE_001_clock_past_due_zero_advance_and_callback_cancellation() -> None:
+    from fakes.clock import FakeClock
+
+    clock = FakeClock(start=10.0)
+    fired: list[tuple[str, float]] = []
+    later = clock.call_at(11.0, lambda: fired.append(("cancelled", clock.now())))
+
+    def cancel_later() -> None:
+        fired.append(("canceller", clock.now()))
+        later.cancel()
+        clock.call_at(9.0, lambda: fired.append(("nested-past", clock.now())))
+
+    clock.call_at(9.0, cancel_later)
+    clock.call_at(10.0, lambda: fired.append(("due-now", clock.now())))
+    clock.advance(0)
+    assert fired == [
+        ("canceller", 10.0),
+        ("nested-past", 10.0),
+        ("due-now", 10.0),
+    ]
+    assert clock.now() == 10.0
+    clock.advance(1.0)
+    assert clock.now() == 11.0
+    assert len(fired) == 3
+
+
 def test_T_FAKE_002_event_sink_records_json_data_in_order() -> None:
     from fakes.events import FakeEventSink
 
@@ -66,6 +92,16 @@ def test_T_FAKE_002_event_sink_records_json_data_in_order() -> None:
         with pytest.raises((TypeError, ValueError)):
             sink.publish(event)
     assert sink.events == [first, second, third]
+
+
+@pytest.mark.parametrize("payload", [[], "run:state", 3, None])
+def test_T_FAKE_002_event_sink_rejects_non_event_json_values(payload: object) -> None:
+    from fakes.events import FakeEventSink
+
+    sink = FakeEventSink()
+    with pytest.raises((TypeError, ValueError)):
+        sink.publish(payload)  # type: ignore[arg-type]
+    assert sink.events == []
 
 
 def test_T_FAKE_003_ids_are_readable_per_prefix_and_per_instance() -> None:
