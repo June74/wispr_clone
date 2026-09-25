@@ -45,3 +45,12 @@ Check commands (from backend_dev/, UV_LINK_MODE=copy): uv sync --locked; ruff ch
   uv run python scripts/check_imports.py; uv run pytest -q -W error
 Authorization: edit only writable paths; no git writes; coordinator commits, pushes, opens PR.
 ```
+
+## Coordinator decisions after verification
+
+1. FakeEventSink accepts only a real event: a dict whose `name` is a key of
+   `contracts.events.EVENT_PAYLOAD_TYPES`, containing every required key of that payload type,
+   with data-only values. Anything else raises TypeError or ValueError.
+2. Fake-drift requires the [real] case to fail in its CALL phase and its [fake] twin to pass
+   completely (setup, call and teardown). Setup and teardown errors keep their own OURS · logic
+   attribution with `phase:` and never trigger fake-drift.
