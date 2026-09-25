@@ -125,3 +125,16 @@ def parse_import(text: str, existing: Sequence[DictionaryEntry]) -> ImportPlan
 | T-DIC-005 | one invalid entry among valid ones → `VALIDATION`, nothing accepted; duplicates (vs existing and within the file) reported by index and skipped; too large / invalid JSON / wrong format / too many entries rejected; a sentinel string inside a bad entry never appears in `str(error)` or `error.why` |
 | T-DIC-006 | `validate_entries`: two entries sharing an alias; an alias equal to another entry's spelling; duplicate normalized spellings (`"OpenWhispr"` vs `"openwhispr"`) → `VALIDATION` with the pinned why wording; alias equal to its own spelling accepted; length limits |
 | T-DIC-007 | `parse_import(export_dictionary(entries), [])` returns the same entries in order (Unicode and notes preserved); export is valid JSON with the pinned top-level keys |
+
+## Coordinator decisions after RED review
+
+1. "Longest" in rule 4 is measured in characters of the SOURCE text actually matched (after NFKC
+   or casefold the term's length can differ; the source span is what gets replaced).
+2. Import error wording names both sides unambiguously. Import indexes are 0-based positions in the
+   imported file; existing indexes are 0-based positions in `existing`:
+   - conflict with an existing entry: `"entry <i>: conflicts with existing entry <k>"`
+   - conflict between two imported entries: `"entry <j>: conflicts with entry <i>"`
+   - other per-entry rules keep `validate_entries` wording with the import index
+     (`"entry <i>: alias"`, `"entry <i>: spelling"`, `"entry <i>: note"`).
+3. `parse_import` check order: too large → invalid json → format → too many entries → per entry in
+   index order (shape, then spelling/alias/note limits) → duplicates → conflicts.
