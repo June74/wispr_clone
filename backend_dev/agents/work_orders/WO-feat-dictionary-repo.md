@@ -111,3 +111,12 @@ Rules (all errors `WisprError(ErrorCode.VALIDATION, where="dictionary.repo", why
    settings tables. Sol also fixes the ruff import-order findings in its own new dictionary tests.
 2. `import_text` must also map a raced UNIQUE violation (`IntegrityError`) to
    `WisprError(VALIDATION, "dictionary.repo", "import: duplicate")`, never a raw sqlite error.
+
+## Coordinator decisions after verification
+
+3. A stored row that cannot be read (aliases not a JSON list of strings, etc.) →
+   `WisprError(VALIDATION, "dictionary.repo", "stored entry id <k>: corrupt")`; a stored row that
+   fails `validate_entries` on its own → `"stored entry id <k>: <rule>"`. Neither is ever reported
+   as `"new entry: ..."`, and no stored text appears in the error. Reads never modify the table.
+4. Review item 2 confirmed by Sol's test (raced UNIQUE in `import_text` → `"import: duplicate"`,
+   table unchanged).

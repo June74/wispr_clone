@@ -68,7 +68,6 @@ def _assert_error(error: WisprError, where: str, why: str) -> None:
 @pytest.mark.integration
 async def test_T_DIC_010_crud_reopen_and_plain_entries(tmp_path: Path) -> None:
     from wispr_clone.dictionary.repo import DictionaryRepo
-
     from wispr_clone.storage import Database
 
     path = tmp_path / "dictionary.db"
@@ -125,7 +124,6 @@ async def test_T_DIC_010_crud_reopen_and_plain_entries(tmp_path: Path) -> None:
 @pytest.mark.integration
 async def test_T_DIC_011_conflict_ids_and_failed_mutations(tmp_path: Path) -> None:
     from wispr_clone.dictionary.repo import DictionaryRepo
-
     from wispr_clone.storage import Database
 
     path = tmp_path / "conflicts.db"
@@ -180,7 +178,6 @@ async def test_T_DIC_011_conflict_ids_and_failed_mutations(tmp_path: Path) -> No
 @pytest.mark.integration
 async def test_T_DIC_012_import_atomicity_duplicates_and_export(tmp_path: Path) -> None:
     from wispr_clone.dictionary.repo import DictionaryRepo
-
     from wispr_clone.storage import Database
 
     path = tmp_path / "import.db"
@@ -246,7 +243,6 @@ async def test_T_DIC_012_import_atomicity_duplicates_and_export(tmp_path: Path) 
 @pytest.mark.invariant("History deletion never removes personal dictionary rows")
 async def test_T_DIC_013_dictionary_survives_history_deletion(tmp_path: Path) -> None:
     from wispr_clone.dictionary.repo import DictionaryRepo
-
     from wispr_clone.storage import Database
 
     path = tmp_path / "history.db"
@@ -322,3 +318,112 @@ async def test_T_DIC_014_migration_import_boundary_and_raced_duplicate(
         assert errors[0].why in ("new entry: duplicate of id 1", "new entry: duplicate")
         assert len(_rows(path)) == 1
         assert len(await dictionary.list_entries()) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_T_DIC_014_import_raced_duplicate_is_validation_and_atomic(
+    tmp_path: Path,
+) -> None:
+    from wispr_clone.dictionary.repo import DictionaryRepo
+    from wispr_clone.storage import Database
+
+    path = tmp_path / "import_race.db"
+    async with Database(path, _migrations()) as db:
+        repo = DictionaryRepo(db, clock=itertools.count(1000.0).__next__)
+        await repo.add(DictionaryEntry("Existing"))
+        before = _rows(path)
+        await db.write(
+            lambda conn: conn.execute(
+                "CREATE TRIGGER race_import BEFORE INSERT ON dictionary_entries "
+                "WHEN NEW.spelling = 'Raced' BEGIN "
+                "INSERT INTO dictionary_entries "
+                "(spelling, normalized, aliases, note, created_at, updated_at) "
+                "VALUES ('Raced', NEW.normalized, '[]', '', 0, 0); "
+                "END"
+            )
+        )
+
+        with pytest.raises(WisprError) as caught:
+            await repo.import_text(
+                _document([{"spelling": "First"}, {"spelling": "Raced"}])
+            )
+        _assert_error(caught.value, "dictionary.repo", "import: duplicate")
+        assert _rows(path) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_T_DIC_015_corrupt_stored_aliases_returns_private_error(
+    tmp_path: Path,
+) -> None:
+    from wispr_clone.dictionary.repo import DictionaryRepo
+    from wispr_clone.storage import Database
+
+    path = tmp_path / "corrupt_aliases.db"
+    async with Database(path, _migrations()) as db:
+        repo = DictionaryRepo(db, clock=lambda: 1000.0)
+        stored = await repo.add(DictionaryEntry("Existing"))
+        sentinel = "SYNTHETIC_PRIVATE_ENTRY_SENTINEL"
+        await db.write(
+            lambda conn: conn.execute(
+                "UPDATE dictionary_entries SET aliases = ? WHERE id = ?",
+                ("[" + sentinel, stored.id),
+            )
+        )
+        before = _rows(path)
+
+        with pytest.raises(WisprError) as caught:
+            await repo.list_entries()
+        assert caught.value.error_code == ErrorCode.VALIDATION
+        assert caught.value.where == "dictionary.repo"
+        assert sentinel not in str(caught.value)
+        assert _rows(path) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_T_DIC_015_invalid_stored_entry_is_not_blamed_on_new_entry(
+    tmp_path: Path,
+) -> None:
+    from wispr_clone.dictionary.repo import DictionaryRepo
+    from wispr_clone.storage import Database
+
+    path = tmp_path / "invalid_existing.db"
+    async with Database(path, _migrations()) as db:
+        repo = DictionaryRepo(db, clock=lambda: 1000.0)
+        stored = await repo.add(DictionaryEntry("Existing"))
+        await db.write(
+            lambda conn: conn.execute(
+                "UPDATE dictionary_entries SET spelling = '' WHERE id = ?",
+                (stored.id,),
+            )
+        )
+        before = _rows(path)
+
+        with pytest.raises(WisprError) as caught:
+            await repo.add(DictionaryEntry("Valid new entry"))
+        assert caught.value.error_code == ErrorCode.VALIDATION
+        assert caught.value.where == "dictionary.repo"
+        assert f"id {stored.id}" in caught.value.why
+        assert "new entry" not in caught.value.why
+        assert _rows(path) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_T_DIC_011_case_only_update_preserves_prior_snapshot(
+    tmp_path: Path,
+) -> None:
+    from wispr_clone.dictionary.repo import DictionaryRepo
+    from wispr_clone.storage import Database
+
+    async with Database(tmp_path / "case_update.db", _migrations()) as db:
+        repo = DictionaryRepo(db, clock=itertools.count(1000.0).__next__)
+        first = await repo.add(DictionaryEntry("OpenWhispr"))
+        older = await repo.entries()
+        changed = await repo.update(first.id, DictionaryEntry("openwhispr"))
+        assert changed.created_at == first.created_at
+        assert changed.updated_at > first.updated_at
+        assert await repo.entries() == (DictionaryEntry("openwhispr"),)
+        assert older == (DictionaryEntry("OpenWhispr"),)
