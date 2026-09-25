@@ -161,3 +161,13 @@ report version "not installed". SQLite is a real third-party C library shipped i
 3. Verify step: every test/probe connection opened with `sqlite3.connect` must be closed
    (`contextlib.closing`); `with sqlite3.connect(...)` only ends a transaction and leaves the file
    open, which can break temp-dir cleanup on Windows.
+
+## Coordinator findings from a demo of the GREEN code (binding)
+
+4. A migration that calls `conn.executescript(...)` (or `conn.commit()`/`COMMIT`) ends the
+   runner's transaction early: demo showed a failing migration 002 left its tables behind with
+   `user_version` 1. Rule: migrations and `Database.write` callbacks use `conn.execute` /
+   `executemany` only. Enforcement: after `apply(conn)` (and after a write callback) the runner
+   checks `conn.in_transaction`; if the transaction is gone it raises
+   `WisprError(STORAGE_ERROR, where=<"migration NNN" | "storage.db">, why="transaction ended early")`
+   and does NOT bump `user_version`. Sol adds T-STO-005 regressions for both paths.
