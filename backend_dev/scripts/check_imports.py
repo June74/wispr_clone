@@ -168,7 +168,8 @@ def check(root: Path) -> list[str]:
         except (SyntaxError, UnicodeError) as error:
             line = error.lineno or 1 if isinstance(error, SyntaxError) else 1
             findings.append(
-                f"{path.relative_to(root)}:{line}: {importer} -> {importer}: "
+                f"{path.relative_to(root).as_posix()}:{line}: "
+                f"{importer} -> {importer}: "
                 "cannot parse module"
             )
             continue
@@ -186,17 +187,20 @@ def check(root: Path) -> list[str]:
                 if importer_package not in RULES:
                     reason = "unknown package"
                     findings.append(
-                        f"{path.relative_to(root)}:{node.lineno}: {importer} -> "
+                        f"{path.relative_to(root).as_posix()}:{node.lineno}: "
+                        f"{importer} -> "
                         f"{imported}: {reason}"
                     )
                 elif imported_package not in RULES:
                     findings.append(
-                        f"{path.relative_to(root)}:{node.lineno}: {importer} -> "
+                        f"{path.relative_to(root).as_posix()}:{node.lineno}: "
+                        f"{importer} -> "
                         f"{imported}: unknown package"
                     )
                 elif not allowed(importer_package, imported_package):
                     findings.append(
-                        f"{path.relative_to(root)}:{node.lineno}: {importer} -> "
+                        f"{path.relative_to(root).as_posix()}:{node.lineno}: "
+                        f"{importer} -> "
                         f"{imported}: package dependency is not allowed"
                     )
 
@@ -211,7 +215,8 @@ def check(root: Path) -> list[str]:
         for importer, imported in zip(cycle, cycle[1:]):
             path, line = edge_lines.get((importer, imported), (modules[importer], 1))
             findings.append(
-                f"{path.relative_to(root)}:{line}: {importer} -> {imported}: "
+                f"{path.relative_to(root).as_posix()}:{line}: "
+                f"{importer} -> {imported}: "
                 "import cycle"
             )
     return findings
