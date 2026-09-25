@@ -40,7 +40,6 @@ class HotkeyService:
         self._start_pending = False
         self._toggled = False
         self._dictation_armed = True
-        self._repeat_seen = False
 
     @property
     def tracked_keys(self) -> frozenset[str]:
@@ -54,8 +53,6 @@ class HotkeyService:
             return
         if action is KeyAction.DOWN:
             if key in self._pressed:
-                if key == self._dictation.key:
-                    self._repeat_seen = True
                 return
             self._pressed.add(key)
             if (
@@ -63,10 +60,8 @@ class HotkeyService:
                 and self._dictation_armed
                 and self._matches(self._dictation)
             ):
-                if self._mode != "hold" or not self._repeat_seen:
-                    self._fire_dictation()
+                self._fire_dictation()
                 self._dictation_armed = False
-                self._repeat_seen = False
             if key == self._cancel.key and (
                 not self._cancel.modifiers or self._matches(self._cancel)
             ):
@@ -91,12 +86,11 @@ class HotkeyService:
 
     def reset(self) -> None:
         """Forget key state and stop an active hold after a lost key-up."""
-        self._pressed.clear()
-        self._dictation_armed = True
-        if self._mode == "hold" and self._holding and not self._start_pending:
+        if self._mode == "hold" and self._holding:
             self._holding = False
             self._post(self._on_stop)
-        self._holding = False
+        self._pressed.clear()
+        self._dictation_armed = True
         self._start_pending = False
 
     def _matches(self, binding: KeyBinding) -> bool:

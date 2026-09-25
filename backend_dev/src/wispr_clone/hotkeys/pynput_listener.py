@@ -78,7 +78,7 @@ class PynputListener:
         self._service = service
         self._module = module
         self._listener: Any | None = None
-        self._modifier_counts: dict[str, int] = {}
+        self._modifier_keys: dict[str, set[str]] = {}
 
     def start(self) -> None:
         """Import pynput on demand and start its global down/up listener."""
@@ -92,9 +92,9 @@ class PynputListener:
             module = import_module("pynput.keyboard")
             self._module = module
 
-        self._modifier_counts.clear()
+        self._modifier_keys.clear()
 
-        def modifier_name(key: object) -> str | None:
+        def modifier_key(key: object) -> tuple[str, str] | None:
             key_type = getattr(module, "Key", None)
             if key_type is None:
                 return None
@@ -103,29 +103,32 @@ class PynputListener:
                     canonical in {"ctrl", "alt", "shift", "win"}
                     and getattr(key_type, attr, object()) == key
                 ):
-                    return canonical
+                    return canonical, attr
             return None
 
         def on_press(key: object) -> None:
-            modifier = modifier_name(key)
-            if modifier is not None:
-                count = self._modifier_counts.get(modifier, 0)
-                self._modifier_counts[modifier] = count + 1
-                if count == 0:
-                    self._service.handle(KeyAction.DOWN, modifier)
+            physical = modifier_key(key)
+            if physical is not None:
+                modifier, physical_name = physical
+                down_keys = self._modifier_keys.setdefault(modifier, set())
+                if physical_name not in down_keys:
+                    was_empty = not down_keys
+                    down_keys.add(physical_name)
+                    if was_empty:
+                        self._service.handle(KeyAction.DOWN, modifier)
             else:
                 self._service.handle(KeyAction.DOWN, key_name(key, module))
 
         def on_release(key: object) -> None:
-            modifier = modifier_name(key)
-            if modifier is not None:
-                count = self._modifier_counts.get(modifier, 0)
-                if count > 0:
-                    if count == 1:
-                        self._modifier_counts.pop(modifier, None)
+            physical = modifier_key(key)
+            if physical is not None:
+                modifier, physical_name = physical
+                down_keys = self._modifier_keys.get(modifier)
+                if down_keys is not None and physical_name in down_keys:
+                    down_keys.remove(physical_name)
+                    if not down_keys:
+                        self._modifier_keys.pop(modifier, None)
                         self._service.handle(KeyAction.UP, modifier)
-                    else:
-                        self._modifier_counts[modifier] = count - 1
             else:
                 self._service.handle(KeyAction.UP, key_name(key, module))
 
@@ -136,7 +139,7 @@ class PynputListener:
             listener.start()
         except Exception:
             self._listener = None
-            self._modifier_counts.clear()
+            self._modifier_keys.clear()
             self._service.reset()
             raise
 
@@ -149,7 +152,7 @@ class PynputListener:
         try:
             listener.stop()
         finally:
-            self._modifier_counts.clear()
+            self._modifier_keys.clear()
             reset = getattr(self._service, "reset", None)
             if callable(reset):
                 reset()
