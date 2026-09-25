@@ -115,6 +115,62 @@ def test_T_ARCH_002_reports_hotkeys_to_pipeline_import(
 
 
 @pytest.mark.unit
+@pytest.mark.invariant("Packages import only permitted application packages")
+def test_T_ARCH_002_allows_sibling_import_from_package_init(tmp_path: Path) -> None:
+    root = _tree(
+        tmp_path,
+        {
+            "hotkeys/__init__.py": "from . import pipeline\n",
+            "hotkeys/pipeline.py": "value = 1\n",
+            "pipeline/__init__.py": "value = 1\n",
+        },
+    )
+
+    result = _check(root)
+
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert result.stdout.strip() == ""
+
+
+@pytest.mark.unit
+@pytest.mark.invariant("Packages import only permitted application packages")
+def test_T_ARCH_002_reports_parent_import_from_package_init(tmp_path: Path) -> None:
+    root = _tree(
+        tmp_path,
+        {
+            "hotkeys/__init__.py": "\nfrom ..pipeline import y\n",
+            "pipeline/__init__.py": "y = 1\n",
+        },
+    )
+
+    result = _check(root)
+
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    diagnostic = _diagnostic(result, "hotkeys/__init__.py", 2)
+    assert "wispr_clone.hotkeys -> wispr_clone.pipeline:" in diagnostic
+    assert diagnostic.endswith("package dependency is not allowed")
+
+
+@pytest.mark.unit
+@pytest.mark.invariant("Unknown importers cannot import application packages")
+def test_T_ARCH_002_reports_root_init_importing_subpackage(tmp_path: Path) -> None:
+    root = _tree(
+        tmp_path,
+        {
+            "__init__.py": "from . import pipeline\n",
+            "pipeline/__init__.py": "value = 1\n",
+        },
+    )
+
+    result = _check(root)
+
+    assert result.returncode == 1, (result.stdout, result.stderr)
+    diagnostic = _diagnostic(result, "__init__.py", 1)
+    assert "wispr_clone -> wispr_clone.pipeline:" in diagnostic
+    assert diagnostic.endswith("unknown package")
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("importer", "imported", "source"),
     [
