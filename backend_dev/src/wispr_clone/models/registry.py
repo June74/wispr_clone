@@ -73,8 +73,18 @@ class ModelRegistry:
 def is_loopback_endpoint(url: str) -> bool:
     """Return whether a valid HTTP(S) URL uses a loopback IP literal host."""
     try:
+        if any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in url
+        ):
+            return False
         parsed = urlsplit(url)
         if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+            return False
+        if "@" in parsed.netloc:
+            return False
+        port = parsed.port
+        if port is not None and not 1 <= port <= 65535:
             return False
         host = parsed.hostname
         if host is None:

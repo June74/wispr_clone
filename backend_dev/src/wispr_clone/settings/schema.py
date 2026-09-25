@@ -1,6 +1,7 @@
 """Strict, versioned settings values and schema upgrades."""
 
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -30,7 +31,7 @@ class Settings(BaseModel):
         default="ctrl+shift+space", min_length=1, max_length=64
     )
     cancel_shortcut: str = Field(default="escape", min_length=1, max_length=64)
-    microphone_id: str | None = None
+    microphone_id: str | None = Field(default=None, min_length=1, max_length=256)
     stt_model_id: str = "voxtral-mini-4b-realtime-2602"
     cleanup_model_id: str = "meta-llama-3.1-8b-instruct"
     cleanup_enabled: bool = True
@@ -62,7 +63,7 @@ def parse_settings(
     upgrade_steps: Mapping[int, UpgradeStep] = UPGRADE_STEPS,
 ) -> Settings:
     """Upgrade and validate stored data, then enforce model selection policy."""
-    upgraded = dict(data)
+    upgraded = deepcopy(dict(data))
     version = upgraded.get("schema_version")
     if type(version) is not int:
         raise WisprError(
@@ -80,11 +81,16 @@ def parse_settings(
                 ErrorCode.VALIDATION, "settings.schema", "schema_version"
             ) from None
         try:
-            upgraded = dict(step(dict(upgraded)))
+            result = step(deepcopy(upgraded))
         except Exception:
             raise WisprError(
                 ErrorCode.VALIDATION, "settings.schema", "schema_version"
             ) from None
+        if not isinstance(result, dict):
+            raise WisprError(
+                ErrorCode.VALIDATION, "settings.schema", "schema_version"
+            ) from None
+        upgraded = result
         next_version = upgraded.get("schema_version")
         if type(next_version) is not int or next_version != version + 1:
             raise WisprError(
