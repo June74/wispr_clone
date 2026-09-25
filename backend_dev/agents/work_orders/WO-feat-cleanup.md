@@ -191,3 +191,15 @@ in uv.lock.
 6. Known limit, documented not fixed: if the user unloads the model in LM Studio between the
    `/api/v0/models` check and the chat POST, LM Studio's just-in-time loading could still load it.
    The window is one request long and LM Studio offers no per-request "do not load" flag.
+
+## Coordinator decisions after verification
+
+7. Delimiter neutralization is case-insensitive and whitespace-tolerant for BOTH tags: any match of
+   `<\s*/?\s*dictation\s*>` (re.IGNORECASE) inside the dictated text is neutralized, so the user
+   message contains exactly one opening and one closing tag, the ones the builder adds.
+8. After `aclose()` the engine is closed for good: `clean()` raises
+   `ThirdPartyError("lmstudio", "client", "closed", ErrorCode.CLEANUP_UNAVAILABLE)` without any
+   request; `health()` returns False; `aclose()` stays idempotent.
+9. Known guard limit, documented not fixed: word order is not checked (moving a name to sentence
+   start passes the multiset rules). The guard is a rejection aid (CODEMAP §4 step 4); EVAL-G6 on
+   the real model measures meaning preservation.
