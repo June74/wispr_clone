@@ -1,6 +1,8 @@
 """SQLite persistence primitives."""
 
-from wispr_clone.storage.db import Database
-from wispr_clone.storage.migrations import Migration
+from wispr_clone.storage.db import Database, sqlite3  # type: ignore[attr-defined]
+from wispr_clone.storage.migrations import Connection, Migration
 
-__all__ = ["Database", "Migration"]
+IntegrityError = sqlite3.IntegrityError
+
+__all__ = ["Connection", "Database", "IntegrityError", "Migration"]

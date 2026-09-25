@@ -101,3 +101,13 @@ class SettingsStore:
 | T-SET-012 | an invalid patch (bad type, unknown key, cloud model under local-only, `schema_version`) raises `WisprError` and leaves the stored row and `current()` byte-for-byte unchanged; a valid multi-field patch is applied all at once; two concurrent `update` calls on different fields both persist |
 | T-SET-013 | a stored version-0 row plus injected `upgrade_steps={0: fn}` loads as version 1 and the row is rewritten at version 1 |
 | T-SET-014 | `wispr_clone.storage` exports `Connection is sqlite3.Connection` and `IntegrityError is sqlite3.IntegrityError`; `settings/store.py` and `m002_settings.py` do not import `sqlite3` (ast scan) |
+
+## Coordinator review of GREEN (binding)
+
+1. `IntegrityError` is defined next to `Connection` in `storage/migrations/__init__.py`
+   (`IntegrityError = sqlite3.IntegrityError`; that module already imports sqlite3 and is listed in
+   `sqlite3.toml`) and re-exported from `storage/__init__.py`. No `type: ignore` re-export of
+   `sqlite3` through `db.py`.
+2. `tests/integration/storage/test_database.py::test_T_STO_001...` asserts discovery returns only
+   version 1; that breaks for every wave-2 migration. RESERVED for Sol in this order: change it to
+   assert the discovered versions are exactly `1..N` (contiguous, starting at 1, `m001_base` first).
