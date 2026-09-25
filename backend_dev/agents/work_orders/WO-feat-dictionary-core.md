@@ -138,3 +138,10 @@ def parse_import(text: str, existing: Sequence[DictionaryEntry]) -> ImportPlan
      (`"entry <i>: alias"`, `"entry <i>: spelling"`, `"entry <i>: note"`).
 3. `parse_import` check order: too large → invalid json → format → too many entries → per entry in
    index order (shape, then spelling/alias/note limits) → duplicates → conflicts.
+
+## Coordinator findings from a demo of the GREEN code (binding)
+
+4. A match must start AND end on source-character boundaries. Demo: alias "ff" (or "fi") matched
+   inside the single character "ﬃ" (NFKC "ffi") and replaced the whole character, dropping text.
+   A term that covers only part of one source character's normalized expansion never matches
+   ("ﬃ" + alias "ff" → unchanged; alias "ffi" → replaced).
