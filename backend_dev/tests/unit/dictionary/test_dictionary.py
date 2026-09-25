@@ -225,6 +225,7 @@ def test_T_DIC_006_validates_conflicts_and_length_limits() -> None:
             "entry 1: duplicate of entry 0",
         ),
         ((DictionaryEntry(" "),), "entry 0: spelling"),
+        ((DictionaryEntry("\ud800"),), "entry 0: spelling"),
         ((DictionaryEntry("x" * 101),), "entry 0: spelling"),
         ((DictionaryEntry("Valid", (" ",)),), "entry 0: alias"),
         ((DictionaryEntry("Valid", ("a" * 101,)),), "entry 0: alias"),
@@ -319,15 +320,49 @@ def test_T_DIC_005_rejects_unencodable_import_as_invalid_json() -> None:
 
 
 @pytest.mark.unit
-def test_T_DIC_007_imported_unicode_exports_as_utf8_json() -> None:
+@pytest.mark.parametrize(
+    ("item", "expected_why"),
+    (
+        ({"spelling": "\ud800"}, "entry 0: spelling"),
+        ({"spelling": "Valid", "aliases": ["\ud800"]}, "entry 0: alias"),
+        ({"spelling": "Valid", "note": "\ud800"}, "entry 0: note"),
+    ),
+)
+def test_T_DIC_007_rejects_escaped_lone_surrogates_in_entry_fields(
+    item: dict[str, object], expected_why: str
+) -> None:
+    from wispr_clone.contracts.common import ErrorCode, WisprError
+    from wispr_clone.dictionary.import_export import parse_import
+
+    # ASCII JSON escapes can carry a lone surrogate into an entry field.
+    raw = json.dumps(
+        {"format": "wispr-clone-dictionary", "version": 1, "entries": [item]}
+    )
+    assert "\\ud800" in raw
+    with pytest.raises(WisprError) as caught:
+        parse_import(raw, ())
+    assert caught.value.error_code == ErrorCode.VALIDATION
+    assert caught.value.where == "dictionary.import"
+    assert caught.value.why == expected_why
+
+
+@pytest.mark.unit
+def test_T_DIC_007_non_bmp_unicode_round_trips_as_utf8_json() -> None:
+    from wispr_clone.dictionary.apply import DictionaryEntry
     from wispr_clone.dictionary.import_export import export_dictionary, parse_import
 
-    # JSON can spell a lone surrogate using ASCII escapes. An accepted import
-    # must still be exportable as UTF-8 JSON for the interchange format.
-    raw = (
-        '{"format":"wispr-clone-dictionary","version":1,"entries":'
-        '[{"spelling":"\\ud800"}]}'
-    )
-    plan = parse_import(raw, ())
-    exported = export_dictionary(plan.to_add)
-    assert exported.encode("utf-8")
+    entries = (DictionaryEntry("Rocket 🚀", ("launch 😀",), "note 😀"),)
+    exported = export_dictionary(entries)
+    encoded = exported.encode("utf-8")
+    assert "🚀".encode("utf-8") in encoded
+    assert "😀".encode("utf-8") in encoded
+    assert json.loads(encoded) == {
+        "format": "wispr-clone-dictionary",
+        "version": 1,
+        "entries": [
+            {"spelling": "Rocket 🚀", "aliases": ["launch 😀"], "note": "note 😀"}
+        ],
+    }
+    plan = parse_import(exported, ())
+    assert plan.to_add == entries
+    assert plan.skipped_duplicates == ()
