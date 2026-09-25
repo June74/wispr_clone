@@ -9,6 +9,7 @@ from typing import Callable, Sequence, TypeAlias
 from wispr_clone.contracts.common import ErrorCode, WisprError
 
 Connection: TypeAlias = sqlite3.Connection
+IntegrityError = sqlite3.IntegrityError
 
 
 @dataclass(frozen=True, slots=True)
