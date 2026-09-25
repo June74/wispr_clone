@@ -310,3 +310,120 @@ async def test_T_STT_008_lazy_import_and_idempotent_close(monkeypatch):
     assert fake.control.sessions[-1].was_aborted
     await stt.close()
     assert names(fake).count("model.close") == 1
+
+
+def test_T_STT_009_fake_native_classes_expose_only_real_public_attributes():
+    fake = make_fake()
+    real_public = {
+        "Model": {
+            "accepts",
+            "arch",
+            "backend",
+            "capabilities",
+            "close",
+            "device",
+            "session",
+            "supports",
+            "tokenize",
+            "variant",
+        },
+        "Session": {
+            "cancel",
+            "close",
+            "limits",
+            "run",
+            "run_batch",
+            "stream",
+            "was_aborted",
+        },
+        "Stream": {
+            "feed",
+            "finalize",
+            "last_status",
+            "reset",
+            "revision",
+            "snapshot",
+            "state",
+            "text",
+        },
+    }
+    for name, allowed in real_public.items():
+        cls = getattr(fake, name)
+        instance = (
+            cls(Path("synthetic.gguf"))
+            if name == "Model"
+            else cls()
+            if name == "Session"
+            else cls(fake.Session())
+        )
+        exposed = {attr for attr in dir(instance) if not attr.startswith("_")}
+        assert exposed <= allowed, f"{name}: {sorted(exposed - allowed)}"
+
+
+@pytest.mark.asyncio
+async def test_T_STT_003_finish_exits_native_contexts_on_stt_thread():
+    fake = make_fake()
+    stt = engine(fake)
+    await stt.start()
+    session = stt.start_session()
+    session.push_audio(array.array("f", [0.25]))
+    try:
+        assert await session.finish() == "committed"
+        calls = fake.control.calls
+        assert sum(name == "stream.__exit__" for name, _ in calls) == 1
+        assert sum(name == "session.__exit__" for name, _ in calls) == 2
+        assert sum(name == "session.close" for name, _ in calls) == 2
+        native_threads = {
+            tid
+            for name, tid in calls
+            if name
+            in {"stream.__exit__", "session.__exit__", "session.close", "finalize"}
+        }
+        assert len(native_threads) == 1
+        assert threading.get_ident() not in native_threads
+    finally:
+        await stt.close()
+
+
+@pytest.mark.asyncio
+async def test_T_STT_005_cancel_before_native_open_does_not_wait():
+    fake = make_fake()
+    stt = engine(fake)
+    await stt.start()
+    fake.control.session_entered.clear()
+    fake.control.block_session = True
+    session = stt.start_session()
+    assert await asyncio.to_thread(fake.control.session_entered.wait, 5)
+    returned = threading.Event()
+
+    def cancel():
+        session.cancel()
+        returned.set()
+
+    task = asyncio.create_task(asyncio.to_thread(cancel))
+    try:
+        immediate = await asyncio.to_thread(returned.wait, 0.5)
+    finally:
+        fake.control.session_release.set()
+        await asyncio.wait_for(task, 5)
+        await stt.close()
+    assert immediate, "cancel waited for the blocked native session open"
+
+
+@pytest.mark.asyncio
+async def test_T_STT_004_feed_error_exits_native_contexts():
+    fake = make_fake()
+    fake.control.feed_error = RuntimeError("PRIVATE AUDIO")
+    stt = engine(fake)
+    await stt.start()
+    session = stt.start_session()
+    session.push_audio(array.array("f", [0.25]))
+    try:
+        with pytest.raises(ThirdPartyError) as caught:
+            await session.finish()
+        assert caught.value.operation == "feed"
+        assert names(fake).count("stream.__exit__") == 1
+        assert names(fake).count("session.__exit__") == 2
+        assert names(fake).count("session.close") == 2
+    finally:
+        await stt.close()

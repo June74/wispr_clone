@@ -27,3 +27,10 @@ def test_P_TCPP_001_installed_api_and_cpu_backend():
     ):
         assert hasattr(native, name), name
     assert issubclass(native.Aborted, native.TranscribeError)
+    for cls, required in (
+        (native.Model, ("session", "close")),
+        (native.Session, ("run", "stream", "cancel", "close", "__enter__", "__exit__")),
+        (native.Stream, ("feed", "finalize", "text", "__enter__", "__exit__")),
+    ):
+        for name in required:
+            assert hasattr(cls, name), f"{cls.__name__}.{name}"

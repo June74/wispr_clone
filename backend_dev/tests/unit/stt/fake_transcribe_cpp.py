@@ -84,6 +84,9 @@ class Control:
     feed_release: threading.Event = field(default_factory=threading.Event)
     block_run: bool = False
     block_feed: bool = False
+    block_session: bool = False
+    session_entered: threading.Event = field(default_factory=threading.Event)
+    session_release: threading.Event = field(default_factory=threading.Event)
     sessions: list[Any] = field(default_factory=list)
 
     def record(self, name: str) -> None:
@@ -97,14 +100,14 @@ def make_fake() -> ModuleType:
 
     class Stream:
         def __init__(self, session: Session):
-            self.session = session
-            self.current = StreamText("", "", "")
+            self._session = session
+            self._current = StreamText("", "", "")
 
         def __enter__(self) -> Stream:
             return self
 
         def __exit__(self, *_args: object) -> None:
-            self.close()
+            control.record("stream.__exit__")
 
         def feed(self, pcm: Any) -> StreamUpdate:
             control.record("feed")
@@ -113,35 +116,32 @@ def make_fake() -> ModuleType:
             if control.block_feed:
                 if not control.feed_release.wait(10):
                     raise TimeoutError("fake feed release timed out")
-            if self.session.was_aborted:
+            if self._session.was_aborted:
                 raise Aborted("cancelled")
             if control.feed_error:
                 raise control.feed_error
             index = len(control.chunks) - 1
-            self.current = (
+            self._current = (
                 control.updates[index]
                 if index < len(control.updates)
                 else control.final
             )
-            return StreamUpdate(self.current.full)
+            return StreamUpdate(self._current.full)
 
         def text(self) -> StreamText:
             control.record("text")
-            return self.current
+            return self._current
 
         def finalize(self) -> StreamUpdate:
             control.record("finalize")
             if control.finalize_error:
                 raise control.finalize_error
-            self.current = control.final
-            return StreamUpdate(self.current.full)
+            self._current = control.final
+            return StreamUpdate(self._current.full)
 
         def reset(self) -> None:
             control.record("reset")
-            self.current = StreamText("", "", "")
-
-        def close(self) -> None:
-            control.record("stream.close")
+            self._current = StreamText("", "", "")
 
     class Session:
         def __init__(self) -> None:
@@ -152,6 +152,7 @@ def make_fake() -> ModuleType:
             return self
 
         def __exit__(self, *_args: object) -> None:
+            control.record("session.__exit__")
             self.close()
 
         def run(self, pcm: Any) -> Result:
@@ -195,6 +196,9 @@ def make_fake() -> ModuleType:
 
         def session(self) -> Session:
             control.record("session")
+            control.session_entered.set()
+            if control.block_session and not control.session_release.wait(10):
+                raise TimeoutError("fake session release timed out")
             return Session()
 
         def close(self) -> None:
