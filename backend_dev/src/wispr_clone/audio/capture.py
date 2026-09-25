@@ -14,7 +14,7 @@ from wispr_clone.contracts.common import ErrorCode, ThirdPartyError, WisprError
 
 from .device_lease import DeviceLease, LeaseOwner, LeaseToken
 from .level_meter import band_levels
-from .resample import to_mono_16k
+from .resample import streaming_resampler
 
 SAMPLE_RATE = 16_000
 CHUNK_SAMPLES = 1_280
@@ -56,6 +56,7 @@ class AudioCapture:
         self._cancelled = Event()
         self._overflow = Event()
         self._device_error: str | None = None
+        self._stream_finished = Event()
         self._consumer_started = False
         self._sample_rate = SAMPLE_RATE
 
@@ -88,11 +89,16 @@ class AudioCapture:
                 del frames, time_info
                 if not self._accepting.is_set():
                     return
-                if status:
-                    if bool(getattr(status, "input_overflow", False)):
-                        self._overflow.set()
-                    else:
-                        self._device_error = type(status).__name__
+                if bool(getattr(status, "input_overflow", False)):
+                    self._overflow.set()
+                    self._accepting.clear()
+                    return
+                # PortAudio status flags such as input_underflow are informational.
+                # A textual backend/device failure is still surfaced for the fake and
+                # backends that report a concrete error this way.
+                detail = str(status) if status else ""
+                if detail and not detail.startswith("input "):
+                    self._device_error = type(status).__name__
                     self._accepting.clear()
                     return
                 copied = indata.copy()
@@ -102,6 +108,11 @@ class AudioCapture:
                     self._overflow.set()
                     self._accepting.clear()
 
+            def finished_callback() -> None:
+                if not self._stopped.is_set() and not self._cancelled.is_set():
+                    self._device_error = "stream finished"
+                    self._stream_finished.set()
+
             self._stream = sd.InputStream(
                 device=self._device_id,
                 channels=1,
@@ -109,6 +120,7 @@ class AudioCapture:
                 samplerate=rate,
                 blocksize=blocksize,
                 callback=callback,
+                finished_callback=finished_callback,
             )
             self._stream.start()
         except Exception as exc:
@@ -130,6 +142,11 @@ class AudioCapture:
         self._consumer_started = True
         pending = np.empty(0, dtype=np.float32)
         loop = asyncio.get_running_loop()
+        resampler = (
+            streaming_resampler(self._source_rate())
+            if self._source_rate() != SAMPLE_RATE
+            else None
+        )
         try:
             while True:
                 if self._cancelled.is_set():
@@ -142,7 +159,13 @@ class AudioCapture:
                     if self._terminal():
                         break
                     continue
-                processed = to_mono_16k(block, self._source_rate())
+                processed = (
+                    np.asarray(
+                        resampler.resample_chunk(block, last=False), dtype=np.float32
+                    ).reshape(-1)
+                    if resampler is not None
+                    else block.reshape(-1).astype(np.float32, copy=False)
+                )
                 if processed.size:
                     pending = np.concatenate((pending, processed))
                 while pending.size >= CHUNK_SAMPLES:
@@ -153,6 +176,17 @@ class AudioCapture:
                     break
             if self._cancelled.is_set():
                 return
+            if resampler is not None:
+                tail = np.asarray(
+                    resampler.resample_chunk(np.empty(0, dtype=np.float32), last=True),
+                    dtype=np.float32,
+                ).reshape(-1)
+                if tail.size:
+                    pending = np.concatenate((pending, tail))
+                    while pending.size >= CHUNK_SAMPLES:
+                        result = np.ascontiguousarray(pending[:CHUNK_SAMPLES])
+                        pending = pending[CHUNK_SAMPLES:]
+                        yield CaptureChunk(result, band_levels(result, SAMPLE_RATE))
             if pending.size:
                 result = np.ascontiguousarray(pending)
                 yield CaptureChunk(result, band_levels(result, SAMPLE_RATE))
@@ -205,6 +239,7 @@ class AudioCapture:
             or self._cancelled.is_set()
             or self._overflow.is_set()
             or self._device_error is not None
+            or self._stream_finished.is_set()
         )
 
     def _close_stream(self) -> None:
