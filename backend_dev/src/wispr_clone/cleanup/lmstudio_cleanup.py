@@ -48,6 +48,7 @@ class LmStudioCleanup:
         self._timeout = httpx.Timeout(timeout_s)
         self._transport = transport
         self._client: httpx.AsyncClient | None = None
+        self._closed = False
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -93,6 +94,10 @@ class LmStudioCleanup:
 
     async def clean(self, request: CleanupRequest) -> str:
         """Check readiness before sending one non-streaming cleanup request."""
+        if self._closed:
+            raise ThirdPartyError(
+                "lmstudio", "client", "closed", ErrorCode.CLEANUP_UNAVAILABLE
+            )
         if not await self._models_loaded():
             raise ThirdPartyError(
                 "lmstudio", "models", "not loaded", ErrorCode.CLEANUP_UNAVAILABLE
@@ -136,6 +141,8 @@ class LmStudioCleanup:
 
     async def health(self) -> bool:
         """Return readiness without sending a chat request."""
+        if self._closed:
+            return False
         try:
             return await self._models_loaded()
         except Exception:
@@ -143,6 +150,8 @@ class LmStudioCleanup:
 
     async def aclose(self) -> None:
         """Close the lazily created HTTP client, if any."""
+        if self._closed:
+            return
+        self._closed = True
         if self._client is not None:
             await self._client.aclose()
-            self._client = None

@@ -1,5 +1,7 @@
 """Build isolated system preferences and user-provided dictated content."""
 
+import re
+
 from wispr_clone.cleanup.base import CleanupRequest
 
 BASE_INSTRUCTIONS = (
@@ -19,7 +21,12 @@ def build_messages(request: CleanupRequest) -> list[dict[str, str]]:
         system += "\n\nPreferred spellings:\n" + "\n".join(
             f"- {spelling}" for spelling in request.glossary
         )
-    safe_text = request.text.replace("</dictation>", "<\\/dictation>")
+    safe_text = re.sub(
+        r"<\s*/?\s*dictation\s*>",
+        r"<\\/dictation>",
+        request.text,
+        flags=re.IGNORECASE,
+    )
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": f"<dictation>\n{safe_text}\n</dictation>"},
