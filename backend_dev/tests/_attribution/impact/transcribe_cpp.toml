@@ -1,0 +1,6 @@
+dependency = "transcribe-cpp"
+kind = "library"
+modules = ["stt.voxtral_transcribe_cpp"]
+features = ["live dictation", "retry_stt from retained WAV", "model readiness"]
+error_codes = ["stt_unavailable", "model_load_failed", "stt_stream_closed"]
+action = "Check the transcribe-cpp pin in uv.lock, the GGUF SHA-256, and free VRAM"
