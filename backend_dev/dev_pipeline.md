@@ -139,7 +139,7 @@ flowchart LR
 ### 2.3 Branching model
 
 - `main` is protected: PR only, required checks, linear history, no force-push. It must always build.
-- Short-lived branches: `feat/<area>`, `ops/<area>`, `main/<Mx>` (main-agent integration), `fix/<test-id>`.
+- Short-lived branches: `feat/<area>`, `ops/<area>`, `integ/<step>` (main-agent integration, e.g. `integ/p0.1-scaffold`, `integ/m1-state-machine`; Git cannot create `main/...` while `main` exists), `fix/<test-id>`.
 - Each **branch** has one **git worktree**, for example `git worktree add ../wc-storage feat/storage`. Sol and Luna take turns in it (RED → GREEN → verify is sequential), so there are never two writers at once and no commits move between worktrees.
 - The Sol agent that verifies GREEN pushes the branch and opens the PR with `gh pr create` (agents/README.md, dispatch step 5).
 - Merge order follows the waves. Branch agents never merge. Only the main agent merges, after review.
@@ -605,7 +605,7 @@ DONE WHEN: Definition of Done §2.1 holds. PR description contains red output, g
 
 ## 8. Main-agent integration track
 
-These steps pull several branches together or own cross-cutting control, so only the main agent does them. Each still follows red → green → refactor, one step per PR (`main/M<n>`).
+These steps pull several branches together or own cross-cutting control, so only the main agent does them. Each still follows red → green → refactor, one step per PR (`integ/m<n>-<name>`).
 
 | Step | Needs merged | Feature | Key tests |
 |---|---|---|---|
@@ -642,6 +642,6 @@ These steps pull several branches together or own cross-cutting control, so only
 | 11 | **Hybrid delivery to the original destination** (user request 2026-09-24): if the user switches away, the text goes to the field where recording started, by idle jump (1 s without input) or on return (0.3 s settle); held if the destination is gone or after 10 min | Feature spec and CODEMAP §4 updated; new state `awaiting_destination`; tests T-SM-007, T-PRO-009..015, T-INS-007/008, P-UIA; UI Automation client proposed pending G4 |
 | 12 | **Phase −1 complete** (2026-09-24): G1 ✅, G2 ✅, G3 ✅, G4 ✅ feasible with rules (settle, read-back, IME-aware strategy). Win+V untested because history is off (user's choice). VS Code out of scope for the user | Evidence in CODEMAP §7. Next: P0.1 |
 
-**First steps once approved:** Phase −1.1 → −1.4 (disposable), then P0.1 → P0.2 → P0.3 → P0.4 → P0.5 → P0.6 on `main/P0` (one PR each, TDD). Then launch wave 1 with 2 feature work orders while the main agent does M1.
+**First steps once approved:** Phase −1.1 → −1.4 (disposable), then P0.1 → P0.2 → P0.3 → P0.4 → P0.5 → P0.6 on `integ/p0.<n>-<name>` branches (one PR each, TDD). Then launch wave 1 with 2 feature work orders while the main agent does M1.
 
 **This document extends CODEMAP §3's `tests/` layout** with `tests/arch/`, `tests/probes/`, `tests/conformance/`, `tests/fakes/`, `tests/_attribution/`, `tests/e2e/`, `tests/integration/{<feature>,pipeline,app}/` and `tests/fixtures/audio/{generated,speech}/`, adds `experiments/` for Phase −1, and adds `.github/workflows/` at the repo root. CODEMAP should be updated to match when Phase 0 lands.
