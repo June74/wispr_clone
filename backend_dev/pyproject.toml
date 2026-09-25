@@ -37,6 +37,7 @@ allow-direct-references = true
 
 [tool.pytest.ini_options]
 addopts = "--strict-markers"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 markers = [
     "unit: fast isolated unit tests",
