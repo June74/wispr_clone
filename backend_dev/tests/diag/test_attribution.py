@@ -40,7 +40,9 @@ def _run(pytester: pytest.Pytester, report: Path, *args: str) -> pytest.RunResul
     command = ["-q", *args]
     if PLUGIN.is_file():
         command.extend(["--attribution-json", str(report)])
-    return pytester.runpytest_subprocess(*command)
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv("PYTHONUTF8", "1")
+        return pytester.runpytest_subprocess(*command)
 
 
 def _json(report: Path) -> list[dict[str, object]]:
