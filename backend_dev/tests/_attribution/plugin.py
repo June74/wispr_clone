@@ -141,7 +141,10 @@ def _probe_status(config: pytest.Config, dist: str) -> tuple[list[str], bool, bo
             if report.passed:
                 passed.append(item.nodeid)
             elif report.failed:
-                failed = True
+                if "[XPASS(strict)]" in str(report.longrepr):
+                    passed.append(item.nodeid)
+                else:
+                    failed = True
             elif report.skipped:
                 skipped = True
     return passed, failed, skipped
@@ -163,6 +166,25 @@ def _classify(
         if call.excinfo is not None
         else _frames(report)
     )
+    # pytest's traceback includes its own runner and hook frames. Attribution is
+    # based only on the test frame and calls made below it.
+    test_index = next(
+        (index for index, frame in enumerate(frames) if frame[2] == item.name),
+        None,
+    )
+    if test_index is not None:
+        frames = frames[test_index:]
+    else:
+        # Setup and teardown failures have no executing test frame. Keep the
+        # fixture frames while dropping the runner and interpreter frames.
+        frames = [
+            frame
+            for frame in frames
+            if "site-packages" not in frame[0]
+            and "/lib/python" not in frame[0].replace("\\", "/")
+            and "/python"
+            not in frame[0].replace("\\", "/").split("site-packages", 1)[0]
+        ]
     deepest_source = next(
         (
             frame
@@ -171,8 +193,17 @@ def _classify(
         ),
         None,
     )
+    excluded = ("/pytest/", "/_pytest/", "/pluggy/", "/py/", "/tests/_attribution/")
     deepest_site = next(
-        (frame for frame in reversed(frames) if "site-packages" in frame[0]), None
+        (
+            frame
+            for frame in reversed(frames)
+            if "site-packages" in frame[0]
+            and not any(part in frame[0].replace("\\", "/") for part in excluded)
+            and "/python"
+            not in frame[0].replace("\\", "/").split("site-packages", 1)[0]
+        ),
+        None,
     )
     explicit_probe = item.get_closest_marker("probe")
     adapter = item.get_closest_marker("adapter")
@@ -245,13 +276,25 @@ def _classify(
             base.update(verdict="OURS", category="adapter-misuse")
         return base
     base.update(verdict="OURS", category="logic")
-    if deepest_source:
-        path, line, function = deepest_source
+    location = deepest_source or (frames[0] if frames else None)
+    if location:
+        path, line, function = location
         base["where"] = f"{path}:{line} in {function}"
     invariant = _invariant(item)
     if invariant:
         base["invariant"] = invariant
+    base["symptom"] = _symptom(call, report)
+    base["phase"] = report.when
     return base
+
+
+def _symptom(call: pytest.CallInfo[None], report: pytest.TestReport) -> str:
+    """Return exception type and first message line without traceback text."""
+    if call.excinfo is not None:
+        exception = call.excinfo.value
+        message = str(exception).splitlines()[0] if str(exception) else ""
+        return f"{type(exception).__name__}: {message}"
+    return f"{report.outcome}: {report.when} error"
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -261,9 +304,12 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]) ->
     reports = getattr(item, "_attribution_reports", [])
     reports.append(report)
     setattr(item, "_attribution_reports", reports)
-    if report.when == "call" and report.failed:
+    if report.failed:
         rows = getattr(item.config, "_attribution_rows", [])
-        rows.append(_classify(item, call, report))
+        row = _classify(item, call, report)
+        row["symptom"] = _symptom(call, report)
+        row["phase"] = report.when
+        rows.append(row)
         setattr(item.config, "_attribution_rows", rows)
 
 
@@ -273,15 +319,6 @@ def pytest_terminal_summary(
     """Print concise failure blocks and optionally write the privacy-safe JSON list."""
     del exitstatus
     rows: list[dict[str, Any]] = getattr(config, "_attribution_rows", [])
-    reports_by_nodeid = {
-        report.nodeid: report
-        for reports in (
-            getattr(item, "_attribution_reports", [])
-            for item in getattr(config, "_attribution_items", [])
-        )
-        for report in reports
-        if report.when == "call" and report.failed
-    }
     for row in rows:
         verdict = row["verdict"]
         category = row.get("category")
@@ -298,6 +335,8 @@ def pytest_terminal_summary(
             terminalreporter.write_line(f"  where: {row['where']}")
         if row.get("invariant"):
             terminalreporter.write_line(f"  invariant: {row['invariant']}")
+        if row.get("phase"):
+            terminalreporter.write_line(f"  phase: {row['phase']}")
         if row.get("dist"):
             terminalreporter.write_line(
                 f"  source: {row['dist']} ({row.get('version')}; "
@@ -307,9 +346,8 @@ def pytest_terminal_summary(
             for key in ("modules", "features", "error_codes", "action"):
                 if impact.get(key):
                     terminalreporter.write_line(f"  {key}: {impact[key]}")
-        report = reports_by_nodeid.get(nodeid)
-        if report is not None:
-            terminalreporter.write_line(f"  symptom: {report.outcome} failure")
+        if row.get("symptom"):
+            terminalreporter.write_line(f"  symptom: {row['symptom']}")
         if row.get("probes"):
             terminalreporter.write_line(
                 f"  probe: probe coverage: {', '.join(row['probes'])}"
