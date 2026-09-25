@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pytest
 
-
 PROJECT_CONFIG = Path(__file__).resolve().parents[1] / "pyproject.toml"
 PIPELINE_MARKERS = (
     "unit",
@@ -31,7 +30,10 @@ def test_T_CI_002_pipeline_markers_are_registered_and_unknown_markers_fail(
 
     known_test = pytester.makepyfile(
         test_known_markers="\n".join(
-            ["import pytest", *(f"@pytest.mark.{marker}" for marker in PIPELINE_MARKERS)]
+            [
+                "import pytest",
+                *(f"@pytest.mark.{marker}" for marker in PIPELINE_MARKERS),
+            ]
             + ["def test_pipeline_markers():", "    pass"]
         )
     )
@@ -48,9 +50,7 @@ def test_T_CI_002_pipeline_markers_are_registered_and_unknown_markers_fail(
             pass
         """
     )
-    unknown_result = pytester.runpytest(
-        *config_args, "-q", unknown_test.name
-    )
+    unknown_result = pytester.runpytest(*config_args, "-q", unknown_test.name)
 
     assert known_result.ret == pytest.ExitCode.OK, "pipeline markers must be registered"
     known_result.assert_outcomes(passed=1)
