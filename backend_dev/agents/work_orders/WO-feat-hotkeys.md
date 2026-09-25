@@ -176,3 +176,7 @@ setup), action = check the pynput pin in uv.lock and that the app runs on the in
    (e.g. `ctrl_l`, `ctrl_r` → `ctrl`). It reports `DOWN ctrl` only when the first physical Ctrl
    goes down and `UP ctrl` only when the last one is released. It stores only these per-modifier
    counts (never other keys).
+6. Hold is "active" from the moment the service POSTS `on_start` (listener-thread view; the service
+   never learns whether a posted callback has run, by decision 2). So `reset()` during that hold —
+   even before the posted start is drained — posts `on_stop`; the app receives start then stop.
+   The first block of T-KEY-007 (expects no stop in that case) predates decision 2 and is revised.

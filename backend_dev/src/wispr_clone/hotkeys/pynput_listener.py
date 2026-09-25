@@ -78,6 +78,7 @@ class PynputListener:
         self._service = service
         self._module = module
         self._listener: Any | None = None
+        self._modifier_counts: dict[str, int] = {}
 
     def start(self) -> None:
         """Import pynput on demand and start its global down/up listener."""
@@ -91,11 +92,42 @@ class PynputListener:
             module = import_module("pynput.keyboard")
             self._module = module
 
+        self._modifier_counts.clear()
+
+        def modifier_name(key: object) -> str | None:
+            key_type = getattr(module, "Key", None)
+            if key_type is None:
+                return None
+            for attr, canonical in _KEY_NAMES:
+                if (
+                    canonical in {"ctrl", "alt", "shift", "win"}
+                    and getattr(key_type, attr, object()) == key
+                ):
+                    return canonical
+            return None
+
         def on_press(key: object) -> None:
-            self._service.handle(KeyAction.DOWN, key_name(key, module))
+            modifier = modifier_name(key)
+            if modifier is not None:
+                count = self._modifier_counts.get(modifier, 0)
+                self._modifier_counts[modifier] = count + 1
+                if count == 0:
+                    self._service.handle(KeyAction.DOWN, modifier)
+            else:
+                self._service.handle(KeyAction.DOWN, key_name(key, module))
 
         def on_release(key: object) -> None:
-            self._service.handle(KeyAction.UP, key_name(key, module))
+            modifier = modifier_name(key)
+            if modifier is not None:
+                count = self._modifier_counts.get(modifier, 0)
+                if count > 0:
+                    if count == 1:
+                        self._modifier_counts.pop(modifier, None)
+                        self._service.handle(KeyAction.UP, modifier)
+                    else:
+                        self._modifier_counts[modifier] = count - 1
+            else:
+                self._service.handle(KeyAction.UP, key_name(key, module))
 
         listener_type = getattr(module, "Listener")
         listener = listener_type(on_press=on_press, on_release=on_release)
@@ -104,6 +136,7 @@ class PynputListener:
             listener.start()
         except Exception:
             self._listener = None
+            self._modifier_counts.clear()
             self._service.reset()
             raise
 
@@ -116,6 +149,7 @@ class PynputListener:
         try:
             listener.stop()
         finally:
+            self._modifier_counts.clear()
             reset = getattr(self._service, "reset", None)
             if callable(reset):
                 reset()
