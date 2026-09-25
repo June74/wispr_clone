@@ -1,0 +1,72 @@
+name: Nightly dependency drift
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+env:
+  PYTHONUTF8: "1"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: nightly-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend_dev
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Copy checkout and resolve dependency drift
+        run: |
+          mkdir -p "$RUNNER_TEMP/wispr-drift"
+          mkdir -p "$RUNNER_TEMP/wispr-drift/backend_dev"
+          tar --exclude='./.venv' --exclude='./.git' --exclude='*/__pycache__' -cf - . \
+            | (cd "$RUNNER_TEMP/wispr-drift/backend_dev" && tar -xf -)
+          cd "$RUNNER_TEMP/wispr-drift/backend_dev"
+          uv lock --upgrade
+          uv sync
+      - name: Run unit and hosted probes
+        shell: bash
+        run: |
+          set +e
+          cd "$RUNNER_TEMP/wispr-drift/backend_dev"
+          uv run pytest -q -m "not probe and not gpu and not e2e and not manual" --attribution-json "$RUNNER_TEMP/attribution-unit.json"
+          unit_result=$?
+          uv run pytest -q -m "probe and not gpu" --attribution-json "$RUNNER_TEMP/attribution-probes.json"
+          probe_result=$?
+          if [ "$probe_result" -eq 5 ]; then probe_result=0; fi
+          uv run python scripts/attribution_report.py "$RUNNER_TEMP/attribution-summary.md" "$RUNNER_TEMP/attribution-unit.json" "$RUNNER_TEMP/attribution-probes.json"
+          if [ "$unit_result" -ne 0 ]; then exit "$unit_result"; fi
+          exit "$probe_result"
+      - name: Open or update triage issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          issue=$(gh issue list --state open --json number,title --jq '.[] | select(.title == "Nightly dependency drift") | .number' | head -n 1)
+          body_file="$RUNNER_TEMP/nightly-triage.md"
+          {
+            printf 'Nightly dependency drift failed.\n\nRun: %s\n\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            printf 'Attribution summary:\n\n'
+            if [ -f "$RUNNER_TEMP/attribution-summary.md" ]; then cat "$RUNNER_TEMP/attribution-summary.md"; else printf 'No attribution summary was produced.\n'; fi
+          } > "$body_file"
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body-file "$body_file"
+          else
+            gh issue create --title "Nightly dependency drift" --label triage --body-file "$body_file"
+          fi
