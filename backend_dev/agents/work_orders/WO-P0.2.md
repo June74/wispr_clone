@@ -92,3 +92,15 @@ Event payloads are TypedDicts (plain dicts at runtime) whose REQUIRED keys are e
 `audio:level` is NOT run-specific: it must not require `version` or `status`.
 T-CON-003 must build a full valid sample of each payload, check `__required_keys__` equals the set
 above, and check json round-trip with data-only values.
+
+## Coordinator decisions after verification (round 2)
+
+1. Exception text must never contain caller-supplied free text. `str(ThirdPartyError)` shows only
+   dependency, operation and error code; `str(WisprError)` shows only error code and `where`.
+   `detail` and `why` remain attributes for structured, sanitized handling; callers must still keep
+   them free of transcripts, window titles, keystrokes and secrets.
+2. Add `ErrorCode.MICROPHONE_PERMISSION_DENIED = "microphone_permission_denied"` (feature spec:
+   explain microphone permission problems). Message points to Windows microphone privacy settings;
+   recovery actions include `open_settings` and `choose_mic`.
+3. Sol names the import-rule test T-CON-006 and adds `microphone_permission_denied` to the
+   required-code set.
