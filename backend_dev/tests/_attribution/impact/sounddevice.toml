@@ -1,0 +1,6 @@
+dependency = "sounddevice"
+kind = "library"
+modules = ["audio.devices", "audio.capture"]
+features = ["input device selection", "microphone capture", "microphone test"]
+error_codes = ["microphone_unavailable", "microphone_disconnected", "audio_queue_overflow"]
+action = "Check the sounddevice pin in uv.lock, Windows microphone privacy settings, and device connection"

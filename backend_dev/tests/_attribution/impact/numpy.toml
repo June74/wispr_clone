@@ -1,0 +1,6 @@
+dependency = "numpy"
+kind = "library"
+modules = ["audio.resample", "audio.level_meter", "audio.capture"]
+features = ["microphone capture", "waveform levels", "16 kHz audio conversion"]
+error_codes = ["microphone_disconnected", "audio_queue_overflow"]
+action = "Check the numpy pin in uv.lock and the installed wheel"
