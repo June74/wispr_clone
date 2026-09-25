@@ -150,3 +150,12 @@ missing, e.g. retry_stt without a WAV). While `dispatching` is True: empty set.
 | **T-SM-007** (invariant) | awaiting_destination (not dispatching) accepts exactly {DISPATCH_BEGIN_AUTO, DISPATCH_BEGIN_EXPLICIT, HOLD, CANCEL} |
 | T-SM-008 | `allowed_recovery_actions` equals the table for every status, is empty while dispatching; `is_terminal` is True exactly for done and cancelled |
 </content>
+
+## Coordinator decisions after RED review
+
+1. T-SM-004 wording corrected. The invariant is the cancellation boundary of ONE dispatch: while
+   `dispatching` is True, CANCEL is rejected, and the only exits are the three outcome events
+   (INSERTED, INSERT_FAILED, INSERT_UNCERTAIN), so an in-flight dispatch can never end as
+   cancelled. After an outcome is recorded, a later explicit recovery (e.g. error → RETRY_STT →
+   processing → CANCEL) is a new operation and may be cancelled; that is not a contradiction.
+   Sol's RED assertion (in-flight CANCEL rejected; exits only via outcomes) is accepted as is.
