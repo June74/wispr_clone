@@ -154,3 +154,15 @@ setup), action = check the pynput pin in uv.lock and that the app runs on the in
 1. `reset()` during an active hold (hold mode, started, not yet stopped) posts exactly one
    `on_stop` and clears pressed state: a lost key-up (focus change, hook restart) must never leave
    recording running. In toggle mode `reset()` only clears pressed state (no callback).
+
+## Coordinator review of GREEN (binding)
+
+2. Thread ownership: ALL service state (`_pressed`, hold/toggle flags) is read and written only on
+   the listener thread inside `handle`/`reset`. Posted callables are exactly the user callbacks
+   (`on_start`, `on_stop`, `on_cancel`), never closures that touch service state (the GREEN code's
+   deferred `start()` closure reads `_pressed` on the loop thread: a data race). Order is preserved
+   by `post` (call_soon_threadsafe is FIFO), so press+release before the loop runs still yields
+   start then stop.
+3. A cancel binding WITHOUT modifiers (e.g. `escape`) fires regardless of held modifiers, so Esc
+   cancels while `ctrl+shift+space` is held in hold mode. A cancel binding WITH modifiers needs an
+   exact modifier match like any other binding.
