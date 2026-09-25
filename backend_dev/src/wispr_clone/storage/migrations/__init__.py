@@ -4,9 +4,11 @@ import sqlite3
 from dataclasses import dataclass
 from importlib import import_module
 from pkgutil import iter_modules
-from typing import Callable, Sequence
+from typing import Callable, Sequence, TypeAlias
 
 from wispr_clone.contracts.common import ErrorCode, WisprError
+
+Connection: TypeAlias = sqlite3.Connection
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,7 +17,7 @@ class Migration:
 
     version: int
     name: str
-    apply: Callable[[sqlite3.Connection], None]
+    apply: Callable[[Connection], None]
 
 
 def _validate(migrations: Sequence[Migration]) -> tuple[Migration, ...]:

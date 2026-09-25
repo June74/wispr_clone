@@ -126,9 +126,9 @@ class Database:
 
         return await asyncio.get_running_loop().run_in_executor(self._executor, execute)
 
-    async def write(self, fn: Callable[[sqlite3.Connection], T]) -> None:
+    async def write(self, fn: Callable[[sqlite3.Connection], T]) -> T:
         """Run a callback in one immediate transaction."""
-        await self._run(fn, True)
+        return await self._run(fn, True)
 
     async def read(self, fn: Callable[[sqlite3.Connection], T]) -> T:
         """Run a callback on the writer thread without an explicit transaction."""
