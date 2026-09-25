@@ -5,8 +5,10 @@ from __future__ import annotations
 import array
 import asyncio
 import importlib
+import sys
 import wave
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import ExitStack
 from pathlib import Path
 from threading import Event, Lock
 from types import ModuleType
@@ -36,16 +38,43 @@ class _ActiveSession:
         self.closed = False
         self.lock = Lock()
         self.error: ThirdPartyError | None = None
-        self.native: Future[tuple[Any, Any]] = owner._executor.submit(self._open_native)
+        self.native_session: Any | None = None
+        self.native_stack: ExitStack | None = None
+        self.native: Future[Any] = owner._executor.submit(self._open_native)
         self.tail: Future[Any] = self.native
 
     def _open_native(self) -> tuple[Any, Any]:
         model = self.owner._model
         if model is None:
             raise RuntimeError("model unavailable")
-        session = model.session()
-        stream = session.stream()
-        return session, stream
+        stack = ExitStack()
+        try:
+            session = stack.enter_context(model.session())
+            with self.lock:
+                self.native_session = session
+                cancelled = self.cancelled
+            if cancelled:
+                session.cancel()
+                stack.close()
+                return None, None
+            stream = stack.enter_context(session.stream())
+            with self.lock:
+                self.native_stack = stack
+                cancelled = self.cancelled
+            if cancelled:
+                self._close_native()
+                return None, None
+            return session, stream
+        except BaseException:
+            stack.close()
+            raise
+
+    def _close_native(self) -> None:
+        with self.lock:
+            stack = self.native_stack
+            self.native_stack = None
+        if stack is not None:
+            stack.close()
 
     def push_audio(self, samples: array.array[float]) -> None:
         if not isinstance(samples, array.array) or samples.typecode != "f":
@@ -66,20 +95,23 @@ class _ActiveSession:
     def _feed_after(self, previous: Future[Any], pcm: array.array[float]) -> None:
         try:
             previous.result()
-            if self.error is not None:
-                return
+            with self.lock:
+                if self.cancelled or self.error is not None:
+                    return
             session, stream = self.native.result()
-            if self.cancelled:
+            if session is None:
                 return
             stream.feed(pcm)
             value = stream.text()
         except BaseException as exc:
             if self.cancelled and self.owner._is_aborted(exc):
+                self._close_native()
                 return
             error = self.owner._session_error("feed", exc)
             with self.lock:
                 self.error = error
                 self.closed = True
+            self._close_native()
             self.owner._release(self)
             return
         callback = self.callback
@@ -100,13 +132,9 @@ class _ActiveSession:
                 raise WisprError(ErrorCode.STT_STREAM_CLOSED, "stt", "closed")
             self.enabled.clear()
             self.closed = True
-            prior_error = self.error
             pending = self.tail
-        if prior_error is not None:
-            self.owner._release(self)
-            raise prior_error
         try:
-            result = cast(
+            return cast(
                 str,
                 await asyncio.wrap_future(
                     self.owner._executor.submit(
@@ -116,34 +144,31 @@ class _ActiveSession:
             )
         finally:
             self.owner._release(self)
-        return result
 
     def _finalize_after(self, pending: Future[Any], native: Future[Any]) -> str:
-        session: Any | None = None
-        stream: Any | None = None
         try:
             pending.result()
-            if self.error is not None:
-                raise self.error
+            with self.lock:
+                if self.error is not None:
+                    raise self.error
+                if self.cancelled:
+                    raise WisprError(ErrorCode.STT_STREAM_CLOSED, "stt", "cancelled")
             session, stream = native.result()
+            if session is None:
+                raise WisprError(ErrorCode.STT_STREAM_CLOSED, "stt", "cancelled")
             stream.finalize()
-            committed = stream.text().committed
-            stream.close()
-            session.close()
-            return cast(str, committed)
+            return cast(str, stream.text().committed)
+        except WisprError:
+            raise
         except BaseException as exc:
             if self.cancelled and self.owner._is_aborted(exc):
                 raise WisprError(ErrorCode.STT_STREAM_CLOSED, "stt", "cancelled")
             if isinstance(exc, ThirdPartyError):
                 raise
-            raise self.owner._session_error("finalize", exc) from None
+            operation = "feed" if self.error is not None else "finalize"
+            raise self.owner._session_error(operation, exc) from None
         finally:
-            for resource in (stream, session):
-                if resource is not None:
-                    try:
-                        resource.close()
-                    except Exception:
-                        pass
+            self._close_native()
 
     def cancel(self) -> None:
         with self.lock:
@@ -152,25 +177,25 @@ class _ActiveSession:
             self.cancelled = True
             self.closed = True
             self.enabled.clear()
-            native = self.native
-        if not native.cancelled():
+            session = self.native_session
+        if session is not None:
             try:
-                session, _stream = native.result()
                 session.cancel()
             except Exception:
                 pass
         self.owner._release(self)
-        self.owner._executor.submit(self._close_after_cancel, native)
+        self.owner._executor.submit(self._cancel_cleanup)
 
-    def _close_after_cancel(self, native: Future[Any]) -> None:
+    def _cancel_cleanup(self) -> None:
         try:
-            session, stream = native.result()
+            self.tail.result()
         except BaseException:
-            return
+            pass
         try:
-            stream.close()
-        finally:
-            session.close()
+            self.native.result()
+        except BaseException:
+            pass
+        self._close_native()
 
 
 class VoxtralTranscribeCpp:
@@ -294,18 +319,19 @@ class VoxtralTranscribeCpp:
             raise WisprError(ErrorCode.VALIDATION, "stt", "wav format") from None
         samples = array.array("h")
         samples.frombytes(raw)
-        if __import__("sys").byteorder != "little":
+        if sys.byteorder != "little":
             samples.byteswap()
         session = self.start_session()
         for offset in range(0, len(samples), CHUNK_SAMPLES):
-            chunk = array.array(
-                "f",
-                (
-                    sample / 32768.0
-                    for sample in samples[offset : offset + CHUNK_SAMPLES]
-                ),
+            session.push_audio(
+                array.array(
+                    "f",
+                    (
+                        sample / 32768.0
+                        for sample in samples[offset : offset + CHUNK_SAMPLES]
+                    ),
+                )
             )
-            session.push_audio(chunk)
         return await session.finish()
 
     async def close(self) -> None:
