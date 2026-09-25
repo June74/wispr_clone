@@ -24,13 +24,13 @@ Read this with your role file, [HARDWARE.md](HARDWARE.md), and the assigned [wor
 
 ## Behavior that must survive every change
 
-1. The Windows application owns desktop interaction. WSL owns local model serving. Separate environments; pure tests in Linux do not prove Windows behavior.
+1. The Windows application owns desktop interaction and runs speech recognition in-process (transcribe.cpp, on its own STT thread). Cleanup goes to the user's LM Studio on loopback, which is shared with Cognee and never reconfigured by us. No model runs in WSL; WSL is for development. Separate environments; pure tests in Linux do not prove Windows behavior.
 2. A single application worker owns authoritative state and SQLite writes. Callbacks enqueue bounded work; no blocking device callback and no re-entrant eviction notification. One live run and one insertion dispatch at a time. Mic capture and mic testing share an exclusive lease.
 3. Preserve the immutable STT original separately from dictionary-adjusted and cleaned text. Cleanup failure/rejection waits for explicit choice with zero insertion calls. `use_original` selects the exact original. Dictated content is data, never executable instructions.
 4. Verify destination again before insertion. At most one automatic dispatch per run; no automatic replay after an unresolved attempt, no paste-to-typing fallback after ambiguity. Persist claims before dispatch. Cancellation before dispatch suppresses input; after dispatch it cannot promise undo. Never press Enter to submit.
 5. Retain at most ten runs, each strictly younger than 24 hours from recording start; expire at equality. Viewing/copying/retry never renews age. Deletion removes audio, both transcript versions, and attempts, while settings/dictionary persist. Pending deletions are unavailable; failed cleanup is reported and retried.
 6. Reject stale versions, expired commands, old process-session tokens, deleted/evicted runs, and late callbacks. Do not recreate deleted history. Deduplicate start/recovery requests. A command acknowledgment is not delivery confirmation.
-7. Local-only forbids silent cloud fallback. Model servers bind loopback. No raw speech, transcripts, keystrokes, window titles, credentials, or private fixture data in logs/artifacts. Synthetic test examples are permitted. Transcript clipboard writes use the codemap's exclusion formats.
+7. Local-only forbids silent cloud fallback. LM Studio serves on loopback only. No raw speech, transcripts, keystrokes, window titles, credentials, or private fixture data in logs/artifacts. Synthetic test examples are permitted. Transcript clipboard writes use the codemap's exclusion formats.
 8. The HUD never takes focus or exposes the command bridge. Only green recording bars animate; blue/yellow/red remain stationary. Runtime UI renders backend state, not prototype simulations. Follow UI skills if actually implementing presentation changes.
 
 ## Verification and triage

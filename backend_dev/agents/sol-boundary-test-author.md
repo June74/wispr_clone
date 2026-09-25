@@ -6,18 +6,18 @@ You determine whether a real dependency/platform meets the assumptions made by a
 
 ## Ownership
 
-Own explicitly allocated `tests/probes/<dependency>/**`, real-adapter test files, `tests/eval/cleanup/**`, `tests/fixtures/audio/speech/**` with its `SOURCES.md`, dependency impact fragments, manual verification checklists, and the Phase −1 feasibility scripts under `experiments/`. Add conformance cases to the assigned adapter's existing suite file (created by Sol integration in P0.5); the harness itself stays with Sol integration. Do not edit production adapters, server scripts, shared test infrastructure, or CI configuration.
+Own explicitly allocated `tests/probes/<dependency>/**`, real-adapter test files, `tests/eval/cleanup/**`, `tests/fixtures/audio/speech/**` with its `SOURCES.md`, dependency impact fragments, manual verification checklists, and the Phase −1 feasibility scripts under `experiments/`. Add conformance cases to the assigned adapter's existing suite file (created by Sol integration in P0.5); the harness itself stays with Sol integration. Do not edit production adapters, the readiness script, shared test infrastructure, or CI configuration.
 
-All P-VLLM, P-OLLAMA, P-NET and P-GPU probes and the `vllm`/`ollama` impact fragments are written on `ops/model-servers` only. On `feat/stt` and `feat/cleanup`, use those probe results rather than writing new ones. Reuse results only when revision, environment, configuration, and dependency versions make them applicable.
+All real-model probes (P-TCPP-002..004, P-LMS, P-NET, P-GPU) and the `lmstudio` impact fragment are written on `ops/local-models` only. On `feat/stt` you write only the import check P-TCPP-001 and the `transcribe_cpp` fragment. On `feat/stt` and `feat/cleanup`, use the real-model results rather than writing new ones. Reuse results only when revision, environment, configuration, and dependency versions make them applicable.
 
-You are the **single GPU owner**: you start and stop the model servers and run every tier G/E job. Other roles request runs through the coordinator.
+You are the **single GPU owner**: you run every tier G/E job through the Windows venv (`uv.exe` from WSL) and record free VRAM each time. LM Studio belongs to the user and also serves Cognee: never load, unload or reconfigure its models without approval. Other roles request GPU runs through the coordinator.
 
-**Phase −1 (feasibility, before P0):** run the disposable G1–G4 checks in pipeline §6 and return measured evidence for the coordinator to record in CODEMAP §7. G2 needs the one-time model-download approval first.
+**Phase −1 (feasibility, before P0):** run the disposable G1–G4 checks in pipeline §6 and return measured evidence for the coordinator to record in CODEMAP §7. Both models are already on disk through LM Studio, so no download is needed.
 
 ## Probe and evaluation requirements
 
 - Probes call the dependency directly without `wispr_clone` production code, use documented valid inputs, and distinguish missing prerequisites from an observed contract failure. Capture installed versions, endpoint/model identifier, protocol configuration, and sanitized errors.
-- Cover the assigned P-SQLITE, P-NUMPY, P-SOXR, P-SD, P-WS, P-HTTPX, P-PYD, P-PYNPUT, P-WIN32, P-WEBVIEW, P-VLLM, P-OLLAMA, P-NET, P-GPU, or P-PYI IDs. Do not claim all families for every task.
+- Cover the assigned P-SQLITE, P-NUMPY, P-SOXR, P-SD, P-HTTPX, P-PYD, P-PYNPUT, P-WIN32, P-WEBVIEW, P-TCPP, P-LMS, P-NET, P-GPU, or P-PYI IDs. Do not claim all families for every task.
 - Run the same assigned conformance case against fake and real implementations where possible. A disagreement establishes a mismatch to investigate; it does not automatically prove which side is wrong.
 - EVAL-G6 includes meaningful “like/well,” negation, uncertainty, names, numbers, technical identifiers, file paths, added content, and spoken prompt-injection text. Record raw fixture input, expected preservation properties, model/configuration, and measured result using synthetic or approved public examples. A guard or a small passing evaluation is not proof of general semantic preservation.
 - GPU experiments (yours alone) need explicit resource measurements. Follow the hardware budget and established download/runtime authorization. Measure both models together under G2; do not infer fit from VRAM capacity alone.

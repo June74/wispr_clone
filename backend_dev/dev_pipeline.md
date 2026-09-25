@@ -42,7 +42,7 @@ flowchart TB
     B6[feat/stt]
     B7[feat/insertion-win]
     B8[feat/settings-models]
-    B9[ops/model-servers]
+    B9[ops/local-models]
   end
 
   subgraph W2["Wave 2: storage-backed services (parallel)"]
@@ -159,13 +159,13 @@ Based on this machine: WSL2 Ubuntu, RTX 5080 visible to WSL, Node 22 and `gh` 2.
 | Create worktrees and local branches, commit | ✅ once the user authorizes commits | Authorization | Commits are the user's call |
 | Push branches and open PRs | ✅ via `gh` | — (authorized 2026-09-24) | The repo is public, so everything pushed is visible |
 | Merge to `main` | ✅ main agent only, after green CI + review | — (authorized 2026-09-24) | Shared history. Branch agents never merge |
-| Download models (Voxtral, Llama) and install vLLM/Ollama | ❌ without approval | User approves size, licence and access terms (DEPENDENCIES.md) | Many GB, licences, possible `HF_TOKEN` |
-| Run GPU probes and real-adapter tests | ✅ locally, after models exist; results attached to PRs | — (decided 2026-09-24) | GPU is present in this WSL, but hosted CI has none |
+| Download models, or load/unload/reconfigure models in LM Studio | ❌ without approval | User approves; both selected models are already in LM Studio (DEPENDENCIES.md) | Cognee depends on LM Studio's loaded models; changing them can break its memory |
+| Run GPU probes and real-adapter tests | ✅ locally; results attached to PRs | — (decided 2026-09-24) | Runs on the Windows GPU through `uv.exe` from WSL; hosted CI has no GPU |
 | Verify HUD non-activation, real-app insertion, Win+V exclusion, mic unplug | ❌ | Human manual checklist (tier H, §4.1) | Needs a real desktop, real apps and physical hardware |
 | Publish a release | ❌ | Human approves the `release` environment | Outward-facing |
 | Add a dependency outside DEPENDENCIES.md | ❌ | User approves after a dependency note | Global rule |
 
-**Agent operating limits:** no secrets in the repo, logs or test output. No transcripts, audio or keystrokes in logs. Tier G results are generated locally and attached, never uploaded with transcripts or audio. No LAN exposure of model servers to "fix" connectivity.
+**Agent operating limits:** no secrets in the repo, logs or test output. No transcripts, audio or keystrokes in logs. Tier G results are generated locally and attached, never uploaded with transcripts or audio. No LAN exposure of LM Studio to "fix" connectivity.
 
 ---
 
@@ -177,14 +177,14 @@ All workflows run on GitHub Actions for `github.com/June74/wispr_clone` with `wo
 
 | Tier | Marker(s) | Runner | Trigger | What it proves |
 |---|---|---|---|---|
-| **S** static | — | `ubuntu-latest` | every push/PR | ruff lint+format, mypy, import-boundary check, shellcheck on `scripts/` |
+| **S** static | — | `ubuntu-latest` | every push/PR | ruff lint+format, mypy, import-boundary check |
 | **U** unit | `unit` | `ubuntu-latest` + `windows-latest` | every push/PR | Pure logic and invariants, with fakes only |
 | **I** integration | `integration` | `ubuntu-latest` + `windows-latest` | every push/PR | Multiple modules wired with fakes; crash/restart with a real SQLite file |
 | **C** conformance | `conformance` | ubuntu (fakes) / GPU (real) | PR (fakes) / nightly (real) | Fakes and real adapters pass the same contract suite, so fakes cannot drift |
-| **W** windows | `windows` | `windows-latest` | PR touching `insertion/ hotkeys/ ui/ audio/`, plus nightly | pywin32 clipboard formats, SendInput builders, sqlite on NTFS paths, packaging smoke |
+| **W** windows | `windows` | `windows-latest` | PR touching `insertion/ hotkeys/ ui/ audio/ stt/`, plus nightly | pywin32 clipboard formats, SendInput builders, sqlite on NTFS paths, transcribe.cpp wheel imports and CPU backend loads (P-TCPP-001), packaging smoke |
 | **P** hosted probes | `probe` and not `gpu` | ubuntu + windows | every PR + nightly | Third-party libraries behave as our code assumes |
-| **G** GPU/WSL | `gpu`, `adapter` | this WSL machine, run by the agent | each M-step PR touching adapters, pre-release | vLLM/Voxtral, Ollama/Llama, WSL networking, G6 cleanup evals |
-| **E** end-to-end | `e2e` | this WSL machine, run by the agent | pre-release | Fixture WAV → real STT → real cleanup → fake or real inserter |
+| **G** local GPU | `gpu`, `adapter` | this machine's Windows GPU, launched from WSL with the Windows venv (`uv.exe`), run by Sol boundary | each M-step PR touching adapters, pre-release | transcribe.cpp/Voxtral on CUDA, LM Studio/Llama, loopback-only checks, G6 cleanup evals |
+| **E** end-to-end | `e2e` | same as G, run by Sol boundary | pre-release | Fixture WAV → real STT → real cleanup → fake or real inserter |
 | **H** human | `manual` checklist | the user's desktop | pre-release | HUD focus, real apps, Win+V history, mic unplug (CODEMAP G3/G4) |
 | **J** web | `node --test` | `ubuntu-latest` | PR touching `web/` | JS renders backend state; no mock control paths |
 
@@ -200,7 +200,7 @@ flowchart LR
     p --> r["attribution-report (always runs)"]
     j --> r
   end
-  subgraph local["local tier G/E — agent on this WSL machine"]
+  subgraph local["local tier G/E — Windows GPU, launched from WSL"]
     direction TB
     g["probes G, adapter-real, conformance-real, cleanup evals, E2E"] --> att["attach attribution.json to PR / verification record"]
   end
@@ -243,7 +243,7 @@ Keep these rules if a runner is ever added. The repo is public, and a self-hoste
 
 - Tier G/E jobs would trigger only on `schedule`, `workflow_dispatch` and `push` to `main`, **never on `pull_request`**.
 - The runner would run as an unprivileged WSL user with no stored cloud credentials.
-- Model servers bind `127.0.0.1` only. Probe `P-NET-002` fails the run if either server is reachable on the LAN IP.
+- LM Studio serves on `127.0.0.1` only. Probe `P-NET-002` fails the run if it is reachable on the LAN IP.
 
 ### 4.5 Tooling this pipeline adds (dependency note)
 
@@ -251,7 +251,6 @@ Keep these rules if a runner is ever added. The repo is public, and a self-hoste
 |---|---|---|---|---|
 | GitHub Actions (hosted) | Runs CI on Linux and Windows | `.github/workflows/` at repo root | Free minutes on public repos, metered on private; alternative: local-only `scripts/ci-local.sh` | No automatic gates; the agent must run checks manually |
 | `mypy` (already optional in DEPENDENCIES.md) | Type checks shared contracts | `pyproject.toml` dev group | Chosen over pyright to match `ai-dev-system/templates/checks.python.json` | Weaker contract safety |
-| `shellcheck` | Lints model scripts | Preinstalled on `ubuntu-latest`, not locally | Optional local `apt` install | Scripts are unchecked |
 | `pytester` (built into pytest) | Tests the attribution plugin itself | none | none | — |
 | `node:test` (built into Node 22) | `web/` tests without npm packages | none | vitest/jest would add a lockfile | No web tests |
 
@@ -292,7 +291,7 @@ flowchart TD
 
 Key idea: **probes isolate the third party.** A probe calls the library or service directly with no `wispr_clone` code on the stack. If the probe passes and our adapter fails, the fault is ours. If the probe fails, it is not ours, whatever our adapter did.
 
-**Probe coverage caveat.** "Probe passed" means only that the third party did what the probe checks. An adapter-misuse verdict therefore also lists which probe cases passed, for example: `probe coverage: P-OLLAMA-001..003 (tags, temp-0 chat, cancel); streaming not probed`. If investigation shows the adapter relied on third-party behavior no probe checks, the fix adds that probe case first. On rerun the verdict either stays OURS (the dependency does behave that way) or becomes NOT OURS (it doesn't). The label stays evidence-based instead of being reassigned by opinion.
+**Probe coverage caveat.** "Probe passed" means only that the third party did what the probe checks. An adapter-misuse verdict therefore also lists which probe cases passed, for example: `probe coverage: P-LMS-001..003 (models, temp-0 chat, cancel); streaming not probed`. If investigation shows the adapter relied on third-party behavior no probe checks, the fix adds that probe case first. On rerun the verdict either stays OURS (the dependency does behave that way) or becomes NOT OURS (it doesn't). The label stays evidence-based instead of being reassigned by opinion.
 
 ### 5.3 Mechanics (Phase 0, main agent)
 
@@ -308,13 +307,13 @@ Key idea: **probes isolate the third party.** A probe calls the library or servi
 Example impact fragment:
 
 ```toml
-# tests/_attribution/impact/vllm.toml
-dependency = "vllm"            # kind: service (WSL, 127.0.0.1:8000) serving mistralai/Voxtral-Mini-4B-Realtime-2602
-kind = "service"
-modules = ["stt.voxtral_realtime", "pipeline.run_controller (via stt.base)", "application.model_service (health)"]
+# tests/_attribution/impact/transcribe_cpp.toml
+dependency = "transcribe-cpp"  # kind: library (in-process, CUDA) running Voxtral-Mini-4B-Realtime-2602 Q4_K_M GGUF
+kind = "library"
+modules = ["stt.voxtral_transcribe_cpp", "pipeline.run_controller (via stt.base)", "application.model_service (health)"]
 features = ["live dictation", "retry_stt from saved WAV", "Models page: test / readiness"]
-error_codes = ["STT_UNAVAILABLE", "STT_STREAM_CLOSED", "STT_TIMEOUT"]
-action = "Check vLLM/model pin in scripts/setup-models.sh and server log; not a wispr_clone code fix"
+error_codes = ["STT_UNAVAILABLE", "STT_MODEL_LOAD_FAILED", "STT_TIMEOUT"]
+action = "Check the transcribe-cpp wheel pin in uv.lock, the GGUF SHA-256 (scripts/check_local_models.py) and free VRAM; not a wispr_clone code fix"
 ```
 
 ### 5.4 Third-party probe catalogue
@@ -325,16 +324,16 @@ action = "Check vLLM/model pin in scripts/setup-models.sh and server log; not a 
 | P-NUMPY-001 | numpy (library) | P | FFT band energies of a known sine land in the expected bin |
 | P-SOXR-001 | soxr (library) | P | 48 kHz → 16 kHz keeps length ratio and tone frequency |
 | P-SD-001 | sounddevice / PortAudio (library + OS audio) | P→**UNDETERMINED in CI** | Import works; `query_devices()` returns a list; opening default input needs a device (tier H) |
-| P-WS-001 | websockets (library) | P | Local echo server: binary frames in order, close codes surfaced |
 | P-HTTPX-001 | httpx (library) | P | Timeout raises `httpx.TimeoutException`; cancel closes the stream |
 | P-PYD-001 | pydantic (library) | P | Strict-mode validation rejects extra/invalid fields as our schema assumes |
 | P-PYNPUT-001 | pynput (library + OS hook) | W | Listener starts/stops without an exception; synthetic events may be UNDETERMINED on headless runners |
 | P-WIN32-001..003 | pywin32 + Windows clipboard (library + platform) | W | `RegisterClipboardFormat` for the 3 exclusion formats; set/get round trip; `SendInput` symbol available |
 | P-WEBVIEW-001 | pywebview (library) | W | Window object can be created with `js_api=None`; real display is tier H |
-| P-VLLM-001..003 | vLLM + Voxtral (service) | G | `/health` 200; realtime WebSocket handshake with our audio format; public-domain LibriVox fixture → transcript word error rate under a threshold set from the first measured run |
-| P-OLLAMA-001..003 | Ollama + Llama 3.1 8B (service) | G | `/api/tags` lists the pinned tag; chat at temperature 0 returns non-empty; client disconnect cancels generation |
-| P-NET-001/002 | WSL networking (platform) | G | Windows → WSL `127.0.0.1` reachable; LAN IP **not** reachable |
-| P-GPU-001 | NVIDIA driver/CUDA in WSL (platform) | G | `nvidia-smi` sees the GPU; free VRAM recorded for G2 |
+| P-TCPP-001 | transcribe-cpp wheels (library) | W | Imports on `windows-latest`; `backends()` lists a CPU device; the ABI/version check passes |
+| P-TCPP-002..004 | transcribe-cpp + Voxtral GGUF on CUDA (library + model) | G | 002: model loads on CUDA, reports streaming, warm-up completes; 003: 80 ms `feed()` chunks at live pace never fall behind and `finalize()` returns committed text; `session.cancel()` raises `Aborted` within a bound set from the first measured run; 004: public-domain LibriVox fixture → formatting-normalized word error rate under a threshold set from the first measured run |
+| P-LMS-001..003 | LM Studio + Llama 3.1 8B (service) | G | 001: `/v1/models` lists the pinned model id as loaded; 002: chat at temperature 0 returns non-empty and identical output on repeat; 003: client disconnect stops generation |
+| P-NET-001/002 | Loopback (platform) | G | LM Studio reachable on `127.0.0.1:1234`; LAN IP **not** reachable |
+| P-GPU-001 | NVIDIA driver/CUDA on Windows (platform) | G | `nvidia-smi` sees the GPU; free VRAM recorded with every tier G result |
 | P-PYI-001 | PyInstaller (library) | W | Build of a hello-world bundle with pywebview assets launches |
 
 ### 5.5 What a failure looks like
@@ -356,13 +355,13 @@ Third-party:
 
 ```text
 [ATTRIBUTION] NOT OURS · service
-  source:     vLLM 0.x.y serving mistralai/Voxtral-Mini-4B-Realtime-2602 (WSL, 127.0.0.1:8000)
-  probe:      P-VLLM-002 realtime handshake -> FAILED: socket closed 1011 after first audio chunk
-  our code:   conformance suite on FakeSTT PASSED; stt.voxtral_realtime follows the documented contract
-  affects:    stt.voxtral_realtime -> pipeline.run_controller -> application.model_service
-  features:   live dictation, retry_stt, Models page test button
-  user sees:  HUD red, ErrorCode STT_STREAM_CLOSED
-  action:     check vLLM/model pin in scripts/setup-models.sh and server log; not a wispr_clone code fix
+  source:     LM Studio 0.x.y serving meta-llama-3.1-8b-instruct (Windows, 127.0.0.1:1234)
+  probe:      P-LMS-001 /v1/models -> FAILED: pinned model listed but state "not-loaded" (idle auto-unload?)
+  our code:   conformance suite on FakeCleanup PASSED; cleanup.lmstudio_cleanup follows the documented contract
+  affects:    cleanup.lmstudio_cleanup -> pipeline.run_controller -> application.model_service
+  features:   cleanup after dictation, retry cleanup, Models page test button
+  user sees:  run waits in awaiting_cleanup_choice (original kept), ErrorCode CLEANUP_UNAVAILABLE
+  action:     load the model in LM Studio or check its idle-unload setting; not a wispr_clone code fix
 ```
 
 Undetermined:
@@ -370,8 +369,8 @@ Undetermined:
 ```text
 [ATTRIBUTION] UNDETERMINED
   test:       T-STT-A01 adapter transcribes fixture WAV
-  missing:    P-VLLM-001..003 not run on ubuntu-latest (marker gpu)
-  decide by:  uv run pytest -m "probe and gpu" -k VLLM   (on the local WSL GPU machine)
+  missing:    P-TCPP-002..003 not run on ubuntu-latest (marker gpu)
+  decide by:  uv.exe run pytest -m "probe and gpu" -k TCPP   (Windows venv on the local GPU machine)
 ```
 
 The attribution system is itself built test-first (Phase 0, `T-DIAG-*`) with `pytester`. The meta-tests feed it synthetic failures and assert that it produces the right verdict. It is a triage aid, not a guarantee. A NOT OURS verdict means "the third party failed its probe", not "our code is proven correct everywhere".
@@ -389,7 +388,7 @@ CODEMAP slice 0. Disposable scripts under `experiments/` (never imported by `src
 | # | Gate | Check | Exit evidence |
 |---|---|---|---|
 | −1.1 | G1 runtime location (**decided:** WSL repo + Windows-local venv) | Windows Python 3.12 + `uv.exe` creates a venv on the Windows disk (`UV_PROJECT_ENVIRONMENT=%LOCALAPPDATA%\wispr_clone\venv`) for the checkout at `\\wsl.localhost\<distro>\home\injun\projects\wispr_clone\backend_dev`; import pywin32, pynput, sounddevice, pywebview; run a trivial pytest | Commands, versions and timings recorded; path or performance problems noted |
-| −1.2 | G2 inference | Start vLLM (Voxtral Mini 4B Realtime 2602) and Ollama (Llama 3.1 8B) **together** on the RTX 5080; stream a WAV from Windows to WSL `127.0.0.1` | Free VRAM before and after, peak usage, first-token and total latency; LAN IP unreachable. Needs the one-time model-download approval (§3) |
+| −1.2 | G2 inference (**decided:** transcribe.cpp in-process + LM Studio) | Done 2026-09-24: Voxtral via transcribe.cpp on CUDA with synthetic speech (CODEMAP §7 record). Remaining: LM Studio chat at temperature 0, cancel on disconnect, loopback-only, request logging; real-microphone dictation; STT while LM Studio generates | Free VRAM before and after, peak usage, latency; LAN IP unreachable; no transcript text in LM Studio's logs |
 | −1.3 | G3 native UI | A disposable pywebview HUD shows, updates and hides without taking focus from Notepad and VS Code | Observed focus result per app (human-observed, tier H style) |
 | −1.4 | G4 destination | Capture and verify a destination snapshot; write the clipboard with the 3 exclusion formats; check Win+V | Which apps can be verified; clipboard history exclusion observed |
 
@@ -414,11 +413,11 @@ CODEMAP slice 0. Disposable scripts under `experiments/` (never imported by `src
 | `feat/hotkeys` | `contracts/shortcuts.py`, `hotkeys/hotkey_service.py` | T-KEY-001 parse valid bindings, reject malformed/conflicting ones; T-KEY-002 hold mode: down→start, up→stop; T-KEY-003 toggle mode; T-KEY-004 cancel binding; **T-KEY-005** non-binding keys are discarded: no log record, no buffer, no callback; T-KEY-006 OS key auto-repeat does not restart a run | P-PYNPUT-001 |
 | `feat/audio` | `audio/*` incl. `device_lease.py` | **T-AUD-001** lease is exclusive (capture vs mic test) and returns a conflict error; T-AUD-002 lease released on error/cancel; T-AUD-003 resample keeps duration and tone; T-AUD-004 level meter bands for a known sine; T-AUD-005 WAV header valid after cancel; **T-AUD-006** queue overflow ends the run with an explicit error, never a silent drop; T-AUD-007 the audio callback only enqueues (no I/O in the callback) | P-NUMPY, P-SOXR, P-SD |
 | `feat/dictionary-core` | `dictionary/apply.py`, `import_export.py` (pure parts) | T-DIC-001 whole-word alias replacement; **T-DIC-002** no replacement inside unrelated phrases; T-DIC-003 overlapping aliases, longest match deterministic; **T-DIC-004** input string never mutated (original preserved); T-DIC-005 import validates the whole input before accepting and reports duplicates; T-DIC-006 conflicting aliases rejected; T-DIC-007 export→import round trip | — |
-| `feat/cleanup` | `cleanup/prompt_builder.py, guard.py, ollama_cleanup.py` | T-CLN-001 prompt has glossary + instructions, never history; **T-CLN-002** guard rejects a dropped negation ("Do not delete that file"); **T-CLN-003** guard rejects changed numbers, names, paths, identifiers; T-CLN-004 guard rejects added content or an answer to a spoken question; T-CLN-005 timeout → `ThirdPartyError(ollama, "chat", …)`; T-CLN-006 cancel aborts the in-flight request; conformance suite on fake and real | P-HTTPX-001 (P-OLLAMA-* owned by `ops/model-servers`) |
-| `feat/stt` | `stt/base.py, voxtral_realtime.py` (fake WebSocket server in tests) | T-STT-001 session opens with the configured format; T-STT-002 chunks sent in order; T-STT-003 finish returns the final text; T-STT-004 server close mid-stream → `ThirdPartyError(vllm, …)`; **T-STT-005** cancel closes the socket and late messages are ignored; T-STT-006 `transcribe_file` replays a WAV exactly like live input; T-STT-A01 (tier G) real adapter transcribes the fixture | P-WS-001 (P-VLLM-* owned by `ops/model-servers`) |
+| `feat/cleanup` | `cleanup/prompt_builder.py, guard.py, lmstudio_cleanup.py` (OpenAI-compatible chat) | T-CLN-001 prompt has glossary + instructions, never history; **T-CLN-002** guard rejects a dropped negation ("Do not delete that file"); **T-CLN-003** guard rejects changed numbers, names, paths, identifiers; T-CLN-004 guard rejects added content or an answer to a spoken question; T-CLN-005 timeout → `ThirdPartyError(lmstudio, "chat", …)`; T-CLN-006 cancel aborts the in-flight request; T-CLN-007 "model not loaded" from LM Studio → `ThirdPartyError`, never a silent empty cleanup; conformance suite on fake and real | P-HTTPX-001 (P-LMS-* owned by `ops/local-models`) |
+| `feat/stt` | `stt/base.py, voxtral_transcribe_cpp.py` (fake `transcribe_cpp` module in tests) | T-STT-001 model loads and warms up once at startup before the first run is accepted; T-STT-002 chunks are fed in order on the STT thread, never on the worker loop; T-STT-003 finish calls `finalize()` and returns committed text only (tentative text is never stored as final); T-STT-004 native error → `ThirdPartyError(transcribe-cpp, …)`; **T-STT-005** cancel calls `session.cancel()` and late updates are ignored; T-STT-006 `transcribe_file` replays a WAV exactly like live input; T-STT-007 a second session while one runs is rejected (one run per model); T-STT-A01 (tier G) real adapter transcribes the fixture | P-TCPP-001 (P-TCPP-002..004 owned by `ops/local-models`) |
 | `feat/insertion-win` | `insertion/*` | **T-INS-001** destination snapshot stores a title hash, never the title; T-INS-002 verifier reports change on handle/process change; **T-INS-003** matching title hash alone is not sufficient; **T-INS-004** every transcript clipboard write sets the 3 exclusion formats; **T-INS-005** strategy fixed before dispatch, and ambiguous paste never falls back to typing; T-INS-006 Unicode `SendInput` event builder is correct (pure) | P-WIN32-* |
 | `feat/settings-models` | `settings/schema.py`, `models/registry.py` | T-SET-001 defaults validate; T-SET-002 invalid shortcut rejected via the shortcuts contract; **T-SET-003** local-only forbids selecting a cloud model; T-SET-004 older schema version upgrades; T-REG-001 registry lists selected models with local flags; **T-REG-002** local endpoints must be loopback | P-PYD-001 |
-| `ops/model-servers` | `scripts/*.sh`, `scripts/.env.example` | T-OPS-001 shellcheck clean; **T-OPS-002** start scripts pass `--host 127.0.0.1` (static check); T-OPS-003 `scripts/.env.example` has names only, no values | P-GPU, P-NET, P-VLLM-*, P-OLLAMA-* (sole owner of all model-server probes and the `vllm`/`ollama` impact fragments) |
+| `ops/local-models` | `scripts/check_local_models.py` | T-OPS-001 missing GGUF or SHA-256 mismatch → clear error naming the expected path; **T-OPS-002** LM Studio reachable on the LAN IP → reported as a failure, never a warning; T-OPS-003 LM Studio not running / model not loaded / ready → three distinct statuses (fake HTTP); T-OPS-004 the check reads no credentials and downloads nothing (static) | P-TCPP-002..004, P-LMS-*, P-NET, P-GPU (sole owner of all real-model checks and the `lmstudio` impact fragment) |
 | **main: M1** | `pipeline/state_machine.py` | see §8 | — |
 
 ### Wave 2: storage-backed services (parallel; start when `feat/storage` merges)
@@ -474,7 +473,7 @@ gitGraph
   branch feat/stt
   branch feat/insertion-win
   branch feat/settings-models
-  branch ops/model-servers
+  branch ops/local-models
   checkout feat/storage
   commit id: "T-STO red/green"
   checkout feat/hotkeys
@@ -491,7 +490,7 @@ gitGraph
   commit id: "T-INS red/green"
   checkout feat/settings-models
   commit id: "T-SET/T-REG"
-  checkout ops/model-servers
+  checkout ops/local-models
   commit id: "T-OPS + probes"
   checkout main
   commit id: "M1 state_machine"
@@ -513,7 +512,7 @@ gitGraph
   merge feat/cleanup
   merge feat/stt
   merge feat/insertion-win
-  merge ops/model-servers
+  merge ops/local-models
   merge feat/history
   merge feat/settings-store
   merge feat/dictionary-repo
@@ -546,10 +545,10 @@ A branch agent may create or edit **only its owned paths**. Everything else is r
 | `feat/audio` | `audio/**`, its tests/probes/impacts | contracts | P0 | M |
 | `feat/dictionary-core` | `dictionary/apply.py`, `dictionary/import_export.py`, tests | contracts | P0 | S |
 | `feat/cleanup` | `cleanup/**`, `tests/eval/cleanup/**`, `tests/probes/httpx/**`, `impact/httpx.toml` | contracts | P0 | M |
-| `feat/stt` | `stt/**`, `tests/fixtures/audio/generated/stt_*`, `tests/probes/websockets/**`, `impact/websockets.toml` | contracts | P0 | M |
+| `feat/stt` | `stt/**`, `tests/fixtures/audio/generated/stt_*`, `tests/probes/transcribe_cpp/test_p_tcpp_001*`, `impact/transcribe_cpp.toml` | contracts | P0 | M |
 | `feat/insertion-win` | `insertion/**`, tests/probes/impact | contracts | P0 | M |
 | `feat/settings-models` | `settings/schema.py`, `models/**`, tests | contracts (incl. shortcuts interface stub) | P0 | S |
-| `ops/model-servers` | `scripts/**` (except `check_imports.py`), `tests/probes/{vllm,ollama,net,gpu}/**`, `impact/{vllm,ollama}.toml`, `tests/fixtures/audio/speech/**` (LibriVox clip + `SOURCES.md`) | — | P0 | S |
+| `ops/local-models` | `scripts/**` (except `check_imports.py`), `tests/probes/{lmstudio,net,gpu}/**`, `tests/probes/transcribe_cpp/**` (except P-TCPP-001), `impact/lmstudio.toml`, `tests/fixtures/audio/speech/**` (LibriVox clip + `SOURCES.md`) | — | P0 | S |
 | `feat/settings-store` | `settings/store.py`, `storage/migrations/002_settings.py`, tests | storage, contracts | storage, settings-models | S |
 | `feat/dictionary-repo` | `dictionary/repo.py`, `storage/migrations/003_dictionary.py`, tests | storage | storage, dictionary-core | S |
 | `feat/history` | `history/**`, `storage/migrations/004_history.py`, tests | storage, contracts | storage | L |
@@ -561,8 +560,8 @@ A branch agent may create or edit **only its owned paths**. Everything else is r
 **Single-writer rules (decisions 2026-09-24):**
 
 - **Migrations:** `feat/storage` owns the migration runner and `001_base.py`. Each wave-2 branch owns exactly one pre-numbered migration file (002 settings, 003 dictionary, 004 history). The coordinator allocates any later number. A migration only adds its own tables, so the three wave-2 branches never edit the same file.
-- **Audio fixtures:** generated signals (tones, silence) go in `tests/fixtures/audio/generated/<feature>_*` and are written by Sol feature for that feature. Real speech goes in `tests/fixtures/audio/speech/**` with `SOURCES.md` and is written only by Sol boundary on `ops/model-servers`.
-- **Model-server probes:** every P-VLLM, P-OLLAMA, P-NET and P-GPU probe and the `vllm`/`ollama` impact fragments belong to `ops/model-servers`. `feat/stt` and `feat/cleanup` use their results and do not write them.
+- **Audio fixtures:** generated signals (tones, silence) go in `tests/fixtures/audio/generated/<feature>_*` and are written by Sol feature for that feature. Real speech goes in `tests/fixtures/audio/speech/**` with `SOURCES.md` and is written only by Sol boundary on `ops/local-models`.
+- **Real-model probes:** P-TCPP-002..004, P-LMS, P-NET and P-GPU and the `lmstudio` impact fragment belong to `ops/local-models`. `feat/stt` owns only the import check P-TCPP-001 and the `transcribe_cpp` fragment (the branch that adds an import adds its fragment, so T-DIAG-006 stays green). `feat/stt` and `feat/cleanup` use the real-model results and do not write them.
 - **Integration test folders:** `tests/integration/<feature>/` belongs to that feature's Sol feature author. `tests/integration/pipeline/` and `tests/integration/app/` belong to Sol integration.
 
 Why this split works: Phase 0 installs the **whole approved dependency baseline** from DEPENDENCIES.md at once, so no branch edits `pyproject.toml`/`uv.lock`, the most common parallel merge conflict. Impact fragments are one file per dependency for the same reason.
@@ -617,7 +616,7 @@ These steps pull several branches together or own cross-cutting control, so only
 | **M3f** | — | `retry_stt` | T-RUN-040 retry replays the retained WAV without resetting age; T-RUN-041 not offered when there is no WAV |
 | **M4** | settings-store | `application/api.py`, `commands/*`, `model_service.py` | T-APP-001 unknown command → structured error; **T-APP-002** `run_start` deduplicated by `start_request_id`; **T-APP-003** command from a previous session token / past deadline rejected; **T-APP-004** start request invalid after its run is deleted or evicted; T-APP-005 health poll never overwrites active run HUD state; **T-APP-006** `models_select` rejects cloud under local-only; T-APP-007 `state_get` snapshot complete |
 | **M5** | web-runtime, ui-host | `app.py`, `__main__.py` | T-APP-010 startup order: migrations → reconcile attempts/cleanup → expiry → expose history; T-APP-011 second instance exits; T-APP-012 clean shutdown closes audio, sockets and DB; T-APP-013 `--self-test` composes with fakes and exits 0 (used by CD) |
-| **M6** | ops/model-servers | E2E + packaging | E2E-001 fixture WAV via `FileAudioSource` → real vLLM → real Ollama → `FakeInserter` records exactly one dispatch; E2E-002 WAV with a 5 s pause → one transcript; E2E-003 E2E-001 with the network namespace offline; P-PYI-001 + packaged `--self-test`; tier H checklist H-01..H-06 (hold/toggle on real hotkeys, HUD colors and focus, destination switch in VS Code/Terminal/browser/Office, Win+V excludes transcripts, mic unplug, LAN scan of model ports) |
+| **M6** | ops/local-models | E2E + packaging | E2E-001 fixture WAV via `FileAudioSource` → real transcribe.cpp → real LM Studio → `FakeInserter` records exactly one dispatch; E2E-002 WAV with a 5 s pause → one transcript; E2E-003 E2E-001 with the network adapters disabled (loopback still works); P-PYI-001 + packaged `--self-test`; tier H checklist H-01..H-06 (hold/toggle on real hotkeys, HUD colors and focus, destination switch in VS Code/Terminal/browser/Office, Win+V excludes transcripts, mic unplug, LAN scan of LM Studio's port) |
 
 ---
 
@@ -631,11 +630,12 @@ These steps pull several branches together or own cross-cutting control, so only
 | 2 | **Dependency baseline approved**: DEPENDENCIES.md runtime + dev packages, mypy as the type checker | Phase 0 writes `pyproject.toml`/`uv.lock` once. Optional `keyring` stays out until a cloud adapter is chosen (CODEMAP G7) |
 | 3 | **Main agent merges on its own** once CI is green and its review is done | Branch protection requires the checks in §4.2. The main agent merges with `gh pr merge --squash` only after both. Branch agents still never merge |
 | 4 | **`gh` installed** (v2.101.0, `~/.local/bin/gh`, checksum-verified) with the `workflow` scope, needed to push `.github/workflows/` | Agents push branches and open/merge PRs through `gh` |
-| 5 | **Tier G/E runs locally** on this WSL machine (RTX 5080). No self-hosted runner | `nightly.yml` keeps only hosted jobs. **Sol boundary is the single GPU owner** (decision 2026-09-24): it starts and stops the model servers and runs `uv run pytest -m "gpu or adapter or e2e"`, then attaches `attribution.json` and its summary to the PR (integration steps) or `docs/verification/<version>.md` (release). §4.4 runner rules do not apply. Model downloads still need a one-time approval of the exact models and sizes when `ops/model-servers` reaches setup |
+| 5 | **Tier G/E runs locally** on this machine's RTX 5080, through the Windows venv launched from WSL. No self-hosted runner | `nightly.yml` keeps only hosted jobs. **Sol boundary is the single GPU owner** (decision 2026-09-24): it runs `uv.exe run pytest -m "gpu or adapter or e2e"`, records free VRAM, and attaches `attribution.json` and its summary to the PR (integration steps) or `docs/verification/<version>.md` (release). It never loads, unloads or reconfigures LM Studio models without approval, because Cognee depends on them. §4.4 runner rules do not apply |
 | 6 | **Public-domain speech fixture** | Use a short LibriVox excerpt (LibriVox recordings are public domain). Record the source URL, reader and PD statement in `tests/fixtures/audio/speech/SOURCES.md`, trimmed to ≤10 s and converted to 16 kHz mono. Not LibriSpeech, which is CC BY 4.0 rather than public domain |
 | 7 | **G1 decided: WSL repo + Windows-local venv** | One checkout in WSL. Windows Python 3.12 runs it through `\\wsl.localhost\…` with its venv on the Windows disk (`UV_PROJECT_ENVIRONMENT`). The app's runtime data (SQLite, WAVs) already lives under `%LOCALAPPDATA%` (CODEMAP §5), not on the WSL share. Windows-tier tests from WSL use `uv.exe` through interop (§3). Verified in Phase −1.1 |
 | 8 | **Phase −1 feasibility added** before P0 (§6) | Nothing is scaffolded until G1–G4 have evidence |
 | 9 | **Agent ownership decisions** (review of agents/ vs this pipeline) | Recorded in §2.3, §4.2, §7.1, §7.2 and [agents/README.md](agents/README.md) |
+| 10 | **G2 decided: STT in-process via transcribe.cpp; cleanup via LM Studio.** No model runs in WSL. vLLM stays a documented fallback | `ops/model-servers` became `ops/local-models` (readiness check only). P-WS, P-VLLM and P-OLLAMA were replaced by P-TCPP and P-LMS. `websockets` and shellcheck left the toolchain. Evidence: CODEMAP §7 G2 record |
 
 **First steps once approved:** Phase −1.1 → −1.4 (disposable), then P0.1 → P0.2 → P0.3 → P0.4 → P0.5 → P0.6 on `main/P0` (one PR each, TDD). Then launch wave 1 with 2 feature work orders while the main agent does M1.
 

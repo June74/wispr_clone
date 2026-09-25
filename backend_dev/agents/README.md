@@ -12,13 +12,13 @@ For each agent, supply [COMMON.md](COMMON.md), [HARDWARE.md](HARDWARE.md), its r
 |---|---|---|
 | [Luna core programmer](luna-core-programmer.md) | GPT-6 Luna | Storage, settings, dictionary, history |
 | [Luna adapter programmer](luna-adapter-programmer.md) | GPT-6 Luna | Hotkeys, audio, STT, cleanup, Windows insertion adapters |
-| [Luna runtime programmer](luna-runtime-programmer.md) | GPT-6 Luna | Runtime web UI, native host, WSL server scripts |
+| [Luna runtime programmer](luna-runtime-programmer.md) | GPT-6 Luna | Runtime web UI, native host, local-model readiness check |
 | [Luna integration programmer](luna-integration-programmer.md) | GPT-6 Luna | Foundation (incl. attribution plugin and fakes) and main-agent production-code stages P0/M1–M6 |
 | [Sol feature test author](sol-feature-test-author.md) | GPT-6 Sol | Feature unit tests and deterministic component tests |
 | [Sol boundary test author](sol-boundary-test-author.md) | GPT-6 Sol | Real third-party checks: probes, real-adapter conformance, model evaluations, Phase −1 feasibility, desktop checklists; single GPU owner |
 | [Sol integration test author](sol-integration-test-author.md) | GPT-6 Sol | P0 foundation tests (T-CI, T-CON, T-ARCH, T-DIAG, T-FAKE), conformance harness, cross-module and crash/restart tests |
 
-**Sol feature vs Sol boundary, in one line:** Sol feature tests *our* code against fakes, so the result is deterministic and runs anywhere. Sol boundary tests *other people's* software (vLLM, Ollama, SQLite, pywin32, GPU, Windows desktop) for real. Rule of thumb: if a test could run with no GPU, no network and no Windows desktop and always give the same result, it belongs to Sol feature.
+**Sol feature vs Sol boundary, in one line:** Sol feature tests *our* code against fakes, so the result is deterministic and runs anywhere. Sol boundary tests *other people's* software (transcribe.cpp on the GPU, LM Studio, SQLite, pywin32, Windows desktop) for real. Rule of thumb: if a test could run with no GPU, no network and no Windows desktop and always give the same result, it belongs to Sol feature.
 
 The existing main/coordinating agent retains scheduling, architecture decisions, work-order allocation, review, the authorized merge policy, and triage. GitHub Actions raises triage work (nightly failures open a `triage` issue; quarantines older than 7 days fail CI; pipeline §4.2). The coordinator answers each item with a `fix/<test-id>` work order and keeps `docs/verification/<version>.md` for releases. It delegates production coding to Luna and test creation to Sol. The integration programmer is the programming role for the pipeline's main-agent track; it does not independently acquire merge or release authority. No additional coordinator model is selected here.
 
@@ -36,11 +36,11 @@ All paths below are relative to `backend_dev/`, except repository-root `.github/
 | `feat/hotkeys` | Luna adapter | Sol feature: T-KEY-* | Sol boundary: P-PYNPUT-* |
 | `feat/audio` | Luna adapter | Sol feature: T-AUD-* | Sol boundary: P-NUMPY/P-SOXR/P-SD |
 | `feat/dictionary-core` | Luna core | Sol feature: T-DIC-001..007 | — |
-| `feat/cleanup` | Luna adapter | Sol feature: T-CLN-* | Sol boundary: P-HTTPX, conformance cases, EVAL-G6 (uses Ollama probes from ops) |
-| `feat/stt` | Luna adapter | Sol feature: T-STT-001..006 | Sol boundary: P-WS, conformance cases, T-STT-A01 (uses vLLM probes from ops) |
+| `feat/cleanup` | Luna adapter | Sol feature: T-CLN-* | Sol boundary: P-HTTPX, conformance cases, EVAL-G6 (uses LM Studio probes from ops) |
+| `feat/stt` | Luna adapter | Sol feature: T-STT-001..007 | Sol boundary: P-TCPP-001, conformance cases, T-STT-A01 (uses real-model probes from ops) |
 | `feat/insertion-win` | Luna adapter | Sol feature: T-INS-* | Sol boundary: P-WIN32-*, desktop evidence |
 | `feat/settings-models` | Luna core | Sol feature: T-SET-001..004, T-REG-* | Sol boundary: P-PYD-* |
-| `ops/model-servers` | Luna runtime | Sol feature: T-OPS-* | Sol boundary: sole owner of P-GPU/P-NET/P-VLLM/P-OLLAMA, their impact fragments, and speech fixtures |
+| `ops/local-models` | Luna runtime | Sol feature: T-OPS-* | Sol boundary: sole owner of P-TCPP-002..004, P-LMS, P-NET, P-GPU, the `lmstudio` impact fragment, and speech fixtures |
 | `feat/settings-store` | Luna core | Sol feature: T-SET-010..012 | — |
 | `feat/dictionary-repo` | Luna core | Sol feature: T-DIC-010..013 | — |
 | `feat/history` | Luna core | Sol feature: T-HIS-* | Sol integration for shared restart harness |

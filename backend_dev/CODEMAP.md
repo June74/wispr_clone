@@ -28,13 +28,13 @@ Use this map to find where a responsibility belongs, follow a dictation through 
 
 **Selected scope:** Windows dictation with development in WSL; configurable hold/toggle/cancel controls; local STT and optional cleanup; persistent settings/dictionary; temporary history; destination verification and explicit recovery. No accounts, permanent transcript archive, arbitrary voice commands, or automatic submission.
 
-**Proposed baseline:** Python 3.12, one modular Windows application, two local WSL model processes, SQLite, and a native host for the existing web UI. Voxtral 4B Realtime 2602 and Llama 3.1 8B Instruct are selected model targets; vLLM, Ollama, and pywebview remain proposed hosts.
+**Baseline (G2 decided 2026-09-24):** Python 3.12, one modular Windows application, SQLite, and a native host for the existing web UI. Voxtral 4B Realtime 2602 runs **inside the app** through transcribe.cpp on the RTX GPU. Llama 3.1 8B Instruct runs in **LM Studio** on Windows (the same loaded model Cognee uses), called over loopback HTTP. No model runs in WSL; WSL is the development environment. vLLM in WSL stays documented as the STT fallback. pywebview remains a proposed host.
 
 **Design rationale:** organize around responsibilities and observable behavior before fixing package versions or creating files. This keeps implementation choices replaceable while preserving the product requirements.
 
 ## 2. Runtime diagram and ownership of state
 
-The proposed Windows app owns desktop interaction and local data. WSL hosts inference. Windows and WSL use separate environments; packages are not shared. The model endpoints are local network boundaries, even though no cloud service is needed for the default workflow.
+The Windows app owns desktop interaction, local data and speech recognition. LM Studio, a separate Windows process the app does not own, serves cleanup. Windows and WSL use separate environments; packages are not shared. LM Studio's endpoint is a local network boundary even though no cloud service is needed. Speech recognition runs in native code inside the app, so a crash in that library ends the app process. That is the accepted trade for no server, lower latency and one less network hop; the recovery rules in §4 and §5 already cover a crash.
 
 ```mermaid
 flowchart LR
@@ -48,6 +48,7 @@ flowchart LR
     Run --> History[History service]
     History --> DB[(SQLite and temporary WAVs)]
     Run --> STT[STT adapter]
+    STT <-->|in-process, STT thread| Vox[Voxtral via transcribe.cpp, CUDA]
     Run --> Clean[Cleanup adapter]
     Health --> STT
     Health --> Clean
@@ -57,12 +58,10 @@ flowchart LR
     Events --> UI
     Events --> HUD[HUD: receive-only]
   end
-  subgraph WSL["WSL: proposed local model processes"]
-    Vox[Voxtral via vLLM]
-    Llama[Llama via Ollama]
+  subgraph LMS["Windows: LM Studio (separate process, shared with Cognee)"]
+    Llama[Llama 3.1 8B Instruct]
   end
-  STT <-->|loopback WebSocket| Vox
-  Clean <-->|loopback HTTP| Llama
+  Clean <-->|loopback HTTP :1234| Llama
 ```
 
 Dashed arrows are calls through the injected `EventSink` interface: producers never import the UI.
@@ -73,6 +72,7 @@ Dashed arrows are calls through the injected `EventSink` interface: producers ne
 | Worker thread with an asyncio event loop | Application commands, run state, model requests, history retention, and the single SQLite writer |
 | Hotkey listener | Compares each key against the configured bindings and immediately discards every other key. Posts only start/stop/cancel events to the worker. Never logs, buffers, or forwards keystrokes; performs no blocking work |
 | Audio callback | Copies frames to a bounded queue; processing, WAV writes, and network calls happen outside the callback |
+| STT inference thread | Owns the loaded transcribe.cpp model (one run at a time per model). Loads and warms the model at startup, because the first run after a load stalls. Runs the blocking `feed()`/`finalize()` calls and posts text updates to the worker. `cancel` calls `session.cancel()`. Never runs on the worker's event loop |
 | JS bridge callbacks | Validate and enqueue commands; do not call repositories or mutate state on the callback thread |
 
 Only the worker mutates authoritative application state. UI events carry snapshots; UI controls request changes. Model readiness and run state are separate: a background health poll must not overwrite the HUD state of an active run.
@@ -124,9 +124,9 @@ backend_dev/
 │   │   ├── devices.py / capture.py / resample.py
 │   │   └── wav_writer.py / level_meter.py
 │   ├── stt/
-│   │   └── base.py / voxtral_realtime.py   streaming protocol, file replay for retry, local adapter
+│   │   └── base.py / voxtral_transcribe_cpp.py   in-process streaming session on the STT thread, warm-up, file replay for retry
 │   ├── cleanup/
-│   │   └── base.py / ollama_cleanup.py / prompt_builder.py / guard.py
+│   │   └── base.py / lmstudio_cleanup.py / prompt_builder.py / guard.py   OpenAI-compatible chat to LM Studio
 │   ├── dictionary/
 │   │   └── repo.py / apply.py / import_export.py
 │   ├── history/
@@ -147,8 +147,8 @@ backend_dev/
 │   ├── app.js / waveform.js            render backend state and backend audio levels
 │   └── bridge-adapter.js               commands, subscriptions, initial snapshot and errors
 ├── scripts/
-│   ├── setup-models.sh / start-stt.sh / start-cleanup.sh / check-gpu.sh
-│   └── .env.example                    WSL download credential names only (e.g. HF_TOKEN); no values
+│   └── check_local_models.py           readiness report: Voxtral GGUF present with pinned SHA-256; LM Studio answers
+│                                        on 127.0.0.1:1234 with the pinned model loaded and not on the LAN IP; free VRAM
 ├── packaging/wispr_clone.spec          proposed Windows executable packaging
 └── tests/
     ├── unit/                          transitions, retention, matching, guard and validation
@@ -157,7 +157,7 @@ backend_dev/
     └── eval/                          cleanup meaning-preservation examples
 ```
 
-Optional later files, subject to §7: `stt/cloud_stt.py`, `settings/secrets.py`, and `models/wsl_launcher.py`. No placeholder implementations are needed now.
+Optional later files, subject to §7: `stt/cloud_stt.py`, `settings/secrets.py`, and `models/lmstudio_launcher.py` (only if app-managed LM Studio startup is chosen, G7). No placeholder implementations are needed now.
 
 ### Contracts and dependency direction
 
@@ -328,12 +328,36 @@ All gates below are **unverified**. Record tested versions, platform, procedure,
 | Gate | Proposed choice or unresolved decision | Evidence required before dependent work |
 |---|---|---|
 | G1 — Runtime location | Windows Python 3.12 + `uv`. **Decided 2026-09-24: WSL repo + Windows-local venv** (venv on the Windows disk via `UV_PROJECT_ENVIRONMENT`; runtime data stays under `%LOCALAPPDATA%`). Evidence still pending | Launch on Windows, confirm paths, independent WSL environment, and package compatibility before slice 1 (pipeline Phase −1.1) |
-| G2 — Inference | Selected Voxtral + Llama; proposed vLLM + Ollama | Windows-to-WSL streaming, actual audio protocol, GPU/driver compatibility, concurrent VRAM, latency, offline use. Measure on the intended RTX 5080 machine; select quantization/offload/sequential loading only from results. Both servers bind explicitly to `127.0.0.1` (vLLM with `--host 127.0.0.1`, since its default listens on all interfaces); confirm they are unreachable from the LAN under the actual WSL networking mode. The servers have no authentication, so any local process can call them: accepted as a known local-only risk |
+| G2 — Inference | Selected Voxtral + Llama. **Decided 2026-09-24:** cleanup uses Llama 3.1 8B through LM Studio (already loaded for Cognee). STT **adopted**: transcribe.cpp in-process on Windows (CUDA), vLLM in WSL as documented fallback. See the G2 evidence record below | Done: streaming, latency, cancel, memory on synthetic speech. Still required: real-microphone speech, STT running while LM Studio generates, LM Studio temperature-0 and cancel-on-disconnect behavior, offline use, and packaged build. LM Studio must serve on `127.0.0.1` only ("serve on local network" off); confirm it is unreachable from the LAN IP. It has no authentication, so any local process can call it: accepted as a known local-only risk, as before |
 | G3 — Native UI | Proposed pywebview; alternative PySide6 | HUD remains non-activating through show/update/hide; verify GUI/bridge thread behavior and packaged runtime. Confirm the HUD has no bridge, navigation to non-bundled URLs is blocked, CSP is enforced, no local HTTP server starts, and devtools are off in release. Decide whether any alternate HUD toolkit requires its own GUI integration |
 | G4 — Desktop insertion | Proposed per-app clipboard or Unicode strategy | Target verification, focus changes, confirmation limits, clipboard restoration and concurrent clipboard edits in VS Code, Terminal, browsers, Office, and actual WSL GUI apps. Confirm transcript clipboard writes are excluded from Win+V history and cloud sync. Include privilege-boundary/hotkey behavior and confirm non-binding keys are discarded by the hook; hold unsupported targets |
 | G5 — Pipeline limits | Proposed bounded audio queue and request deadlines | Stream interruptions, mic unplug, long pauses, cancellation latency, buffer pressure and clean shutdown; set measured bounds before live end-to-end use |
 | G6 — Text preservation | Proposed alias matcher, glossary and cleanup guard | Overlapping aliases, unrelated phrases, meaningful “like/well,” negation, names, uncertainty, numbers, identifiers and paths. Verify any STT biasing support before relying on it |
 | G7 — Operations/scope | Manual versus app-managed model startup; cloud STT now versus later; optional encryption | Record product choices before adding launcher/cloud/key storage/encryption dependencies. Local-only must remain enforceable |
+
+**G2 evidence record, 2026-09-24 (Phase −1.2, partial).** Script: `experiments/g2_stt_transcribe_cpp.py`; throwaway venv and audio under `%LOCALAPPDATA%\wispr_clone\experiments\g2`.
+
+- **Setup:** Windows 11 (build 10.0.26200.9457), Python 3.12.14 (uv venv), transcribe-cpp 0.2.3 + transcribe-cpp-native-cu12 0.2.3 (GitHub release wheels, MIT, bundle the CUDA 12.9 runtime), RTX 5080 driver 610.88. Model: `handy-computer/Voxtral-Mini-4B-Realtime-2602-gguf` Q4_K_M (2.8 GB), loaded from LM Studio's model folder. The script ran from the WSL checkout (`\\wsl.localhost\Ubuntu\…`), consistent with the G1 layout.
+- **LM Studio cannot serve Voxtral:** its server has only models/responses/chat/embeddings/completions endpoints; the audio routes returned the same "unexpected endpoint" as a nonexistent control path. Its `executorch-asr` engine takes `.pte` models only.
+- **Test audio:** two synthetic Windows TTS clips (9.2 s; 11.2 s with a 4 s pause). Every word recognized, including "Do not", names, and the text after the pause. The only differences were formatting (`config.yaml`, `3 p.m.`, `12`), giving 5–16 % raw WER.
+
+| Device (warm) | One-shot speed | Streaming, 80 ms chunks | Final text after audio ends | Cancel | GPU memory |
+|---|---|---|---|---|---|
+| RTX 5080 (CUDA) | 0.06× real time | first text 1.1–2.2 s; max feed call 0.16 s; never behind | 0.04–0.24 s | `Aborted` in 0.004 s | +2.1 GB (peaked at 15.1 of 16.3 GB with LM Studio loaded) |
+| Intel iGPU (Vulkan) | 0.65–0.70× | falls behind live | 2.8–4.2 s | 1.9 s | none on RTX |
+| CPU | 4.7–5.1× (too slow) | falls far behind | 37–45 s | 28.8 s | none |
+
+- **Cold start:** the first CUDA run after load stalled for up to 6 s per call. The warm-up run (1.1 s) removes this, so the app must warm the model at startup.
+- **STT while LM Studio generates continuously** (53 requests, ~19k tokens in the background): still never behind live audio. Final text 0.53–0.67 s after audio ends (vs 0.04–0.24 s idle); slowest `feed()` 0.47 s; one-shot 0.25× real time; cancel 0.015 s; same accuracy.
+- **LM Studio cleanup checks** (`experiments/g2_lmstudio_checks.py`, synthetic text only, nothing loaded or reconfigured):
+  - Model `meta-llama-3.1-8b-instruct` loaded, Q4_K_S, 8,192 context.
+  - Temperature 0 gave identical output 3/3; 0.27 s per cleanup warm. Kept "do not", `config.yaml`, `3 PM` and names; removed fillers.
+  - Dropping the client mid-stream stopped generation: GPU utilization fell to 0 within 0.5 s and the next request started at baseline latency (indirect evidence).
+  - Server config: `networkInterface` = `127.0.0.1` (loopback only). Reachability from another LAN device not tested.
+  - ❌ **Privacy blocker:** with `logSensitiveData: true` and `verbose: true`, request text is written to disk. The test marker appeared 7 times in `.lmstudio/apps/bionic/server-logs/2026-09/2026-09-24.1.log`, which breaks "no transcripts in logs". **User action:** turn off sensitive-data logging in LM Studio's server settings, then rerun the check to confirm zero hits. Cognee's requests are affected by the same setting.
+  - `justInTimeModelLoading: true`: a request naming an unloaded model could load it. The cleanup adapter must name only the pinned, loaded model.
+- **Live microphone, run 1** (USB Audio Device, CUDA, 80 ms chunks, 14.7 s spoken): timing passed. Final text 0.33 s after Enter, slowest `feed()` 0.27 s, audio queue never backed up, no overflows. **Accuracy inconclusive:** raw WER 1.0 means no word matched (empty or wrong-language output, or no signal); the transcript was not captured. The script now also reports input level, detected language and the final text for run 2.
+- **Not yet tested:** accurate live-microphone transcription (run 2), accents and noise, dictations of several minutes, offline use, and a PyInstaller build including the ~200 MB CUDA wheel.
 
 **Decision rule:** retain the selected product behavior when replacing a proposed library. If G2 cannot run both models acceptably, revisit serving strategy; if G3 fails, revisit the host; if G4 cannot prove a destination or delivery, expose explicit recovery rather than weakening the guarantee.
 
@@ -352,6 +376,6 @@ Each slice ends with evidence. Listed tests are **planned, not executed**. Use f
 | 4. Cleanup and recovery | Cleanup prompt/guard, waiting-state transitions | Meaning-preservation evals/G6; failure and rejection persist original and produce **zero insertion calls**; restart during `pending` cleanup lands in `awaiting_cleanup_choice`; only retry success or explicit use-original can advance; expired/stale recovery rejected |
 | 5. Insertion and crash recovery | `insertion_protocol`, insertion adapters, transactional attempt claim | Duplicate start/recovery delivery cannot duplicate dispatch; crash before/after OS dispatch leaves uncertainty with no automatic replay; cancel before dispatch suppresses input, cancel afterward makes no undo promise; destination change holds; no automatic fallback/retry; clipboard writes carry history/cloud exclusion formats |
 | 6. Runtime UI integration | Application router/commands/model service, bridge/events, `web/`, native windows/HUD | Remove simulated control paths; backend snapshots drive lists/readiness; failed cleanup shows real choices and no insertion toast; stale actions rejected; capture has one owner; HUD has no bridge and navigation is locked; green-only waveform motion and blue/yellow/red stationary states |
-| 7. Packaging and end-to-end acceptance | Packaging, startup/shutdown, setup documentation | Actual Windows + WSL run: hotkey → audio → STT → optional cleanup → verified insertion/recovery; offline inference after setup; privacy/retention checks; devtools off in release; install/run on target environment with pinned versions |
+| 7. Packaging and end-to-end acceptance | Packaging, startup/shutdown, setup documentation | Actual Windows run with LM Studio: hotkey → audio → STT → optional cleanup → verified insertion/recovery; offline inference after setup; privacy/retention checks; devtools off in release; install/run on target environment with pinned versions |
 
 **Design rationale:** prove platform risks early, implement behavioral rules with deterministic tests, and replace the mock UI only after those rules have a stable application interface. Packaging is the final integration check, not evidence that earlier requirements work.

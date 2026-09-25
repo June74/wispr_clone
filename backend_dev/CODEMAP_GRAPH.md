@@ -1,6 +1,6 @@
 # Wispr Clone — Visual Code Map
 
-Status: **planning only**. These diagrams are drawn from the "Contracts and dependency direction" tables in [CODEMAP.md](CODEMAP.md) §3 and the webview/clipboard/model-server rules in §4, §6 and §7. They do not describe working code.
+Status: **planning only**. These diagrams are drawn from the "Contracts and dependency direction" tables in [CODEMAP.md](CODEMAP.md) §3 and the webview/clipboard/local-model rules in §2, §4, §6 and §7. They do not describe working code.
 Solid arrows mean "imports / calls". Dashed arrows are **injected callbacks** wired by `app.py`: the producer calls an interface and never imports the consumer, so they add no import edge.
 
 ## 1. Module dependency graph (layers, top → bottom)
@@ -99,7 +99,7 @@ flowchart LR
   subgraph Ext["Outside the app's control"]
     OtherApps["Other Windows apps<br/>(target app, clipboard readers)"]
     ClipHist["Clipboard history / cloud sync"]
-    LocalProcs["Other local or WSL processes"]
+    LocalProcs["Other local processes (incl. Cognee)"]
     LAN["LAN"]
   end
 
@@ -115,11 +115,11 @@ flowchart LR
     Ins["insertion: exclusion-flagged clipboard or Unicode input"]
     Data[("SQLite + WAVs: transcripts, audio,<br/>title hashes only")]
     Secrets[("Credential Manager: optional cloud keys")]
+    Vox["STT: transcribe.cpp in-process<br/>(audio never leaves the app)"]
   end
 
-  subgraph WSL["WSL model servers: bound to 127.0.0.1, no auth"]
-    Vox["vLLM :8000"]
-    Oll["Ollama :11434"]
+  subgraph LMS["LM Studio: 127.0.0.1:1234, no auth, shared with Cognee"]
+    Llm["Llama 3.1 8B"]
   end
 
   SettingsUI --> Bridge --> Api --> Data
@@ -127,8 +127,9 @@ flowchart LR
   Hook -->|start/stop/cancel only| Api
   Api --> Ins --> OtherApps
   Ins -. "blocked by exclusion formats (verify in G4)" .-> ClipHist
-  Api --> Vox & Oll
-  LocalProcs -. "accepted local-only risk" .-> Vox & Oll
-  LAN -. "blocked by loopback bind (verify in G2)" .-> Vox & Oll
+  Api --> Vox
+  Api -->|transcript text for cleanup| Llm
+  LocalProcs -. "accepted local-only risk" .-> Llm
+  LAN -. "blocked: serve-on-network off (verify in G2)" .-> Llm
   Api -. "cloud mode only" .-> Secrets
 ```

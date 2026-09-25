@@ -4,11 +4,11 @@ Status: **planning only**. Companion to [CODEMAP.md](CODEMAP.md). No packages, m
 
 ## Environment and installation boundary
 
-The Windows application and WSL model servers have separate environments. The proposed Windows project uses Python 3.12 and `uv`, with metadata in `backend_dev/pyproject.toml`, a committed `uv.lock`, and `.python-version`. Keep project packages local. Decide whether Windows runs a Windows-side clone or uses a WSL checkout with its venv on a Windows-local path (codemap G1).
+The Windows project uses Python 3.12 and `uv`, with metadata in `backend_dev/pyproject.toml`, a committed `uv.lock`, and `.python-version`. Keep project packages local. G1 is decided: one WSL checkout, with the Windows venv on the Windows disk (`UV_PROJECT_ENVIRONMENT`). The WSL venv serves development and Linux CI only.
 
-WSL has its own isolated vLLM environment and an Ollama installation. Do not use the Windows lockfile to install the WSL server stack. The planned model scripts must record the tested server/model versions and support a reproducible install; choose a compatible stable release when possible, or an exact prerelease only when measured compatibility requires it. No floating nightly is an accepted reproducibility strategy.
+**No model server runs in WSL (G2, decided 2026-09-24).** Speech recognition runs in-process through transcribe.cpp. Cleanup uses the user's existing LM Studio on Windows, which is an external application: it is not installed, pinned or started by this project. Record the LM Studio version and loaded model with each G2/tier G result.
 
-**Manifest impact now:** none. At implementation, add approved Windows runtime/dev dependencies and commit their lockfile; separately pin the tested WSL serving stack. Optional cloud, encryption, and launcher dependencies wait for their corresponding decisions.
+**Manifest impact now:** none. At implementation, add approved Windows runtime/dev dependencies and commit their lockfile. The transcribe.cpp wheels come from GitHub release URLs (not PyPI), so pin them by URL with hashes in `uv.lock`. Optional cloud, encryption, and launcher dependencies wait for their corresponding decisions.
 
 ## Proposed Windows packages
 
@@ -19,8 +19,9 @@ WSL has its own isolated vLLM environment and an Ollama installation. Do not use
 | `sounddevice` — runtime | PortAudio capture/device enumeration; test actual Windows audio backend and distribution | PyAudio or soundcard | Replace capture/device layer |
 | `numpy` — runtime | Audio array operations, RMS and frequency bands; compiled dependency | Small stdlib implementation with measured performance | Rewrite audio analysis/conversion |
 | `soxr` — runtime | Resample when the chosen mic cannot open at the STT sample rate | Another measured resampler such as `scipy.signal` | Device sample-rate compatibility narrows |
-| `websockets` — runtime | Async streaming STT transport | `aiohttp` | Replace streaming transport |
-| `httpx` — runtime | Async cleanup requests and HTTP health checks | `aiohttp`, which could consolidate both transports | Replace cleanup/health transport |
+| `transcribe-cpp` 0.2.3 — runtime | In-process Voxtral Realtime streaming: `feed()` chunks, committed/tentative text, `finalize()`, `session.cancel()`. MIT. 0.x and "in development" per its README, so the API may change; `stt/base.py` confines that to one adapter. One run at a time per loaded model | vLLM server in WSL (≈8 GB bf16 weights, no longer fits beside LM Studio) | Return to the vLLM plan and its WebSocket adapter |
+| `transcribe-cpp-native-cu12` 0.2.3 — runtime | CUDA 12 native provider for the above; bundles the CUDA 12.9 runtime, about 200 MB, which also grows the packaged app. Also carries Vulkan and CPU backends (measured too slow for live use) | Vulkan-only native wheel (smaller; measured on the Intel iGPU: falls behind live speech) | STT falls back to a slower backend |
+| `httpx` — runtime | Async requests to LM Studio's OpenAI-compatible `/v1/chat/completions` and `/v1/models` (cleanup and health) | `openai` client package; `aiohttp` | Replace cleanup/health transport |
 | `pydantic` — runtime | Settings, command and import validation | Dataclasses plus explicit validation, or another schema validator | Validation responsibility remains and needs replacement |
 | `pywin32` — runtime | Desktop/process/clipboard APIs | `ctypes` wrappers | Rewrite native wrappers; keep insertion contract unchanged |
 | `keyring` — optional runtime | Cloud credential storage; backend availability must be verified | Windows credential APIs via pywin32 | Local mode unaffected; replace cloud secret store |
@@ -29,48 +30,43 @@ WSL has its own isolated vLLM environment and an Ollama installation. Do not use
 | `pyright` or `mypy` — optional dev | Check shared command/event and adapter types; choose one | Runtime validation/tests alone | Less static checking |
 | `pyinstaller` — dev | Proposed Windows executable packaging | Nuitka or Briefcase | Run from source or replace packager |
 
-Baseline proposal: nine direct Windows runtime packages, plus optional keyring. The local system has the app process and two model-serving processes; do not add another orchestration service without a concrete requirement. Runtime libraries add packaging and compatibility maintenance, while model operation adds local memory, disk and power costs. No paid inference service is required by the local workflow; any cloud pricing must be evaluated if that scope is selected.
+Baseline: ten direct Windows runtime packages (`websockets` removed; `transcribe-cpp` and its CUDA provider added), plus optional keyring. The local system has the app process and the user's LM Studio process; do not add another orchestration service without a concrete requirement. Runtime libraries add packaging and compatibility maintenance, while model operation adds local memory, disk and power costs. No paid inference service is required by the local workflow; any cloud pricing must be evaluated if that scope is selected.
 
 Use stdlib `sqlite3`, `wave`, `asyncio`, `threading`, `queue`, `ctypes`, `logging`, `uuid`, `json`, and `re` where appropriate. Do not add an ORM, task queue, or model orchestration framework for this scope.
 
 The simple host proposal is pywebview because the UI already exists as web assets. PySide6 is an alternative if native window/focus requirements cannot be demonstrated with pywebview. Do not assume that mixing GUI toolkits is trivial; prove lifecycle/thread compatibility before adopting a separate HUD host. These are proposals, not newly verified library comparisons.
 
-## Selected models and proposed serving
+## Selected models and serving (G2 decided 2026-09-24)
 
-| Role | Selected target | Proposed host/interface | Verification needed |
+| Role | Selected target | Host/interface | Status |
 |---|---|---|---|
-| Local STT | `mistralai/Voxtral-Mini-4B-Realtime-2602` | vLLM, loopback port 8000, `/v1/realtime` WebSocket | Supported vLLM/tokenizer versions, protocol/finalization, sample rate, encoding, chunks, latency, dictionary biasing, GPU support and VRAM |
-| Local cleanup | Llama 3.1 8B Instruct | Ollama, loopback port 11434, native chat API | Available tag/quantization, context and memory needs, output behavior and cancellation; low temperature is not a meaning-preservation guarantee |
+| Local STT | Voxtral Mini 4B Realtime 2602, GGUF Q4_K_M from `handy-computer/Voxtral-Mini-4B-Realtime-2602-gguf` (2.8 GB, already in LM Studio's model folder; the app reads the file, LM Studio does not serve it) | transcribe.cpp in-process, CUDA, 16 kHz mono float32 chunks | Measured on synthetic speech (CODEMAP §7 G2 record): ~15× faster than real time warm, final text 0.04–0.24 s after audio ends, cancel 0.004 s, +2.1 GB VRAM. Real microphone still to test. Dictionary biasing support unverified |
+| Local cleanup | Llama 3.1 8B Instruct, Q4_K_S GGUF, loaded in LM Studio (model id `meta-llama-3.1-8b-instruct`, 8,192-token context) | LM Studio, `127.0.0.1:1234`, OpenAI-compatible chat API | Shared with Cognee, so cleanup can wait behind Cognee requests; deadlines apply. Temperature-0 behavior, cancel on disconnect, loopback-only serving and LM Studio's own request logging are still to be checked. Low temperature is not a meaning-preservation guarantee |
+| STT fallback | `mistralai/Voxtral-Mini-4B-Realtime-2602` original weights | vLLM in WSL, loopback WebSocket `/v1/realtime` | Documented only. Revisit if transcribe.cpp fails a later check; needs its own download and VRAM that does not fit beside LM Studio today |
 | Optional cloud STT | MAI-Transcribe or a Mistral adapter, not yet selected for implementation | Provider API determined later | Exact product/endpoint, authentication, cost and local-only enforcement before any adapter work |
 
-The earlier draft proposed 16 kHz PCM16 and approximately 80 ms chunks for STT, a quantized Llama model, and a vLLM prerelease. Treat these as experiment inputs, not established protocol or version requirements. Verify current primary documentation and the actual endpoint before encoding them as constants.
-
-The target-machine plan refers to an RTX 5080. Record actual GPU capacity/available memory, Windows driver, WSL configuration, CUDA/PyTorch/vLLM compatibility, and both models' observed memory use in G2. Test concurrent operation first; consider smaller contexts, quantization, CPU offload or sequential loading only after measuring latency and resource tradeoffs. Download size alone does not establish runtime memory fit.
+GPU budget on the RTX 5080 (16.3 GB): LM Studio (Llama + Cognee's embedding model) about 7.5 GB, Voxtral about 2.1 GB, plus other Windows processes. The G2 run peaked at 15.1 GB, leaving about 1 GB of headroom. Record free VRAM with every tier G result. If headroom disappears, options in order: smaller LM Studio context, a different quantization, then sequential loading. The Intel iGPU (Vulkan) is fast enough for re-transcribing a saved WAV (`retry_stt`) but not for live dictation.
 
 ## Planned setup scripts and packaging
 
 | Planned file | Responsibility and exit evidence |
 |---|---|
-| `scripts/check-gpu.sh` | Report detected GPU/driver/memory for the experiment record; do not infer serving compatibility solely from detection |
-| `scripts/setup-models.sh` | Install pinned, tested WSL serving dependencies and acquire selected models; document source, version, access/license requirements and cache locations |
-| `scripts/start-stt.sh` | Start the verified vLLM configuration on loopback; make readiness and shutdown observable |
-| `scripts/start-cleanup.sh` | Start the verified Ollama configuration on loopback; handle an already-running instance clearly |
-| `packaging/wispr_clone.spec` | Package Windows source/web assets; verify required webview/audio/native dependencies and a clean target launch |
+| `scripts/check_local_models.py` | Readiness report: Voxtral GGUF present at the configured path with the pinned SHA-256; LM Studio answers on `127.0.0.1:1234` with the pinned model loaded; LM Studio not reachable on the LAN IP; free VRAM. Reads no credentials and downloads nothing |
+| `packaging/wispr_clone.spec` | Package Windows source/web assets; verify webview/audio/native dependencies, the transcribe.cpp CUDA provider, and a clean target launch |
 
-Test Windows access to the WSL loopback endpoints under the user's actual networking configuration. Loopback binding and local-only policy must be checked rather than inferred from a model label. Do not expose the model services to the LAN to work around an uninvestigated connection issue.
+Model acquisition is a documented manual step (download in LM Studio). No project script downloads models or starts LM Studio. LM Studio's "serve on local network" setting must stay off; check it rather than assume it. Do not expose it to the LAN to work around a connection problem.
 
-Optional `models/wsl_launcher.py` would own subprocess startup/readiness/shutdown only if app-managed startup is selected. Until then, document manual server startup. Choosing a launcher must not change the STT or cleanup interfaces.
+Optional `models/lmstudio_launcher.py` (using LM Studio's `lms` CLI) would own startup/readiness only if app-managed startup is selected (G7). Until then, the user starts LM Studio. Choosing a launcher must not change the STT or cleanup interfaces.
 
 ## API keys, secrets, and data
 
 | Credential | When needed | Proposed storage |
 |---|---|---|
 | None for local inference | Default workflow after models are acquired | No runtime API key |
-| `HF_TOKEN` | Only if the chosen download route requires authentication or access approval; verify current model access terms | WSL environment or the download tool's user credential store; never source control |
 | Provider-specific cloud key, such as `MISTRAL_API_KEY` | Only after a cloud adapter/provider is selected | Windows Credential Manager through the chosen secret-store adapter |
 
-The earlier plan expected Ollama acquisition of Llama to avoid a Hugging Face token and identified model-specific license terms. Verify those access and license details against the selected distributions at setup time; do not treat this document as current licensing research.
+Both local models were acquired through LM Studio, so no Hugging Face token is needed. Model-specific license terms (Llama 3.1's license; Voxtral's base-model license and the GGUF conversion's terms) still need checking against the exact distributions before any release; this document is not licensing research.
 
-Future `scripts/.env.example` lists WSL download credential names (such as `HF_TOKEN`) without values; the Windows app reads no environment credentials, so it has no `.env` file. Ignore `.env`, `*.key`, and local environments in source control. Never expose provider credentials to JS or log them. Validate configured endpoints and block cloud adapters when local-only is enabled; never silently fail over from a local server to cloud inference.
+No `.env.example` is needed: the app reads no environment credentials, and no project script downloads models. Ignore `.env`, `*.key`, and local environments in source control. Never expose provider credentials to JS or log them. Validate configured endpoints and block cloud adapters when local-only is enabled; never silently fail over from a local server to cloud inference.
 
 Transcript/audio retention belongs to the codemap's history contract. Per-user storage does not mean encrypted storage. Optional encryption requires a separate decision covering key storage, recovery and deletion; do not quietly add an encryption package or permanent backup of temporary data.

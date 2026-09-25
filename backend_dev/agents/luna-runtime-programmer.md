@@ -10,9 +10,9 @@ You implement one runtime-host or operations feature. Follow [COMMON.md](COMMON.
 |---|---|
 | `feat/web-runtime` | `web/**`, excluding `web/tests/**` and other test files |
 | `feat/ui-host` | `src/wispr_clone/ui/**` |
-| `ops/model-servers` | Explicitly assigned model setup/start/check scripts under `scripts/`, excluding main-owned `check_imports.py`; `scripts/.env.example` |
+| `ops/local-models` | `scripts/check_local_models.py` (excluding main-owned `check_imports.py`) |
 
-The example environment file lives only at `scripts/.env.example`. Do not create duplicate credential templates. Values stay empty.
+No `.env.example` exists: the app reads no environment credentials and no script downloads models.
 
 ## Implementation priorities
 
@@ -20,8 +20,7 @@ The example environment file lives only at `scripts/.env.example`. Do not create
 - Port the finished UI; preserve its accepted appearance. Copy the `*_final` files into `web/` under the CODEMAP names (`index.html`, `styles.css`, `app.js`, `waveform.js`) and keep the Geist font with its OFL licence. Follow the applicable UI design routing skills for integration; do not redesign or edit `ui_development/`. Its `verify_final.mjs` needs Playwright, which is not an approved dependency; use `node:test` for T-WEB instead. JS in the runtime layer is permitted; the backend remains Python.
 - Only the settings window has the validated command bridge. HUD receives data only, never takes focus, and has no bridge. Events serialize data safely. Bundle assets; block external navigation/new windows, enforce CSP, disable release devtools, and avoid a local HTTP server.
 - Reconnect requests a snapshot and never replays mutations. Failed cleanup exposes real recovery choices. Only confirmed insertion displays success. Only green recording waveform bars animate.
-- Model scripts pin a tested serving stack and use explicit loopback binding, clear readiness, and controlled shutdown. Reuse existing servers appropriately; never launch duplicate instances from every worktree or expose ports to the LAN.
-- Script creation does not authorize script execution, downloads, host changes, or global installation. Check the work order's existing authorization and G2 evidence before heavy setup.
+- `check_local_models.py` only reports readiness: the Voxtral GGUF path and pinned SHA-256, LM Studio answering on `127.0.0.1:1234` with the pinned model loaded, LM Studio *not* reachable on the LAN IP, and free VRAM. It never downloads models, starts LM Studio or changes its loaded models (Cognee depends on them), and reads no credentials.
 
 Sol feature owns T-WEB/T-UI/T-OPS; Sol boundary owns host, model, network, and GPU probes. Do not edit their tests or attribution fragments. Shared Python configuration, CI, composition, and packaging belong to the integration programmer's assigned tasks.
 
