@@ -90,6 +90,12 @@ def _frames(report: pytest.TestReport) -> list[tuple[str, int, str]]:
 
 
 def _dist_version(dist: str) -> str:
+    if dist in sys.stdlib_module_names:
+        if dist == "sqlite3":
+            import sqlite3
+
+            return sqlite3.sqlite_version
+        return f"Python {sys.version.split()[0]} stdlib"
     try:
         return importlib.metadata.version(dist)
     except importlib.metadata.PackageNotFoundError:
@@ -421,16 +427,22 @@ def check_impact_map_sync(src_root: Path, impact_dir: Path) -> None:
         except (OSError, SyntaxError) as error:
             raise ValueError(f"cannot parse source {file_path}: {error}") from error
         relative = file_path.relative_to(src_root).with_suffix("")
+        if relative.name == "__init__":
+            relative = relative.parent
         if relative.parts and relative.parts[0] == "wispr_clone":
             relative = Path(*relative.parts[1:])
         module = ".".join(relative.parts)
         for node in ast.walk(tree):
             top: str | None = None
             if isinstance(node, ast.Import):
-                top = node.names[0].name.split(".", 1)[0]
+                for imported in node.names:
+                    top = imported.name.split(".", 1)[0]
+                    if top and top != "wispr_clone":
+                        imports.setdefault(module, set()).add(top)
+                continue
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                 top = node.module.split(".", 1)[0]
-            if top and top not in sys.stdlib_module_names | {"wispr_clone"}:
+            if top and top != "wispr_clone":
                 imports.setdefault(module, set()).add(top)
 
     fragments: dict[str, tuple[Path, dict[str, Any]]] = {}
@@ -459,6 +471,15 @@ def check_impact_map_sync(src_root: Path, impact_dir: Path) -> None:
 
     for source_module, top_levels in imports.items():
         for top_level in top_levels:
+            if top_level in sys.stdlib_module_names:
+                if top_level in fragments and source_module not in set(
+                    fragments[top_level][1]["modules"]
+                ):
+                    raise ValueError(
+                        f"{top_level} fragment {fragments[top_level][0].name} "
+                        f"does not list importing module {source_module}"
+                    )
+                continue
             distributions = set(
                 importlib.metadata.packages_distributions().get(top_level, [])
             ) | {top_level, top_level.replace("_", "-")}
@@ -474,6 +495,14 @@ def check_impact_map_sync(src_root: Path, impact_dir: Path) -> None:
                 )
     for dist, (path, data) in fragments.items():
         declared = set(data["modules"])
+        if dist in sys.stdlib_module_names:
+            for source_module in declared:
+                if dist not in imports.get(source_module, set()):
+                    raise ValueError(
+                        f"{dist} fragment {path.name} lists {source_module}, "
+                        "which does not import it"
+                    )
+            continue
         distributions_for_fragment = {dist}
         for (
             top_level,

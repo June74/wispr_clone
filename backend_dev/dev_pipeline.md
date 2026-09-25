@@ -543,7 +543,7 @@ A branch agent may create or edit **only its owned paths**. Everything else is r
 
 | Branch | Owned paths (write) | May import (CODEMAP §3) | Depends on | Size |
 |---|---|---|---|---|
-| `feat/storage` | `src/wispr_clone/storage/**` (migration runner + `migrations/001_base.py`), `tests/**/storage/**`, `tests/probes/sqlite/**`, `tests/_attribution/impact/sqlite.toml` | contracts, config, util | P0 | S |
+| `feat/storage` | `src/wispr_clone/storage/**` (migration runner + `migrations/m001_base.py`), `tests/**/storage/**`, `tests/probes/sqlite/**`, `tests/_attribution/impact/sqlite3.toml` | contracts, config, util | P0 | S |
 | `feat/hotkeys` | `contracts/shortcuts.py`, `hotkeys/**`, its tests/probe/impact | contracts | P0 | S |
 | `feat/audio` | `audio/**`, its tests/probes/impacts | contracts | P0 | M |
 | `feat/dictionary-core` | `dictionary/apply.py`, `dictionary/import_export.py`, tests | contracts | P0 | S |
@@ -552,9 +552,9 @@ A branch agent may create or edit **only its owned paths**. Everything else is r
 | `feat/insertion-win` | `insertion/**`, tests/probes/impact | contracts | P0 | M |
 | `feat/settings-models` | `settings/schema.py`, `models/**`, tests | contracts (incl. shortcuts interface stub) | P0 | S |
 | `ops/local-models` | `scripts/**` (except `check_imports.py`), `tests/probes/{lmstudio,net,gpu}/**`, `tests/probes/transcribe_cpp/**` (except P-TCPP-001), `impact/lmstudio.toml`, `tests/fixtures/audio/speech/**` (LibriVox clip + `SOURCES.md`) | — | P0 | S |
-| `feat/settings-store` | `settings/store.py`, `storage/migrations/002_settings.py`, tests | storage, contracts | storage, settings-models | S |
-| `feat/dictionary-repo` | `dictionary/repo.py`, `storage/migrations/003_dictionary.py`, tests | storage | storage, dictionary-core | S |
-| `feat/history` | `history/**`, `storage/migrations/004_history.py`, tests | storage, contracts | storage | L |
+| `feat/settings-store` | `settings/store.py`, `storage/migrations/m002_settings.py`, tests | storage, contracts | storage, settings-models | S |
+| `feat/dictionary-repo` | `dictionary/repo.py`, `storage/migrations/m003_dictionary.py`, tests | storage | storage, dictionary-core | S |
+| `feat/history` | `history/**`, `storage/migrations/m004_history.py`, tests | storage, contracts | storage | L |
 | `feat/web-runtime` | `web/**`, `web/tests/**` | command/event contract | P0, frozen command table | M |
 | `feat/ui-host` | `ui/**`, tests | `application.api` interface (faked), contracts | P0 | M |
 
@@ -562,7 +562,7 @@ A branch agent may create or edit **only its owned paths**. Everything else is r
 
 **Single-writer rules (decisions 2026-09-24):**
 
-- **Migrations:** `feat/storage` owns the migration runner and `001_base.py`. Each wave-2 branch owns exactly one pre-numbered migration file (002 settings, 003 dictionary, 004 history). The coordinator allocates any later number. A migration only adds its own tables, so the three wave-2 branches never edit the same file.
+- **Migrations:** `feat/storage` owns the migration runner and `m001_base.py`. Each wave-2 branch owns exactly one pre-numbered migration file (002 settings, 003 dictionary, 004 history). The coordinator allocates any later number. A migration only adds its own tables, so the three wave-2 branches never edit the same file.
 - **Audio fixtures:** generated signals (tones, silence) go in `tests/fixtures/audio/generated/<feature>_*` and are written by Sol feature for that feature. Real speech goes in `tests/fixtures/audio/speech/**` with `SOURCES.md` and is written only by Sol boundary on `ops/local-models`.
 - **Real-model probes:** P-TCPP-002..004, P-LMS, P-NET and P-GPU and the `lmstudio` impact fragment belong to `ops/local-models`. `feat/stt` owns only the import check P-TCPP-001 and the `transcribe_cpp` fragment (the branch that adds an import adds its fragment, so T-DIAG-006 stays green). `feat/stt` and `feat/cleanup` use the real-model results and do not write them.
 - **Integration test folders:** `tests/integration/<feature>/` belongs to that feature's Sol feature author. `tests/integration/pipeline/` and `tests/integration/app/` belong to Sol integration.

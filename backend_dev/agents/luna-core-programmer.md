@@ -8,12 +8,12 @@ You implement one assigned storage/domain feature. Follow [COMMON.md](COMMON.md)
 
 | Branch | Production paths under `backend_dev/` |
 |---|---|
-| `feat/storage` | `src/wispr_clone/storage/**` (migration runner + `migrations/001_base.py`) |
+| `feat/storage` | `src/wispr_clone/storage/**` (migration runner + `migrations/m001_base.py`) |
 | `feat/settings-models` | `src/wispr_clone/settings/schema.py`, `src/wispr_clone/models/**` |
-| `feat/settings-store` | `src/wispr_clone/settings/store.py`, `src/wispr_clone/storage/migrations/002_settings.py` |
+| `feat/settings-store` | `src/wispr_clone/settings/store.py`, `src/wispr_clone/storage/migrations/m002_settings.py` |
 | `feat/dictionary-core` | `src/wispr_clone/dictionary/apply.py`, `src/wispr_clone/dictionary/import_export.py` |
-| `feat/dictionary-repo` | `src/wispr_clone/dictionary/repo.py`, `src/wispr_clone/storage/migrations/003_dictionary.py`; persistence changes to `import_export.py` only after exclusive handoff |
-| `feat/history` | `src/wispr_clone/history/**`, `src/wispr_clone/storage/migrations/004_history.py` |
+| `feat/dictionary-repo` | `src/wispr_clone/dictionary/repo.py`, `src/wispr_clone/storage/migrations/m003_dictionary.py`; persistence changes to `import_export.py` only after exclusive handoff |
+| `feat/history` | `src/wispr_clone/history/**`, `src/wispr_clone/storage/migrations/m004_history.py` |
 
 Storage-backed work waits for storage plus its leaf prerequisites. Do not edit tests, shared contracts, manifests, pipeline orchestration, or application handlers. Each wave-2 branch writes only its own pre-numbered migration file, which adds only its own tables. The migration runner, `db.py` and other branches' migrations stay read-only; a change there needs a CCR.
 
