@@ -188,7 +188,6 @@ async def test_T_HIS_012_delete_run_and_all_preserve_other_tables(
 def test_T_HIS_015_migration_version_and_no_direct_sqlite_import() -> None:
     from wispr_clone.history import repo as history_repo
     from wispr_clone.history import retention
-
     from wispr_clone.storage.migrations import m004_history
 
     assert (m004_history.VERSION, m004_history.NAME) == (4, "history")
@@ -206,9 +205,6 @@ def test_T_HIS_015_migration_version_and_no_direct_sqlite_import() -> None:
             assert all(name.split(".")[0] != "sqlite3" for name in names), path
 
 
-@pytest.mark.skip(
-    reason="m003_dictionary absent on feat/history; rerun T-DIC-013 after merge"
-)
 @pytest.mark.asyncio
 async def test_T_HIS_015_real_dictionary_migration_survives_delete_all(
     tmp_path: Path,
@@ -232,5 +228,55 @@ async def test_T_HIS_015_real_dictionary_migration_survives_delete_all(
             }
         )
         assert "dictionary_entries" in names
-        # The merged dictionary repository owns the actual row shape and fixture.
-        # T-DIC-013 is the authoritative real-schema survival check.
+        await db.write(
+            lambda conn: conn.execute(
+                "INSERT INTO dictionary_entries "
+                "(spelling, normalized, aliases, note, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("PyTest", "pytest", "[]", "synthetic note", 1.0, 1.0),
+            )
+        )
+        history = repo(db, tmp_path, FakeClock(), FakeEventSink())
+        await create(history, FakeIdFactory())
+        assert len((await history.delete_all()).run_ids) == 1
+        assert await db.read(
+            lambda conn: conn.execute(
+                "SELECT spelling, normalized, aliases, note FROM dictionary_entries"
+            ).fetchall()
+        ) == [("PyTest", "pytest", "[]", "synthetic note")]
+
+
+@pytest.mark.asyncio
+async def test_T_HIS_005_delete_result_ignores_another_pending_wav(
+    tmp_path: Path,
+) -> None:
+    clock, events, ids = FakeClock(), FakeEventSink(), FakeIdFactory()
+    locked = wav(tmp_path / "locked.wav")
+    removable = wav(tmp_path / "removable.wav")
+
+    def remove_file(path: Path) -> None:
+        if path == locked:
+            raise OSError("synthetic sharing violation")
+        path.unlink(missing_ok=True)
+
+    async with database(tmp_path / "history.db") as db:
+        history = repo(db, tmp_path, clock, events, remove_file=remove_file)
+        first = await create(history, ids, audio_path=str(locked))
+        second = await create(history, ids, audio_path=str(removable))
+        assert (await history.delete_run(first.id)).audio_pending
+        result = await history.delete_run(second.id)
+        assert result.run_ids == (second.id,)
+        assert not result.audio_pending
+        assert locked.exists() and not removable.exists()
+
+
+@pytest.mark.asyncio
+async def test_T_HIS_012_unknown_delete_and_empty_delete_all(tmp_path: Path) -> None:
+    async with database(tmp_path / "history.db") as db:
+        history = repo(db, tmp_path, FakeClock(), FakeEventSink())
+        with pytest.raises(WisprError) as unknown:
+            await history.delete_run("unknown-run")
+        assert unknown.value.error_code == ErrorCode.RUN_NOT_FOUND
+        assert unknown.value.where == "history"
+        assert unknown.value.why == "run"
+        assert (await history.delete_all()).run_ids == ()

@@ -355,3 +355,88 @@ async def test_T_HIS_014_deduplicate_start_validate_and_keep_private_data_out(
             and "private-transcript-sentinel" not in json.dumps(event)
             for event in events.events
         )
+
+
+@pytest.mark.asyncio
+async def test_T_HIS_004_claim_rechecks_expiry_inside_write(tmp_path: Path) -> None:
+    from wispr_clone.config import RUN_RETENTION_SECONDS
+    from wispr_clone.history.repo import HistoryRepo
+
+    clock = FakeClock(0)
+    async with database(tmp_path / "history.db") as db:
+        history = HistoryRepo(
+            db, clock=clock.now, audio_dir=tmp_path, events=FakeEventSink()
+        )
+        run = await create(history, FakeIdFactory())
+        clock.advance(RUN_RETENTION_SECONDS - 0.001)
+        real_now = clock.now
+        calls = 0
+
+        def crossing_clock() -> float:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return real_now()
+            clock.advance(0.001)
+            return real_now()
+
+        history = HistoryRepo(
+            db, clock=crossing_clock, audio_dir=tmp_path, events=FakeEventSink()
+        )
+        with pytest.raises(WisprError) as expired:
+            await history.claim_attempt(
+                run.id, attempt_id="late", request_id="late-request", kind="automatic"
+            )
+        error_code(expired, ErrorCode.RUN_EXPIRED)
+        assert await history.attempts(run.id) == ()
+        assert (
+            await db.read(
+                lambda conn: conn.execute("SELECT count(*) FROM runs").fetchone()[0]
+            )
+            == 0
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [("status", "invalid-status"), ("cleanup_status", "invalid-cleanup")],
+)
+async def test_T_HIS_014_bad_lifecycle_enum_rejected_without_write(
+    tmp_path: Path, field: str, invalid: str
+) -> None:
+    clock, events, ids = FakeClock(), FakeEventSink(), FakeIdFactory()
+    async with database(tmp_path / "history.db") as db:
+        history = repo(db, tmp_path, clock, events)
+        run = await create(history, ids)
+        events.events.clear()
+        with pytest.raises(WisprError) as rejected:
+            await history.update_run(
+                run.id, expected_version=run.version, **{field: invalid}
+            )
+        error_code(rejected, ErrorCode.VALIDATION)
+        assert await history.get(run.id) == run
+        assert events.events == []
+
+
+@pytest.mark.asyncio
+async def test_T_HIS_015_corrupt_attempt_target_is_storage_error(
+    tmp_path: Path,
+) -> None:
+    clock, events, ids = FakeClock(), FakeEventSink(), FakeIdFactory()
+    async with database(tmp_path / "history.db") as db:
+        history = repo(db, tmp_path, clock, events)
+        run = await create(history, ids)
+        await history.claim_attempt(
+            run.id, attempt_id="attempt", request_id="request", kind="explicit"
+        )
+        await db.write(
+            lambda conn: conn.execute(
+                "UPDATE insertion_attempts SET target=? WHERE attempt_id=?",
+                ("{broken-json", "attempt"),
+            )
+        )
+        with pytest.raises(WisprError) as corrupt:
+            await history.attempts(run.id)
+        error_code(corrupt, ErrorCode.STORAGE_ERROR)
+        assert "broken-json" not in str(corrupt.value) + corrupt.value.why

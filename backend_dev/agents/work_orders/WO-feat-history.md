@@ -227,3 +227,17 @@ class HistoryRepo:
 3. `claim_attempt` rechecks expiry INSIDE its write transaction (a run that expires between the
    expiry sweep and the claim must not get a claim) → `RUN_EXPIRED`.
 4. Sol fixes the ruff import-order finding in its own `test_history_deletion.py`.
+
+## Coordinator decisions after verification
+
+5. **In-flight protection (answers Sol's CODEMAP §5 question; history owns it):** a run that has an
+   `in_flight` attempt is never evicted and never expired while that attempt is in flight.
+   Eviction picks the oldest run WITHOUT an in-flight attempt (the live count may exceed
+   `MAX_RUNS` by the protected runs; at most one, since only one dispatch runs at a time).
+   Expiry of a protected run is deferred: it stays readable, and the next retention pass after
+   `resolve_attempt` (or `recover_on_startup`, which turns it `uncertain`) expires it normally.
+   `next_expiry_at()` ignores protected runs.
+6. Invalid enum values in `update_run` (`status`, `cleanup_status`, `output_selection`) →
+   `VALIDATION` naming the field; corrupt JSON in ANY JSON column (runs or attempts) →
+   `STORAGE_ERROR` naming only the run/attempt id.
+7. Review items 1-3 confirmed by Sol's tests.
