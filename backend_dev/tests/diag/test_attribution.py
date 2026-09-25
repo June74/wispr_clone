@@ -354,3 +354,126 @@ def test_P_PYTEST_004_probe():
     assert len(rows) == 1
     assert rows[0]["category"] == "adapter-misuse"
     _private_text_stays_out(report)
+
+
+def test_T_DIAG_001_plain_assert_uses_test_frame_and_real_symptom(
+    pytester: pytest.Pytester,
+) -> None:
+    report = _suite(pytester)
+    test_file = pytester.makepyfile(
+        test_plain="""
+import pytest
+
+@pytest.mark.invariant("synthetic plain assertion rule")
+def test_T_DIAG_001_plain_assert():
+    assert False, "synthetic first line\\nPRIVATE_ASSERTION_SECOND_LINE_72"
+"""
+    )
+    failing_line = next(
+        number
+        for number, line in enumerate(
+            test_file.read_text(encoding="utf-8").splitlines(), 1
+        )
+        if "assert False" in line
+    )
+    result = _run(pytester, report, "test_plain.py")
+    result.assert_outcomes(failed=1)
+    output = result.stdout.str()
+    assert "[ATTRIBUTION] OURS · logic" in output
+    assert (
+        f"where: {test_file}:{failing_line} in test_T_DIAG_001_plain_assert" in output
+    )
+    assert "invariant: synthetic plain assertion rule" in output
+    assert "symptom: AssertionError: synthetic first line" in output
+    assert "symptom: failed failure" not in output
+    rows = _json(report)
+    assert len(rows) == 1
+    assert rows[0]["verdict"] == "OURS"
+    assert rows[0]["category"] == "logic"
+    assert rows[0]["dist"] is None
+    assert rows[0]["where"] == (
+        f"{test_file}:{failing_line} in test_T_DIAG_001_plain_assert"
+    )
+    assert rows[0]["invariant"] == "synthetic plain assertion rule"
+    _private_text_stays_out(report)
+
+
+def test_T_DIAG_001_stdlib_exception_from_test_is_our_logic(
+    pytester: pytest.Pytester,
+) -> None:
+    report = _suite(pytester)
+    test_file = pytester.makepyfile(
+        test_stdlib="""
+import json
+
+def test_T_DIAG_001_invalid_json_from_our_test():
+    json.loads("invalid synthetic json")
+"""
+    )
+    result = _run(pytester, report, "test_stdlib.py")
+    result.assert_outcomes(failed=1)
+    rows = _json(report)
+    assert len(rows) == 1
+    assert rows[0]["verdict"] == "OURS"
+    assert rows[0]["category"] == "logic"
+    assert str(rows[0]["where"]).startswith(f"{test_file}:4 in ")
+    assert "[ATTRIBUTION] OURS · logic" in result.stdout.str()
+    assert "symptom: JSONDecodeError:" in result.stdout.str()
+
+
+def test_T_DIAG_failed_fixture_setup_gets_attribution(
+    pytester: pytest.Pytester,
+) -> None:
+    report = _suite(pytester)
+    pytester.makepyfile(
+        test_setup="""
+import pytest
+
+@pytest.fixture
+def broken_fixture():
+    raise RuntimeError("synthetic setup failure")
+
+@pytest.mark.invariant("fixture setup must succeed")
+def test_T_DIAG_setup_failure(broken_fixture):
+    pass
+"""
+    )
+    result = _run(pytester, report, "test_setup.py")
+    result.assert_outcomes(errors=1)
+    rows = _json(report)
+    assert len(rows) == 1
+    assert rows[0]["verdict"] == "OURS"
+    assert rows[0]["category"] == "logic"
+    assert "test_setup.py:5 in broken_fixture" in str(rows[0]["where"])
+    assert "symptom: RuntimeError: synthetic setup failure" in result.stdout.str()
+
+
+def test_T_DIAG_strict_xpass_probe_does_not_implicate_dependency(
+    pytester: pytest.Pytester,
+) -> None:
+    report = _suite(pytester)
+    pytester.makepyfile(
+        test_xpass="""
+import pytest
+
+@pytest.mark.probe("pytest")
+@pytest.mark.xfail(reason="synthetic stale expectation", strict=True)
+def test_P_PYTEST_probe_xpasses():
+    assert True
+
+@pytest.mark.adapter("pytest")
+def test_T_DIAG_adapter_fails_after_xpass():
+    assert False, "synthetic adapter failure"
+"""
+    )
+    result = _run(pytester, report, "test_xpass.py")
+    result.assert_outcomes(failed=2)
+    rows = _json(report)
+    adapter = next(
+        row
+        for row in rows
+        if "test_T_DIAG_adapter_fails_after_xpass" in str(row["nodeid"])
+    )
+    assert adapter["verdict"] == "OURS"
+    assert adapter["category"] == "adapter-misuse"
+    assert "[XPASS(strict)]" in result.stdout.str()
