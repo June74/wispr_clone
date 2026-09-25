@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 from enum import StrEnum
+from types import MappingProxyType
+from typing import Mapping
 
 from wispr_clone.contracts.common import ErrorCode, WisprError
 from wispr_clone.contracts.run import RecoveryAction, RunStatus
@@ -50,95 +52,113 @@ class TransitionRejected(Exception):
 # Each entry gives (status, dispatching, event) -> (next status, next dispatching).
 # Missing entries are illegal. Dispatch outcomes are shared by every reachable
 # in-flight status; unreachable in-flight combinations intentionally have no rows.
-TRANSITIONS: dict[tuple[RunStatus, bool, RunEvent], tuple[RunStatus, bool]] = {
-    (RunStatus.RECORDING, False, RunEvent.STOP): (RunStatus.PROCESSING, False),
-    (RunStatus.RECORDING, False, RunEvent.CANCEL): (RunStatus.CANCELLED, False),
-    (RunStatus.RECORDING, False, RunEvent.FAIL): (RunStatus.ERROR, False),
-    (RunStatus.PROCESSING, False, RunEvent.CANCEL): (RunStatus.CANCELLED, False),
-    (RunStatus.PROCESSING, False, RunEvent.FAIL): (RunStatus.ERROR, False),
-    (RunStatus.PROCESSING, False, RunEvent.CLEANUP_FAILED): (
-        RunStatus.AWAITING_CLEANUP_CHOICE,
-        False,
-    ),
-    (RunStatus.PROCESSING, False, RunEvent.DESTINATION_AWAY): (
-        RunStatus.AWAITING_DESTINATION,
-        False,
-    ),
-    (RunStatus.PROCESSING, False, RunEvent.HOLD): (RunStatus.HELD, False),
-    (RunStatus.PROCESSING, False, RunEvent.DISPATCH_BEGIN_AUTO): (
-        RunStatus.PROCESSING,
-        True,
-    ),
-    (RunStatus.AWAITING_CLEANUP_CHOICE, False, RunEvent.RETRY_CLEANUP): (
-        RunStatus.PROCESSING,
-        False,
-    ),
-    (RunStatus.AWAITING_CLEANUP_CHOICE, False, RunEvent.USE_ORIGINAL): (
-        RunStatus.PROCESSING,
-        False,
-    ),
-    (RunStatus.AWAITING_CLEANUP_CHOICE, False, RunEvent.CANCEL): (
-        RunStatus.CANCELLED,
-        False,
-    ),
-    (RunStatus.AWAITING_DESTINATION, False, RunEvent.DISPATCH_BEGIN_AUTO): (
-        RunStatus.AWAITING_DESTINATION,
-        True,
-    ),
-    (RunStatus.AWAITING_DESTINATION, False, RunEvent.DISPATCH_BEGIN_EXPLICIT): (
-        RunStatus.AWAITING_DESTINATION,
-        True,
-    ),
-    (RunStatus.AWAITING_DESTINATION, False, RunEvent.HOLD): (RunStatus.HELD, False),
-    (RunStatus.AWAITING_DESTINATION, False, RunEvent.CANCEL): (
-        RunStatus.CANCELLED,
-        False,
-    ),
-    (RunStatus.HELD, False, RunEvent.DISPATCH_BEGIN_EXPLICIT): (RunStatus.HELD, True),
-    (RunStatus.ERROR, False, RunEvent.RETRY_STT): (RunStatus.PROCESSING, False),
-    (RunStatus.ERROR, False, RunEvent.DISPATCH_BEGIN_EXPLICIT): (RunStatus.ERROR, True),
-    (RunStatus.UNCERTAIN, False, RunEvent.DISPATCH_BEGIN_EXPLICIT): (
-        RunStatus.UNCERTAIN,
-        True,
-    ),
-    **{
-        (status, True, event): (target, False)
-        for status in (
-            RunStatus.PROCESSING,
-            RunStatus.AWAITING_DESTINATION,
-            RunStatus.HELD,
-            RunStatus.ERROR,
-            RunStatus.UNCERTAIN,
-        )
-        for event, target in (
-            (RunEvent.INSERTED, RunStatus.DONE),
-            (RunEvent.INSERT_FAILED, RunStatus.ERROR),
-            (RunEvent.INSERT_UNCERTAIN, RunStatus.UNCERTAIN),
-        )
-    },
-}
-
-_RECOVERY_ACTIONS: dict[RunStatus, frozenset[RecoveryAction]] = {
-    RunStatus.RECORDING: frozenset(),
-    RunStatus.PROCESSING: frozenset(),
-    RunStatus.AWAITING_CLEANUP_CHOICE: frozenset(
+TRANSITIONS: Mapping[tuple[RunStatus, bool, RunEvent], tuple[RunStatus, bool]] = (
+    MappingProxyType(
         {
-            RecoveryAction.RETRY_CLEANUP,
-            RecoveryAction.USE_ORIGINAL,
-            RecoveryAction.COPY,
+            (RunStatus.RECORDING, False, RunEvent.STOP): (RunStatus.PROCESSING, False),
+            (RunStatus.RECORDING, False, RunEvent.CANCEL): (RunStatus.CANCELLED, False),
+            (RunStatus.RECORDING, False, RunEvent.FAIL): (RunStatus.ERROR, False),
+            (RunStatus.PROCESSING, False, RunEvent.CANCEL): (
+                RunStatus.CANCELLED,
+                False,
+            ),
+            (RunStatus.PROCESSING, False, RunEvent.FAIL): (RunStatus.ERROR, False),
+            (RunStatus.PROCESSING, False, RunEvent.CLEANUP_FAILED): (
+                RunStatus.AWAITING_CLEANUP_CHOICE,
+                False,
+            ),
+            (RunStatus.PROCESSING, False, RunEvent.DESTINATION_AWAY): (
+                RunStatus.AWAITING_DESTINATION,
+                False,
+            ),
+            (RunStatus.PROCESSING, False, RunEvent.HOLD): (RunStatus.HELD, False),
+            (RunStatus.PROCESSING, False, RunEvent.DISPATCH_BEGIN_AUTO): (
+                RunStatus.PROCESSING,
+                True,
+            ),
+            (RunStatus.AWAITING_CLEANUP_CHOICE, False, RunEvent.RETRY_CLEANUP): (
+                RunStatus.PROCESSING,
+                False,
+            ),
+            (RunStatus.AWAITING_CLEANUP_CHOICE, False, RunEvent.USE_ORIGINAL): (
+                RunStatus.PROCESSING,
+                False,
+            ),
+            (RunStatus.AWAITING_CLEANUP_CHOICE, False, RunEvent.CANCEL): (
+                RunStatus.CANCELLED,
+                False,
+            ),
+            (RunStatus.AWAITING_DESTINATION, False, RunEvent.DISPATCH_BEGIN_AUTO): (
+                RunStatus.AWAITING_DESTINATION,
+                True,
+            ),
+            (RunStatus.AWAITING_DESTINATION, False, RunEvent.DISPATCH_BEGIN_EXPLICIT): (
+                RunStatus.AWAITING_DESTINATION,
+                True,
+            ),
+            (RunStatus.AWAITING_DESTINATION, False, RunEvent.HOLD): (
+                RunStatus.HELD,
+                False,
+            ),
+            (RunStatus.AWAITING_DESTINATION, False, RunEvent.CANCEL): (
+                RunStatus.CANCELLED,
+                False,
+            ),
+            (RunStatus.HELD, False, RunEvent.DISPATCH_BEGIN_EXPLICIT): (
+                RunStatus.HELD,
+                True,
+            ),
+            (RunStatus.ERROR, False, RunEvent.RETRY_STT): (RunStatus.PROCESSING, False),
+            (RunStatus.ERROR, False, RunEvent.DISPATCH_BEGIN_EXPLICIT): (
+                RunStatus.ERROR,
+                True,
+            ),
+            (RunStatus.UNCERTAIN, False, RunEvent.DISPATCH_BEGIN_EXPLICIT): (
+                RunStatus.UNCERTAIN,
+                True,
+            ),
+            **{
+                (status, True, event): (target, False)
+                for status in (
+                    RunStatus.PROCESSING,
+                    RunStatus.AWAITING_DESTINATION,
+                    RunStatus.HELD,
+                    RunStatus.ERROR,
+                    RunStatus.UNCERTAIN,
+                )
+                for event, target in (
+                    (RunEvent.INSERTED, RunStatus.DONE),
+                    (RunEvent.INSERT_FAILED, RunStatus.ERROR),
+                    (RunEvent.INSERT_UNCERTAIN, RunStatus.UNCERTAIN),
+                )
+            },
         }
-    ),
-    RunStatus.AWAITING_DESTINATION: frozenset(
-        {RecoveryAction.INSERT, RecoveryAction.COPY}
-    ),
-    RunStatus.HELD: frozenset({RecoveryAction.INSERT, RecoveryAction.COPY}),
-    RunStatus.ERROR: frozenset(
-        {RecoveryAction.RETRY_STT, RecoveryAction.INSERT, RecoveryAction.COPY}
-    ),
-    RunStatus.UNCERTAIN: frozenset({RecoveryAction.INSERT, RecoveryAction.COPY}),
-    RunStatus.DONE: frozenset({RecoveryAction.COPY}),
-    RunStatus.CANCELLED: frozenset({RecoveryAction.COPY}),
-}
+    )
+)
+
+_RECOVERY_ACTIONS: Mapping[RunStatus, frozenset[RecoveryAction]] = MappingProxyType(
+    {
+        RunStatus.RECORDING: frozenset(),
+        RunStatus.PROCESSING: frozenset(),
+        RunStatus.AWAITING_CLEANUP_CHOICE: frozenset(
+            {
+                RecoveryAction.RETRY_CLEANUP,
+                RecoveryAction.USE_ORIGINAL,
+                RecoveryAction.COPY,
+            }
+        ),
+        RunStatus.AWAITING_DESTINATION: frozenset(
+            {RecoveryAction.INSERT, RecoveryAction.COPY}
+        ),
+        RunStatus.HELD: frozenset({RecoveryAction.INSERT, RecoveryAction.COPY}),
+        RunStatus.ERROR: frozenset(
+            {RecoveryAction.RETRY_STT, RecoveryAction.INSERT, RecoveryAction.COPY}
+        ),
+        RunStatus.UNCERTAIN: frozenset({RecoveryAction.INSERT, RecoveryAction.COPY}),
+        RunStatus.DONE: frozenset({RecoveryAction.COPY}),
+        RunStatus.CANCELLED: frozenset({RecoveryAction.COPY}),
+    }
+)
 
 
 def initial_state() -> RunState:
@@ -153,7 +173,22 @@ def transition(
     expected_version: int | None = None,
 ) -> RunState:
     """Apply one listed transition, or raise for stale or illegal input."""
-    if expected_version is not None and expected_version != state.version:
+    if not isinstance(event, RunEvent):
+        raise TypeError("event must be a RunEvent")
+    if not isinstance(state.status, RunStatus):
+        raise TypeError("state.status must be a RunStatus")
+    if type(state.dispatching) is not bool:
+        raise TypeError("state.dispatching must be a bool")
+    if isinstance(state.version, bool) or not isinstance(state.version, int):
+        raise TypeError("state.version must be an int")
+    if state.version < 1:
+        raise ValueError("state.version must be at least 1")
+
+    if expected_version is not None and (
+        isinstance(expected_version, bool)
+        or not isinstance(expected_version, int)
+        or expected_version != state.version
+    ):
         raise WisprError(
             ErrorCode.STALE_VERSION,
             where="pipeline.state_machine",
