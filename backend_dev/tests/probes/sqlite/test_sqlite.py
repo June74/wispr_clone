@@ -1,6 +1,7 @@
 """Direct SQLite contracts; no application code is used here."""
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -16,15 +17,15 @@ def test_P_SQLITE_001_library_version_is_supported(record_property) -> None:
 @pytest.mark.probe("sqlite3")
 def test_P_SQLITE_002_wal_persists_after_reopen(tmp_path: Path) -> None:
     path = tmp_path / "wal.db"
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
 
 @pytest.mark.probe("sqlite3")
 def test_P_SQLITE_003_unique_violation_is_integrity_error(tmp_path: Path) -> None:
-    with sqlite3.connect(tmp_path / "unique.db") as conn:
+    with closing(sqlite3.connect(tmp_path / "unique.db")) as conn:
         conn.execute("CREATE TABLE sample (value TEXT UNIQUE)")
         conn.execute("INSERT INTO sample VALUES ('synthetic')")
         with pytest.raises(sqlite3.IntegrityError):
@@ -36,7 +37,7 @@ def test_P_SQLITE_004_foreign_key_cascade_requires_enabled_pragma(
     tmp_path: Path,
 ) -> None:
     for enabled in (False, True):
-        with sqlite3.connect(tmp_path / f"cascade_{enabled}.db") as conn:
+        with closing(sqlite3.connect(tmp_path / f"cascade_{enabled}.db")) as conn:
             conn.execute(f"PRAGMA foreign_keys={'ON' if enabled else 'OFF'}")
             assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == int(enabled)
             conn.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)")
@@ -55,7 +56,9 @@ def test_P_SQLITE_004_foreign_key_cascade_requires_enabled_pragma(
 def test_P_SQLITE_005_transaction_rollback_restores_ddl_and_version(
     tmp_path: Path,
 ) -> None:
-    with sqlite3.connect(tmp_path / "rollback.db", isolation_level=None) as conn:
+    with closing(
+        sqlite3.connect(tmp_path / "rollback.db", isolation_level=None)
+    ) as conn:
         conn.execute("PRAGMA user_version = 1")
         conn.execute("BEGIN IMMEDIATE")
         conn.execute("CREATE TABLE transient (value INTEGER)")

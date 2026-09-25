@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import sqlite3
 import threading
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -26,15 +27,14 @@ def test_T_STO_001_order_discovery_and_idempotent_migrations(
 
         return Migration(version, f"test_{version}", apply)
 
-    conn = sqlite3.connect(tmp_path / "ordered.db", isolation_level=None)
-    try:
+    with closing(
+        sqlite3.connect(tmp_path / "ordered.db", isolation_level=None)
+    ) as conn:
         assert runner.apply_migrations(conn, [migration(1), migration(2)]) == 2
         assert applied == [1, 2]
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
         assert runner.apply_migrations(conn, [migration(1), migration(2)]) == 2
         assert applied == [1, 2]
-    finally:
-        conn.close()
 
     discovered = runner.discover_migrations()
     assert [item.version for item in discovered] == [1]
@@ -151,7 +151,7 @@ async def test_T_STO_005_migration_and_write_failures_rollback(tmp_path: Path) -
         await db.open()
     assert caught.value.error_code == ErrorCode.STORAGE_ERROR
     assert caught.value.where == "migration 002"
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
         assert (
             conn.execute(
@@ -179,3 +179,168 @@ async def test_T_STO_005_migration_and_write_failures_rollback(tmp_path: Path) -
             )
             == 0
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("early_end", ["executescript", "commit"])
+async def test_T_STO_005_migration_rejects_ended_transaction(
+    tmp_path: Path, early_end: str
+) -> None:
+    from wispr_clone.storage import Database, Migration
+
+    def first(conn: sqlite3.Connection) -> None:
+        conn.execute("CREATE TABLE durable (value INTEGER)")
+
+    def broken(conn: sqlite3.Connection) -> None:
+        if early_end == "executescript":
+            conn.executescript("CREATE TABLE escaped (value INTEGER);")
+        else:
+            conn.execute("CREATE TABLE escaped (value INTEGER)")
+            conn.commit()
+
+    path = tmp_path / f"migration_{early_end}.db"
+    db = Database(path, [Migration(1, "first", first), Migration(2, "broken", broken)])
+    try:
+        with pytest.raises(WisprError) as caught:
+            await db.open()
+        assert caught.value.error_code == ErrorCode.STORAGE_ERROR
+        assert caught.value.where == "migration 002"
+        assert caught.value.why == "transaction ended early"
+        with closing(sqlite3.connect(path)) as conn:
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        with pytest.raises(WisprError):
+            await db.read(lambda conn: None)
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_T_STO_005_write_rejects_callback_commit(tmp_path: Path) -> None:
+    from wispr_clone.storage import Database
+
+    async with Database(tmp_path / "callback_commit.db") as db:
+        await db.write(lambda conn: conn.execute("CREATE TABLE sample (value INTEGER)"))
+
+        def premature_commit(conn: sqlite3.Connection) -> None:
+            conn.execute("INSERT INTO sample VALUES (1)")
+            conn.commit()
+
+        with pytest.raises(WisprError) as caught:
+            await db.write(premature_commit)
+        assert caught.value.error_code == ErrorCode.STORAGE_ERROR
+        assert caught.value.where == "storage.db"
+        assert caught.value.why == "transaction ended early"
+
+
+@pytest.mark.asyncio
+async def test_T_STO_003_close_drains_accepted_queued_write(tmp_path: Path) -> None:
+    from wispr_clone.storage import Database
+
+    db = Database(tmp_path / "close_queue.db")
+    await db.open()
+    await db.write(lambda conn: conn.execute("CREATE TABLE sample (value INTEGER)"))
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_write(conn: sqlite3.Connection) -> None:
+        entered.set()
+        assert release.wait(timeout=5)
+        conn.execute("INSERT INTO sample VALUES (1)")
+
+    first = asyncio.create_task(db.write(blocking_write))
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        queued = asyncio.create_task(
+            db.write(lambda conn: conn.execute("INSERT INTO sample VALUES (2)"))
+        )
+        await asyncio.sleep(0)  # submit the write to the single-thread executor
+        assert not queued.done()
+        closing_task = asyncio.create_task(db.close())
+        await asyncio.sleep(0)  # let close() mark the database closed
+        release.set()
+        results = await asyncio.gather(
+            first, queued, closing_task, return_exceptions=True
+        )
+        assert results == [None, None, None]
+        with closing(sqlite3.connect(tmp_path / "close_queue.db")) as conn:
+            assert conn.execute(
+                "SELECT value FROM sample ORDER BY value"
+            ).fetchall() == [
+                (1,),
+                (2,),
+            ]
+    finally:
+        release.set()
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_T_STO_005_schema_version_tracks_prior_commits_after_failure(
+    tmp_path: Path,
+) -> None:
+    from wispr_clone.storage import Database, Migration
+
+    def first(conn: sqlite3.Connection) -> None:
+        conn.execute("CREATE TABLE durable (value INTEGER)")
+
+    def broken(conn: sqlite3.Connection) -> None:
+        raise RuntimeError("synthetic migration failure")
+
+    path = tmp_path / "version_after_failure.db"
+    db = Database(path, [Migration(1, "first", first), Migration(2, "broken", broken)])
+    try:
+        with pytest.raises(WisprError):
+            await db.open()
+        with closing(sqlite3.connect(path)) as conn:
+            durable_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        assert durable_version == 1
+        assert db.schema_version == durable_version
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_T_STO_005_failed_commit_rolls_back_and_preserves_error(
+    tmp_path: Path,
+) -> None:
+    from wispr_clone.storage import Database
+
+    async with Database(tmp_path / "failed_commit.db") as db:
+        await db.write(
+            lambda conn: conn.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)")
+        )
+        await db.write(
+            lambda conn: conn.execute(
+                "CREATE TABLE child (parent_id INTEGER REFERENCES parent(id) "
+                "DEFERRABLE INITIALLY DEFERRED)"
+            )
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            await db.write(lambda conn: conn.execute("INSERT INTO child VALUES (99)"))
+        assert (
+            await db.read(
+                lambda conn: conn.execute("SELECT count(*) FROM child").fetchone()[0]
+            )
+            == 0
+        )
+        await db.write(lambda conn: conn.execute("INSERT INTO parent VALUES (99)"))
+
+
+@pytest.mark.asyncio
+async def test_T_STO_005_open_migration_failure_stops_writer_thread(
+    tmp_path: Path,
+) -> None:
+    from wispr_clone.storage import Database, Migration
+
+    writer_ident: list[int] = []
+
+    def broken(conn: sqlite3.Connection) -> None:
+        writer_ident.append(threading.get_ident())
+        raise RuntimeError("synthetic migration failure")
+
+    db = Database(tmp_path / "failed_open.db", [Migration(1, "broken", broken)])
+    with pytest.raises(WisprError):
+        await db.open()
+    assert len(writer_ident) == 1
+    assert not any(thread.ident == writer_ident[0] for thread in threading.enumerate())
+    await db.close()

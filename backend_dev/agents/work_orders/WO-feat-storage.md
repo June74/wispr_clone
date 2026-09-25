@@ -171,3 +171,16 @@ report version "not installed". SQLite is a real third-party C library shipped i
    checks `conn.in_transaction`; if the transaction is gone it raises
    `WisprError(STORAGE_ERROR, where=<"migration NNN" | "storage.db">, why="transaction ended early")`
    and does NOT bump `user_version`. Sol adds T-STO-005 regressions for both paths.
+
+## Coordinator decisions after verification
+
+5. `close()` drains: every `read`/`write` accepted BEFORE `close()` was called completes normally
+   (later these will be insertion claims; dropping one silently is not acceptable). Calls made
+   after `close()` started are rejected with `WisprError(STORAGE_ERROR, "storage.db", ...)`.
+6. `schema_version` reflects the last migration actually committed, also after a later migration
+   fails during `open()`.
+7. Plugin import scanning reads EVERY name of `import a, b` (a pre-existing bug that affected all
+   dependencies, not only stdlib). Once a stdlib module has a fragment, every src module importing
+   it must be listed in that fragment (same rule as third-party dependencies).
+8. Decision 4 (transaction ended early) confirmed by Sol's tests for executescript, commit() in a
+   migration, and commit() in a write callback.

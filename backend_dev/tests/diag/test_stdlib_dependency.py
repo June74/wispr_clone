@@ -30,6 +30,40 @@ def test_T_DIAG_009_explicit_stdlib_fragment_is_checked(tmp_path: Path) -> None:
     check_impact_map_sync(source.parent, impact)
 
 
+def test_T_DIAG_009_stdlib_import_after_another_import_is_seen(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "wispr_clone"
+    source.mkdir(parents=True)
+    (source / "storage.py").write_text("import json, sqlite3\n", encoding="utf-8")
+    impact = tmp_path / "impact"
+    impact.mkdir()
+    (impact / "sqlite3.toml").write_text(
+        'dependency = "sqlite3"\nkind = "library"\nmodules = ["storage"]\n'
+        'features = ["synthetic persistence"]\nerror_codes = ["storage_error"]\n'
+        'action = "check synthetic SQLite environment"\n',
+        encoding="utf-8",
+    )
+    check_impact_map_sync(source.parent, impact)
+
+
+def test_T_DIAG_009_stdlib_fragment_lists_every_importing_module(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src" / "wispr_clone"
+    source.mkdir(parents=True)
+    (source / "storage.py").write_text("import sqlite3\n", encoding="utf-8")
+    (source / "history.py").write_text("import sqlite3\n", encoding="utf-8")
+    impact = tmp_path / "impact"
+    impact.mkdir()
+    (impact / "sqlite3.toml").write_text(
+        'dependency = "sqlite3"\nkind = "library"\nmodules = ["storage"]\n'
+        'features = ["synthetic persistence"]\nerror_codes = ["storage_error"]\n'
+        'action = "check synthetic SQLite environment"\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="sqlite3|history"):
+        check_impact_map_sync(source.parent, impact)
+
+
 def test_T_DIAG_009_failing_sqlite_probe_reports_library_version(
     pytester: pytest.Pytester,
 ) -> None:

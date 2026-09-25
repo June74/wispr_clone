@@ -1,6 +1,7 @@
 """Lifecycle errors of the pinned Database API."""
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -40,7 +41,7 @@ async def test_T_STO_006_closed_access_idempotent_close_and_newer_schema(
         assert caught.value.where == "storage.db"
 
     path = tmp_path / "future.db"
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn:
         conn.execute("PRAGMA user_version = 999")
     future = Database(path)
     with pytest.raises(WisprError) as caught:
