@@ -90,12 +90,17 @@ class SettingsStore:
             raise WisprError(ErrorCode.VALIDATION, "settings.schema", "schema_version")
 
         async with self._lock:
-            defaults = default_settings()
+            if self._settings is None:
+                raise WisprError(
+                    ErrorCode.STORAGE_ERROR, "settings.store", "not loaded"
+                )
 
             def update_row(conn: Connection) -> Settings:
                 row = conn.execute("SELECT data FROM settings WHERE id = 1").fetchone()
                 if row is None:
-                    stored = settings_to_data(defaults)
+                    raise WisprError(
+                        ErrorCode.STORAGE_ERROR, "settings.store", "not loaded"
+                    )
                 else:
                     try:
                         decoded = json.loads(str(row[0]))
