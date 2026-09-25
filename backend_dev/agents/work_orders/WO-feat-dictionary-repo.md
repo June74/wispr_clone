@@ -101,3 +101,13 @@ Rules (all errors `WisprError(ErrorCode.VALIDATION, where="dictionary.repo", why
 | T-DIC-012 | an import with one bad entry, a conflicting alias, or malformed JSON raises and leaves the table byte-for-byte unchanged (compare a full `SELECT * ORDER BY id` before/after); a valid import inserts `to_add` atomically and reports `skipped_duplicates`; export → import into a fresh DB reproduces the entries |
 | **T-DIC-013** (invariant) | dictionary rows survive deletion of temporary history: with a test migration that creates stand-in `runs` / `insertion_attempts` tables, deleting all their rows (and dropping them) leaves every dictionary row intact. (Re-checked against the real history tables when feat/history lands.) |
 | T-DIC-014 | `m003_dictionary` is version 3, name `"dictionary"`; `dictionary/repo.py` and the migration never import `sqlite3` (ast scan); a raced duplicate (two concurrent `add` calls with the same normalized spelling) yields exactly one row and one `VALIDATION` error |
+
+## Coordinator review of GREEN (binding)
+
+1. Rule for every migration test from now on: assert that a migration's own tables/version are
+   present, never that the database's LATEST version equals a fixed number (that breaks with each
+   new migration, as T-STO-001 and now T-SET-014 did). RESERVED for Sol in this order:
+   `tests/integration/settings/test_store.py` T-SET-014 → assert `db.schema_version >= 2` plus the
+   settings tables. Sol also fixes the ruff import-order findings in its own new dictionary tests.
+2. `import_text` must also map a raced UNIQUE violation (`IntegrityError`) to
+   `WisprError(VALIDATION, "dictionary.repo", "import: duplicate")`, never a raw sqlite error.
