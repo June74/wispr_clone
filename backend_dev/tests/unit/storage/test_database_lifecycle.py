@@ -1,5 +1,6 @@
 """Lifecycle errors of the pinned Database API."""
 
+import asyncio
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -50,3 +51,19 @@ async def test_T_STO_006_closed_access_idempotent_close_and_newer_schema(
     assert caught.value.where == "storage.migrations"
     assert caught.value.why == "newer schema"
     await future.close()
+
+
+@pytest.mark.asyncio
+async def test_T_STO_006_overlapping_open_rejects_second_call(tmp_path: Path) -> None:
+    from wispr_clone.storage import Database
+
+    db = Database(tmp_path / "overlapping_open.db")
+    try:
+        results = await asyncio.gather(db.open(), db.open(), return_exceptions=True)
+        assert sum(result is None for result in results) == 1
+        errors = [result for result in results if isinstance(result, WisprError)]
+        assert len(errors) == 1
+        assert errors[0].error_code == ErrorCode.STORAGE_ERROR
+        assert errors[0].where == "storage.db"
+    finally:
+        await db.close()

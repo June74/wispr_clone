@@ -72,6 +72,7 @@ def test_T_STO_001_order_discovery_and_idempotent_migrations(
 
     discovered = runner.discover_migrations()
     assert [item.version for item in discovered] == [1]
+    assert [item.name for item in discovered] == ["base"]
 
     # Use disposable migration modules to exercise discovery without altering source.
     for case, filenames in [
@@ -83,7 +84,9 @@ def test_T_STO_001_order_discovery_and_idempotent_migrations(
         for filename in filenames:
             version = int(filename[1:4])
             (package_dir / filename).write_text(
-                f"VERSION = {version}\ndef apply(conn):\n    pass\n", encoding="utf-8"
+                f"VERSION = {version}\nNAME = {filename!r}\n"
+                "def apply(conn):\n    pass\n",
+                encoding="utf-8",
             )
         with monkeypatch.context() as scoped:
             scoped.setattr(runner, "__path__", [str(package_dir)])
@@ -92,6 +95,9 @@ def test_T_STO_001_order_discovery_and_idempotent_migrations(
                 runner.discover_migrations()
             assert caught.value.error_code == ErrorCode.STORAGE_ERROR
             assert caught.value.where == "storage.migrations"
+            assert caught.value.why == (
+                "duplicate version" if case == "duplicate" else "missing version"
+            )
 
 
 @pytest.mark.asyncio
@@ -316,9 +322,11 @@ async def test_T_STO_003_close_drains_accepted_queued_write(tmp_path: Path) -> N
     first = asyncio.create_task(db.write(blocking_write))
     try:
         assert await asyncio.to_thread(entered.wait, 5)
-        queued = asyncio.create_task(
-            db.write(lambda conn: conn.execute("INSERT INTO sample VALUES (2)"))
-        )
+
+        def queued_write(conn: sqlite3.Connection) -> None:
+            conn.execute("INSERT INTO sample VALUES (2)")
+
+        queued = asyncio.create_task(db.write(queued_write))
         await asyncio.sleep(0)  # submit the write to the single-thread executor
         assert not queued.done()
         closing_task = asyncio.create_task(db.close())
