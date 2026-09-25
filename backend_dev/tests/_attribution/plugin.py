@@ -151,17 +151,19 @@ def _probe_status(config: pytest.Config, dist: str) -> tuple[list[str], bool, bo
 
 
 def _matching_fake_passed(item: pytest.Item) -> bool:
-    """Whether the equivalent ``[fake]`` conformance parameter passed."""
+    """Whether the equivalent fake passed setup, call and teardown."""
     nodeid = item.nodeid.replace("[real]", "[fake]")
     if nodeid == item.nodeid:
         return False
     for candidate in getattr(item.config, "_attribution_items", []):
         if candidate.nodeid != nodeid:
             continue
-        return any(
-            report.when == "call" and report.passed
-            for report in getattr(candidate, "_attribution_reports", [])
-        )
+        reports = getattr(candidate, "_attribution_reports", [])
+        return {report.when for report in reports} == {
+            "setup",
+            "call",
+            "teardown",
+        } and all(report.passed for report in reports)
     return False
 
 
@@ -181,6 +183,21 @@ def _classify(
         if call.excinfo is not None
         else _frames(report)
     )
+    if report.when != "call":
+        row: dict[str, Any] = {
+            "nodeid": item.nodeid,
+            "dist": None,
+            "version": None,
+            "where": None,
+            "probes": [],
+            "verdict": "OURS",
+            "category": "logic",
+            "phase": report.when,
+        }
+        if frames:
+            path, line, function = frames[-1]
+            row["where"] = f"{path}:{line} in {function}"
+        return row
     # pytest's traceback includes its own runner and hook frames. Attribution is
     # based only on the test frame and calls made below it.
     test_index = next(
