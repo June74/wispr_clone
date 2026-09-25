@@ -144,7 +144,7 @@ missing, e.g. retry_stt without a WAV). While `dispatching` is True: empty set.
 | **T-SM-001** (invariant) | exhaustive, parametrized over every (status × dispatching × event) combination, with the expected result written out in the test from the tables above: legal → exact target status, dispatching flag and version+1; illegal → `TransitionRejected` and the state unchanged. Unreachable dispatching states (recording, awaiting_cleanup_choice, done, cancelled with dispatching=True) are still checked: every event is rejected there |
 | **T-SM-002** (invariant) | from awaiting_cleanup_choice no DISPATCH_BEGIN_* is legal; the only paths to dispatch pass through RETRY_CLEANUP or USE_ORIGINAL (a reachability search over the test's own table from awaiting_cleanup_choice that forbids those two events never reaches dispatching=True) |
 | **T-SM-003** (invariant) | held rejects DISPATCH_BEGIN_AUTO (no automatic attempt); only DISPATCH_BEGIN_EXPLICIT leaves held |
-| **T-SM-004** (invariant) | for every dispatching state, CANCEL raises `TransitionRejected` and no sequence of events after DISPATCH_BEGIN_* reaches cancelled |
+| **T-SM-004** (invariant) | for every dispatching state, CANCEL raises `TransitionRejected` and the only exits are INSERTED / INSERT_FAILED / INSERT_UNCERTAIN (see decision 1) |
 | T-SM-005 | a realistic path (recording → processing → awaiting_destination → dispatching → done) increments version by exactly 1 per step starting from `initial_state().version == 1`; inputs are not mutated (frozen dataclass) |
 | **T-SM-006** (invariant) | `expected_version` mismatch → `WisprError` with `STALE_VERSION`, even for an otherwise illegal event; matching version → normal result |
 | **T-SM-007** (invariant) | awaiting_destination (not dispatching) accepts exactly {DISPATCH_BEGIN_AUTO, DISPATCH_BEGIN_EXPLICIT, HOLD, CANCEL} |
@@ -159,3 +159,14 @@ missing, e.g. retry_stt without a WAV). While `dispatching` is True: empty set.
    cancelled. After an outcome is recorded, a later explicit recovery (e.g. error → RETRY_STT →
    processing → CANCEL) is a new operation and may be cancelled; that is not a contradiction.
    Sol's RED assertion (in-flight CANCEL rejected; exits only via outcomes) is accepted as is.
+
+## Coordinator decisions after verification
+
+2. `TRANSITIONS` and the recovery table are read-only at runtime (`types.MappingProxyType`, values
+   frozensets/tuples); assignment raises `TypeError`.
+3. `transition()` validates its inputs before anything else: `event` must be a `RunEvent` member
+   (a plain string such as `"dispatch_begin_auto"` raises `TypeError`); `state.status` a
+   `RunStatus`, `state.dispatching` a real `bool`, `state.version` an `int` (not `bool`) >= 1,
+   otherwise `ValueError`/`TypeError`. `RunState` itself stays a plain frozen dataclass.
+4. `expected_version` that is not a real `int` (e.g. `True`) never matches: it raises
+   `WisprError(STALE_VERSION)`.

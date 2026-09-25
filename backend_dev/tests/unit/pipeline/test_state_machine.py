@@ -269,3 +269,50 @@ def test_T_SM_008_recovery_and_terminal_status(sm, status, dispatching) -> None:
     expected = frozenset() if dispatching else EXPECTED_RECOVERY[status]
     assert sm.allowed_recovery_actions(state) == expected
     assert sm.is_terminal(state) is (status in {RunStatus.DONE, RunStatus.CANCELLED})
+
+
+@pytest.mark.unit
+@pytest.mark.invariant("Callers cannot change the legal transition table")
+def test_T_SM_001_public_transitions_cannot_authorize_cancel_during_dispatch(
+    sm,
+) -> None:
+    state = sm.RunState(RunStatus.HELD, version=3, dispatching=True)
+    key = (RunStatus.HELD, True, sm.RunEvent.CANCEL)
+    assert key not in sm.TRANSITIONS
+    try:
+        with pytest.raises(TypeError):
+            sm.TRANSITIONS[key] = (RunStatus.CANCELLED, False)
+    finally:
+        # Keep the exhaustive matrix independent if a mutable implementation fails.
+        if key in sm.TRANSITIONS:
+            del sm.TRANSITIONS[key]
+    with pytest.raises(sm.TransitionRejected):
+        sm.transition(state, sm.RunEvent.CANCEL)
+
+
+@pytest.mark.unit
+@pytest.mark.invariant("Only RunEvent members can authorize state changes")
+def test_T_SM_001_plain_string_cannot_begin_automatic_dispatch(sm) -> None:
+    state = sm.RunState(RunStatus.PROCESSING, version=3)
+    with pytest.raises((TypeError, ValueError, sm.TransitionRejected)):
+        sm.transition(state, "dispatch_begin_auto")
+    assert state == sm.RunState(RunStatus.PROCESSING, version=3)
+
+
+@pytest.mark.unit
+@pytest.mark.invariant("Boolean command versions cannot bypass stale-version rejection")
+def test_T_SM_006_boolean_expected_version_is_not_current_version(sm) -> None:
+    state = sm.initial_state()
+    with pytest.raises(WisprError) as stale:
+        sm.transition(state, sm.RunEvent.STOP, expected_version=True)
+    assert stale.value.error_code is ErrorCode.STALE_VERSION
+    assert state == sm.RunState(RunStatus.RECORDING, version=1)
+
+
+@pytest.mark.unit
+@pytest.mark.invariant("Run versions start at one and remain positive")
+def test_T_SM_005_negative_state_version_cannot_transition_to_zero(sm) -> None:
+    state = sm.RunState(RunStatus.RECORDING, version=-1)
+    with pytest.raises((TypeError, ValueError, WisprError)):
+        sm.transition(state, sm.RunEvent.STOP)
+    assert state.version == -1
