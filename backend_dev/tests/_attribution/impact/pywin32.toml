@@ -1,0 +1,7 @@
+dependency = "pywin32"
+kind = "library"
+modules = ["insertion.win32"]
+import_names = ["win32clipboard", "win32con", "win32gui", "win32process", "pywintypes"]
+features = ["insertion", "clipboard privacy"]
+error_codes = ["insertion_failed", "insertion_uncertain", "destination_unverifiable"]
+action = "Check the Windows pywin32 installation and interactive desktop; run P-WIN32 probes"
