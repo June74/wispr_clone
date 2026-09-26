@@ -7,9 +7,9 @@ import threading
 from collections.abc import Iterator, Mapping
 
 import pytest
-from wispr_clone.ui.bridge import Bridge
 
 from wispr_clone.application.api import Api, CommandSpec
+from wispr_clone.ui.bridge import Bridge
 
 
 @pytest.fixture

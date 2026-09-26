@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from fakes.webview import FakeWebview, Window
+
 from wispr_clone.ui.overlay import open_hud
 from wispr_clone.ui.windows import open_settings, start
 

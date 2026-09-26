@@ -6,9 +6,9 @@ import json
 
 import pytest
 from fakes.webview import FakeWebview, Window
-from wispr_clone.ui.events import WebviewEventSink
 
 from wispr_clone.contracts.events import AudioLevelEvent, RunStateEvent
+from wispr_clone.ui.events import WebviewEventSink
 
 
 def _windows() -> tuple[Window, Window]:
