@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from fakes.webview import FakeWebview, Window
 
@@ -18,7 +16,7 @@ def _loads(window: Window) -> list[str]:
 @pytest.mark.unit
 def test_T_UI_003_hud_has_no_bridge_and_cannot_activate() -> None:
     webview = FakeWebview()
-    allowed = Path("/bundled/hud.html").as_uri()
+    allowed = "file:///bundled/hud.html"
     open_hud(webview, hud_url=allowed)
     window = webview.windows[0]
     assert window.options["url"] == allowed
@@ -52,7 +50,7 @@ def test_T_UI_004_navigation_is_restricted_to_bundled_file(event_name: str) -> N
     settings.url = "https://example.invalid/escape"
     event.emit()
     assert _loads(settings) == [allowed]
-    settings.url = Path("/other/local.html").as_uri()
+    settings.url = "file:///other/local.html"
     event.emit()
     assert _loads(settings) == [allowed, allowed]
     settings.url = allowed + "?state=1#view"
