@@ -195,3 +195,9 @@ def events_for(result: ProtocolResult) -> tuple[RunEvent, ...]: ...   # pure map
        best effort: a failure to persist is swallowed.
      The exception is still re-raised once from `settled`. After a pump failure, a new `start`
      must succeed with the single-session fake.
+4. Notes carried forward (not M3a scope):
+   - M3b: `asyncio.CancelledError` currently goes through the FAIL cleanup path. M3b's
+     cancellation must end runs `cancelled`, not `error`.
+   - M3d: explicit Insert recovery must check `history.insertion_outcome(run_id)` first. If
+     `update_run` failed after a confirmed insert, the run can show `error` while its attempt is
+     `inserted`, and a blind explicit insert would paste twice.

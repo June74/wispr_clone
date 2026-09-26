@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from wispr_clone.audio.capture import CaptureChunk
-from wispr_clone.contracts.common import ErrorCode, WisprError
+from wispr_clone.contracts.common import ErrorCode, ThirdPartyError, WisprError
 from wispr_clone.contracts.events import EventSink
 from wispr_clone.contracts.run import CleanupStatus
 from wispr_clone.dictionary.apply import apply_dictionary
@@ -22,7 +22,12 @@ from wispr_clone.pipeline.insertion_protocol import (
     ProtocolOutcome,
     ProtocolResult,
 )
-from wispr_clone.pipeline.state_machine import RunEvent, RunState, transition
+from wispr_clone.pipeline.state_machine import (
+    RunEvent,
+    RunState,
+    is_terminal,
+    transition,
+)
 from wispr_clone.stt.base import SttEngine, SttSession
 
 
@@ -129,9 +134,7 @@ class RunController:
                     capture.cancel()
                 if session is not None:
                     session.cancel()
-                error_code = getattr(error, "error_code", ErrorCode.STORAGE_ERROR)
-                if not isinstance(error_code, ErrorCode):
-                    error_code = ErrorCode.STORAGE_ERROR
+                error_code = _error_code(error)
                 failed = transition(
                     RunState(record.status, record.version), RunEvent.FAIL
                 )
@@ -211,6 +214,27 @@ class RunController:
                 is_cancelled=lambda: False,
             )
             await self._apply_result(record, result)
+        except BaseException as error:
+            for cleanup in (session.cancel, capture.cancel, wav.close):
+                try:
+                    cleanup()
+                except Exception:
+                    pass
+            try:
+                record = await self._services.history.get(run_id)
+                state = RunState(record.status, record.version)
+                if not is_terminal(state):
+                    failed = transition(state, RunEvent.FAIL)
+                    updated = await self._services.history.update_run(
+                        run_id,
+                        expected_version=record.version,
+                        status=failed.status,
+                        error_code=_error_code(error).value,
+                    )
+                    self._publish_state(updated)
+            except Exception:
+                pass
+            raise
         finally:
             self._captures.pop(run_id, None)
             self._snapshots.pop(run_id, None)
@@ -247,3 +271,9 @@ class RunController:
                 "status": record.status.value,
             }
         )
+
+
+def _error_code(error: BaseException) -> ErrorCode:
+    if isinstance(error, (ThirdPartyError, WisprError)):
+        return error.error_code
+    return ErrorCode.STORAGE_ERROR

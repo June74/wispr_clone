@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -47,6 +48,7 @@ async def scenario(
     stt: FakeSttEngine | None = None,
     destination_entered: asyncio.Event | None = None,
     destination_release: asyncio.Event | None = None,
+    new_wav: Callable[[Path], WavWriter] = WavWriter,
 ) -> AsyncIterator[tuple[RunController, HistoryRepo]]:
     migrations = [
         Migration(module.VERSION, module.NAME, module.apply)
@@ -83,7 +85,7 @@ async def scenario(
                 events=events,
                 capture_destination=destination,
                 new_capture=new_capture,
-                new_wav=WavWriter,
+                new_wav=new_wav,
                 new_id=lambda: next(ids),
                 audio_dir=path,
                 config_snapshot=lambda: {},
@@ -185,23 +187,96 @@ class FailingChunksCapture(FakeCapture):
         )
 
 
+class TrackedWavWriter(WavWriter):
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
+        self.closed = False
+
+    def close(self) -> None:
+        super().close()
+        self.closed = True
+
+
 @pytest.mark.asyncio
 async def test_T_RUN_001i_pump_error_releases_slot(tmp_path: Path) -> None:
     captures: list[FakeCapture] = []
+    wavs: list[TrackedWavWriter] = []
+    stt = FakeSttEngine("text")
 
     def new_capture() -> FakeCapture:
         capture = FailingChunksCapture() if not captures else FakeCapture()
         captures.append(capture)
         return capture
 
-    async with scenario(tmp_path, new_capture=new_capture) as (controller, _):
+    def new_wav(path: Path) -> TrackedWavWriter:
+        wav = TrackedWavWriter(path)
+        wavs.append(wav)
+        return wav
+
+    async with scenario(
+        tmp_path, new_capture=new_capture, stt=stt, new_wav=new_wav
+    ) as (controller, history):
         run_id = await controller.start(start_request_id="start-1")
         with pytest.raises(ThirdPartyError) as raised:
             await controller.settled(run_id)
         assert raised.value.error_code == ErrorCode.MICROPHONE_DISCONNECTED
+        assert stt.sessions[0].cancelled
+        assert captures[0].cancelled
+        assert wavs[0].closed
+        failed = await history.get(run_id)
+        assert failed.status == RunStatus.ERROR
+        assert failed.error_code == ErrorCode.MICROPHONE_DISCONNECTED.value
+        assert await controller.settled(run_id) == failed
         assert controller.active_run_id is None
 
         next_run_id = await controller.start(start_request_id="start-2")
         assert controller.active_run_id == next_run_id
         await controller.stop(next_run_id)
         await controller.settled(next_run_id)
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_001j_stt_finish_error_cleans_up_and_releases_session(
+    tmp_path: Path,
+) -> None:
+    captures: list[FakeCapture] = []
+    wavs: list[TrackedWavWriter] = []
+    stt = FakeSttEngine("text")
+
+    def new_capture() -> FakeCapture:
+        capture = FakeCapture()
+        captures.append(capture)
+        return capture
+
+    def new_wav(path: Path) -> TrackedWavWriter:
+        wav = TrackedWavWriter(path)
+        wavs.append(wav)
+        return wav
+
+    async with scenario(
+        tmp_path, new_capture=new_capture, stt=stt, new_wav=new_wav
+    ) as (controller, history):
+        run_id = await controller.start(start_request_id="start-1")
+        error = ThirdPartyError("stt", "finish", "failed", ErrorCode.STT_UNAVAILABLE)
+
+        async def fail_finish() -> str:
+            assert (await history.get(run_id)).status == RunStatus.PROCESSING
+            raise error
+
+        with patch.object(stt.sessions[0], "finish", side_effect=fail_finish):
+            await controller.stop(run_id)
+            with pytest.raises(ThirdPartyError) as raised:
+                await controller.settled(run_id)
+        assert raised.value is error
+        assert stt.sessions[0].cancelled
+        assert captures[0].cancelled
+        assert wavs[0].closed
+        failed = await history.get(run_id)
+        assert failed.status == RunStatus.ERROR
+        assert failed.error_code == ErrorCode.STT_UNAVAILABLE.value
+        assert await controller.settled(run_id) == failed
+
+        next_run_id = await controller.start(start_request_id="start-2")
+        await controller.stop(next_run_id)
+        await controller.settled(next_run_id)
+        assert len(stt.sessions) == 2

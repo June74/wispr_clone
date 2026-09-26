@@ -5,6 +5,7 @@ from __future__ import annotations
 import array
 from pathlib import Path
 
+from wispr_clone.contracts.common import ErrorCode, WisprError
 from wispr_clone.stt.base import SttEngine, SttSession, TextCallback
 
 
@@ -46,6 +47,10 @@ class FakeSttEngine:
 
     def start_session(self, on_text: TextCallback | None = None) -> FakeSttSession:
         del on_text
+        if self.sessions and not (
+            self.sessions[-1].finished or self.sessions[-1].cancelled
+        ):
+            raise WisprError(ErrorCode.STT_UNAVAILABLE, "stt", "session active")
         session = FakeSttSession(self.final_text)
         self.sessions.append(session)
         return session
