@@ -229,7 +229,7 @@ Rules:
 - Feasibility: shown in Phase −1.4 for Devin desktop, Chrome tabs and the return trigger (§7 G4 record). If the idle jump proves unreliable in an app, that app falls back to the return trigger only.
 - **After bringing a window forward, wait for it to settle** (focus confirmed, about 100 ms) before typing.
 - **Input dispatch is not proof of delivery.** Where UI Automation exposes the field's text, read it back after insertion. A mismatch or unreadable field records `uncertain`, never `inserted`, and the result stays available for copy.
-- **Choose the strategy per app and input method.** If an IME such as Korean is active in the target (`GetKeyboardLayout` of its thread), use exclusion-flagged paste instead of Unicode typing, because Unicode `SendInput` produced corrupted text in Notepad.
+- **Choose the strategy per app and input method.** If the target thread's keyboard layout is Korean (`GetKeyboardLayout` → LANGID `0x0412`), use exclusion-flagged paste instead of Unicode typing **in either IME mode (한 or A)**: the G4b check showed Unicode `SendInput` corrupting Notepad text in both modes, while paste was exact.
 - **Visibility check:** the focused field must be on screen. Editors with a deliberately hidden input box (Monaco/VS Code) need their visible editor container checked instead; this is low priority because the user does not use VS Code.
 
 The run lifecycle and insertion outcome are separate: run status lives on `runs`, and insertion outcome is derived from `insertion_attempts` (§5). `awaiting_cleanup_choice` must exist in the state machine even though it shares the red HUD presentation with errors. Idle uses blue stationary bars; only recording animates. Dismissing a notice changes presentation, never grants insertion permission.
@@ -380,6 +380,19 @@ All gates below are **unverified**. Record tested versions, platform, procedure,
 - **Live microphone, run 1** (USB Audio Device, CUDA, 80 ms chunks, 14.7 s spoken): timing passed. Final text 0.33 s after Enter, slowest `feed()` 0.27 s, audio queue never backed up, no overflows. **Accuracy inconclusive:** raw WER 1.0 means no word matched (empty or wrong-language output, or no signal); the transcript was not captured. The script now also reports input level, detected language and the final text for run 2.
 - **Live microphone, run 2** (same setup, 23.6 s spoken; input peak −15.3 dBFS, RMS −36.0 dBFS, no callback errors): **passed.** Every content word was right, including "do not", "Sarah", "Tuesday", "twelve hundred dollars" → `$1,200`, and "pytest" → `PyTest`. Raw WER 0.167, all from formatting plus one inserted "and". One quirk: the time came out as `4.30` instead of `4:30`. Final text 0.25 s after Enter, slowest `feed()` 0.15 s, queue never backed up. Detected language was reported as empty. Run 1's miss remains unexplained. The product must already handle "no speech detected" as an explicit outcome, never an empty insertion (§4).
 - **Not yet tested:** accents and noise, dictations of several minutes, offline use, and a PyInstaller build including the ~200 MB CUDA wheel.
+
+**G4b evidence record, 2026-09-25 (desktop check, user at the PC).** Script: `experiments/g4b_ime_check.py` (guided by message boxes; never pressed Enter; field contents never recorded, only whether the test phrase `wispr check 한글 123` appeared exactly once more; clipboard text restored). Windows Python 3.12, pywin32 312, uiautomation 2.0.29.
+
+| Step | Target | IME state read back | Result |
+|---|---|---|---|
+| Detection, Korean mode | Notepad | LANGID `0x412`, IME open, Hangul conversion on | ✅ detectable cross-process (`GetKeyboardLayout`, `ImmGetDefaultIMEWnd` + `WM_IME_CONTROL`) |
+| Detection, English mode | Notepad | LANGID `0x412`, IME open, Hangul conversion off | ✅ modes distinguishable |
+| Unicode typing, 한 mode | Notepad | as above | ❌ wrong text (user and read-back agree) |
+| Exclusion-flagged paste, 한 mode | Notepad | as above | ✅ exact |
+| Unicode typing, A mode | Notepad | as above | ❌ wrong text — **the Korean layout alone breaks typing** |
+| Exclusion-flagged paste | Devin message box (`EditControl`) | LANGID `0x412`, IME closed | ✅ exact |
+
+UI Automation read-back matched the user's observation in 4 of 4 insertions, so read-back verification can separate `inserted` from `uncertain` in Notepad and Devin. Rule adopted: Korean layout in the target → paste (§4). Library decision (user, 2026-09-25): `uiautomation` for the UI Automation client.
 
 **Decision rule:** retain the selected product behavior when replacing a proposed library. If G2 cannot run both models acceptably, revisit serving strategy; if G3 fails, revisit the host; if G4 cannot prove a destination or delivery, expose explicit recovery rather than weakening the guarantee.
 
