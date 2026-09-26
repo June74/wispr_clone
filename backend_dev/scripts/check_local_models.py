@@ -25,6 +25,21 @@ PINNED_MODEL = "meta-llama-3.1-8b-instruct"
 CHUNK_SIZE = 1024 * 1024
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Make redirects visible to the caller instead of issuing another request."""
+
+    def redirect_request(
+        self,
+        req: Any,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> Any:
+        return None
+
+
 @dataclass(frozen=True)
 class Check:
     """One machine readiness observation."""
@@ -73,31 +88,70 @@ def check_lmstudio(
     """GET the LM Studio model list and check that the pinned model is loaded."""
     url = f"{base.rstrip('/')}/api/v0/models"
     request = urllib.request.Request(url, method="GET")
+    # urllib's default opener follows redirects. Preserve injected callables for
+    # the fake-only tests, while removing redirect handling from urllib openers.
+    actual_opener = opener
+    owner = getattr(opener, "__self__", None)
+    if owner is not None and hasattr(owner, "handlers"):
+        from urllib.request import HTTPRedirectHandler, build_opener
+
+        handlers = [
+            handler
+            for handler in owner.handlers
+            if not isinstance(handler, HTTPRedirectHandler)
+        ]
+        actual_opener = build_opener(*handlers, _NoRedirectHandler()).open
+    elif opener is urllib.request.urlopen:
+        from urllib.request import build_opener
+
+        actual_opener = build_opener(_NoRedirectHandler()).open
     try:
-        with opener(request, timeout=timeout) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        with actual_opener(request, timeout=timeout) as response:
+            getcode = getattr(response, "getcode", None)
+            status_code = getcode() if callable(getcode) else None
+            if status_code is not None and 300 <= status_code < 400:
+                return Check("lmstudio", "error", False, "redirect")
+            if status_code is not None and status_code >= 400:
+                return Check("lmstudio", "error", False, f"http {status_code}")
+            try:
+                payload = json.loads(response.read().decode("utf-8"))
+            except (
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+                AttributeError,
+                TypeError,
+                OSError,
+            ):
+                return Check("lmstudio", "error", False, "bad response")
+    except urllib.error.HTTPError as exc:
+        if 300 <= exc.code < 400:
+            return Check("lmstudio", "error", False, "redirect")
+        if exc.code >= 400:
+            return Check("lmstudio", "error", False, f"http {exc.code}")
+        return Check("lmstudio", "error", False, "bad response")
     except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
+        reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+        if isinstance(reason, (ConnectionRefusedError, TimeoutError)):
+            return Check(
+                "lmstudio",
+                "not_running",
+                False,
+                f"LM Studio is not answering at {base}: {exc}",
+            )
         return Check(
             "lmstudio",
-            "not_running",
+            "error",
             False,
-            f"LM Studio is not answering at {base}: {exc}",
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError, AttributeError, TypeError) as exc:
-        return Check(
-            "lmstudio",
-            "invalid_response",
-            False,
-            f"LM Studio returned invalid model data: {exc}",
+            "bad response",
         )
 
     rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         return Check(
             "lmstudio",
-            "invalid_response",
+            "error",
             False,
-            "LM Studio model response has no data list",
+            "bad response",
         )
     for row in rows:
         if isinstance(row, dict) and row.get("id") == model:
