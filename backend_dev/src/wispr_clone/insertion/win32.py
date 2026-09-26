@@ -61,8 +61,8 @@ class RealWin32:
         return bool(gui.IsWindow(hwnd))  # type: ignore[attr-defined]
 
     def window_process(self, hwnd: int) -> tuple[int, str]:
-        gui, process, _ = self._modules()
-        pid = int(gui.GetWindowThreadProcessId(hwnd)[1])  # type: ignore[attr-defined]
+        _, process, _ = self._modules()
+        pid = int(process.GetWindowThreadProcessId(hwnd)[1])  # type: ignore[attr-defined]
         kernel32: Any = getattr(ctypes, "windll").kernel32
         handle = kernel32.OpenProcess(0x1000, False, pid)
         try:
@@ -78,8 +78,8 @@ class RealWin32:
         return str(gui.GetWindowText(hwnd))  # type: ignore[attr-defined]
 
     def keyboard_layout(self, hwnd: int) -> int:
-        gui, _, _ = self._modules()
-        thread_id = int(gui.GetWindowThreadProcessId(hwnd)[0])  # type: ignore[attr-defined]
+        _, process, _ = self._modules()
+        thread_id = int(process.GetWindowThreadProcessId(hwnd)[0])  # type: ignore[attr-defined]
         windll = getattr(ctypes, "windll")
         return int(windll.user32.GetKeyboardLayout(thread_id)) & 0xFFFF
 
