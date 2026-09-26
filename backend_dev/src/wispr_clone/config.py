@@ -10,6 +10,19 @@ RETURN_SETTLE_SECONDS: float = 0.3
 DESTINATION_WAIT_LIMIT_SECONDS: int = 10 * 60
 LM_STUDIO_ENDPOINT: str = "http://127.0.0.1:1234/v1"
 LM_STUDIO_MODEL_ID: str = "meta-llama-3.1-8b-instruct"
+DELIVERY_TICK_S: float = 0.1
+MODEL_POLL_S: float = 5.0
+TRACKER_S: float = 0.25
+
+
+def stt_model_path() -> Path:
+    """Return the configured Voxtral GGUF path without checking the filesystem."""
+    configured = os.environ.get("WISPR_STT_MODEL")
+    if configured:
+        return Path(configured)
+    return Path(
+        r"C:\Users\2006i\.lmstudio\models\handy-computer\Voxtral-Mini-4B-Realtime-2602-gguf\Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf"
+    )
 
 
 def app_data_dir() -> Path:

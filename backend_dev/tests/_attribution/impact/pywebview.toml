@@ -1,0 +1,7 @@
+dependency = "pywebview"
+kind = "library"
+modules = ["app"]
+import_names = ["webview"]
+features = ["settings window", "HUD"]
+error_codes = ["storage_error"]
+action = "Check the pywebview pin in uv.lock and the WebView2 runtime"
