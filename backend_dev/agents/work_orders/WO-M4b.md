@@ -101,3 +101,12 @@ non-local model), fake engines, and a FakeEventSink.
    - `stt_for(model_id)` returns None → `stt_unavailable`;
    - an engine exists but `engine.ready` is False → `model_load_failed`;
    - `engine.ready` is True → ready.
+2. **After Sol's verification (T-APP-017):**
+   - Sol read the real adapters: `LmStudioCleanup.health` only does `GET /api/v0/models`, and
+     `VoxtralTranscribeCpp.ready` reads a flag. Both are read-only.
+   - Binding fixes:
+     - a. `ready` is True only when `health()` returns exactly `True`; anything else →
+       `cleanup_unavailable`.
+     - b. `select` and `poll` are serialized by one `asyncio.Lock`, and a generation counter
+       bumped by `select`. A poll whose computation overlapped a select discards its result.
+     - c. The event payload and the return value are independent deep copies.

@@ -7,12 +7,14 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 import pytest
 from fakes.events import FakeEventSink
 
 from wispr_clone.application.api import Api
 from wispr_clone.application.commands.model_commands import ModelCommands
 from wispr_clone.application.model_service import ModelService
+from wispr_clone.cleanup.lmstudio_cleanup import LmStudioCleanup
 from wispr_clone.contracts.common import ErrorCode, WisprError
 from wispr_clone.history.repo import HistoryRepo
 from wispr_clone.models.registry import ModelInfo, ModelRegistry, default_registry
@@ -24,10 +26,12 @@ from wispr_clone.storage.migrations import (
     m003_dictionary,
     m004_history,
 )
+from wispr_clone.stt.voxtral_transcribe_cpp import VoxtralTranscribeCpp
 
 STT_ID = "voxtral-mini-4b-realtime-2602"
 CLEANUP_ID = "meta-llama-3.1-8b-instruct"
 OTHER_LOCAL_ID = "other-local-cleanup"
+OTHER_STT_ID = "other-local-stt"
 CLOUD_ID = "cloud-cleanup"
 
 
@@ -73,8 +77,12 @@ class Rig:
         self.stt = RecordingStt()
         self.cleanup = RecordingCleanup()
         self.other_cleanup = RecordingCleanup()
+        self.other_stt = RecordingStt()
         self.cloud_cleanup = RecordingCleanup()
-        self.stt_engines: dict[str, RecordingStt] = {STT_ID: self.stt}
+        self.stt_engines: dict[str, RecordingStt] = {
+            STT_ID: self.stt,
+            OTHER_STT_ID: self.other_stt,
+        }
         self.cleanup_engines: dict[str, RecordingCleanup] = {
             CLEANUP_ID: self.cleanup,
             OTHER_LOCAL_ID: self.other_cleanup,
@@ -106,6 +114,7 @@ async def scenario(path: Path) -> AsyncIterator[Rig]:
         (
             *default_registry().list_models(),
             ModelInfo(OTHER_LOCAL_ID, "cleanup", "Other local", True, "test", None),
+            ModelInfo(OTHER_STT_ID, "stt", "Other STT", True, "test", None),
             ModelInfo(CLOUD_ID, "cleanup", "Cloud", False, "cloud", None),
         )
     )
@@ -314,3 +323,124 @@ async def test_T_APP_016_model_commands_session_deadline_and_error_codes(
             "models_test", {"session_token": "session-1", "model_id": CLOUD_ID}
         )
         assert forbidden.error == ErrorCode.CLOUD_MODEL_FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_T_APP_017_real_adapters_readiness_does_not_load(tmp_path: Path) -> None:
+    requests: list[tuple[str, str]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        return httpx.Response(
+            200,
+            json={"data": [{"id": CLEANUP_ID, "state": "not-loaded"}]},
+        )
+
+    cleanup = LmStudioCleanup(
+        model_id=CLEANUP_ID, transport=httpx.MockTransport(respond)
+    )
+    stt = VoxtralTranscribeCpp(tmp_path / "missing.gguf")
+    try:
+        assert stt.ready is False
+        assert await cleanup.health() is False
+        assert stt.ready is False
+        assert requests == [("GET", "/api/v0/models")]
+    finally:
+        await cleanup.aclose()
+        await stt.close()
+
+
+@pytest.mark.asyncio
+async def test_T_APP_017_health_must_return_a_bool(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as rig:
+        rig.cleanup.response = "loaded"  # type: ignore[assignment]
+        assert await rig.service.test(CLEANUP_ID) == item(
+            CLEANUP_ID, "cleanup", False, "cleanup_unavailable"
+        )
+
+
+@pytest.mark.asyncio
+async def test_T_APP_017_stale_poll_must_not_publish_after_select(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        rig.service._health_timeout_s = 1.0
+
+        class PausedCleanup(RecordingCleanup):
+            async def health(self) -> bool:
+                entered.set()
+                await release.wait()
+                return True
+
+        rig.cleanup_engines[CLEANUP_ID] = PausedCleanup()
+        poll = asyncio.create_task(rig.service.poll())
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            await rig.service.select(OTHER_LOCAL_ID)
+        finally:
+            release.set()
+            await poll
+        published = rig.events.by_name("models:status")
+        assert len(published) == 1
+        assert published[0]["models"][1]["model_id"] == OTHER_LOCAL_ID
+
+
+@pytest.mark.asyncio
+async def test_T_APP_017_select_result_cannot_mutate_published_event(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        status = await rig.service.status()
+        status.clear()
+        assert len(await rig.service.status()) == 2
+        result = await rig.service.select(OTHER_LOCAL_ID)
+        models = result["models"]
+        assert isinstance(models, list)
+        models.clear()
+        assert rig.events.by_name("models:status")[0]["models"] == [
+            item(STT_ID, "stt", True),
+            item(OTHER_LOCAL_ID, "cleanup", True),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_T_APP_017_local_only_toggle_and_registered_role(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as rig:
+        stt_result = await rig.service.select(OTHER_STT_ID)
+        assert stt_result["settings"]["stt_model_id"] == OTHER_STT_ID
+        assert rig.store.current().cleanup_model_id == CLEANUP_ID
+        await rig.store.update({"local_only": False})
+        selected = await rig.service.select(CLOUD_ID)
+        assert selected["settings"]["cleanup_model_id"] == CLOUD_ID
+        assert rig.store.current().stt_model_id == OTHER_STT_ID
+        with pytest.raises(WisprError) as error:
+            await rig.store.update({"local_only": True})
+        assert error.value.error_code == ErrorCode.CLOUD_MODEL_FORBIDDEN
+        await rig.service.select(OTHER_LOCAL_ID)
+        await rig.store.update({"local_only": True})
+        with pytest.raises(WisprError) as error:
+            await rig.service.select(CLOUD_ID)
+        assert error.value.error_code == ErrorCode.CLOUD_MODEL_FORBIDDEN
+        assert rig.store.current().cleanup_model_id == OTHER_LOCAL_ID
+
+
+@pytest.mark.asyncio
+async def test_T_APP_017_store_must_be_loaded_before_readiness(tmp_path: Path) -> None:
+    migrations = [
+        Migration(module.VERSION, module.NAME, module.apply)
+        for module in (m001_base, m002_settings, m003_dictionary, m004_history)
+    ]
+    async with Database(tmp_path / "unloaded.db", migrations) as db:
+        store = SettingsStore(db, default_registry())
+        service = ModelService(
+            default_registry(),
+            store,
+            stt_for=lambda _: None,
+            cleanup_for=lambda _: None,
+            events=FakeEventSink(),
+        )
+        with pytest.raises(WisprError) as error:
+            await service.status()
+        assert error.value.error_code == ErrorCode.STORAGE_ERROR
