@@ -112,7 +112,9 @@ def check_lmstudio(
             if status_code is not None and 300 <= status_code < 400:
                 return Check("lmstudio", "error", False, "redirect")
             if status_code is not None and status_code >= 400:
-                return Check("lmstudio", "error", False, f"http {status_code}")
+                return Check(
+                    "lmstudio", "invalid_response", False, f"http {status_code}"
+                )
             try:
                 payload = json.loads(response.read().decode("utf-8"))
             except (
@@ -122,13 +124,13 @@ def check_lmstudio(
                 TypeError,
                 OSError,
             ):
-                return Check("lmstudio", "error", False, "bad response")
+                return Check("lmstudio", "invalid_response", False, "bad response")
     except urllib.error.HTTPError as exc:
         if 300 <= exc.code < 400:
             return Check("lmstudio", "error", False, "redirect")
         if exc.code >= 400:
-            return Check("lmstudio", "error", False, f"http {exc.code}")
-        return Check("lmstudio", "error", False, "bad response")
+            return Check("lmstudio", "invalid_response", False, f"http {exc.code}")
+        return Check("lmstudio", "invalid_response", False, "bad response")
     except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
         reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
         if isinstance(reason, (ConnectionRefusedError, TimeoutError)):
@@ -140,7 +142,7 @@ def check_lmstudio(
             )
         return Check(
             "lmstudio",
-            "error",
+            "invalid_response",
             False,
             "bad response",
         )
@@ -149,7 +151,7 @@ def check_lmstudio(
     if not isinstance(rows, list):
         return Check(
             "lmstudio",
-            "error",
+            "invalid_response",
             False,
             "bad response",
         )
