@@ -59,7 +59,7 @@ class ProtocolResult:
                                # "window closed", "unverifiable", "wait limit", "claim failed",
                                # "expired", "input during jump", "bring forward failed",
                                # "automatic attempt exists", "duplicate request",
-                               # "no events", "dispatch error", "not confirmed"
+                               # "no events", "dispatch error", "not confirmed", "history error"
 
 @dataclass(frozen=True, slots=True)
 class WaitingRun:
@@ -207,3 +207,13 @@ tests in `tests/unit/pipeline/`.
    the foreground inside the final recheck → FAILED "window changed", attempt `failed`, 0 sends)
    and T-PRO-019 (idle jump, idle resets after the claim → FAILED "input during jump", attempt
    `failed`, previous window restored, 0 sends).
+4. Expiry at the final recheck (supersedes step 4's "the attempt row goes with the run"):
+   history never expires a run while one of its attempts is `in_flight` (history decision). So
+   when `is_expired(run.created_at, clock())`, the protocol:
+   - resolves the attempt `cancelled` (nothing was sent);
+   - calls `history.enforce_retention()`, which then expires the run through history, including
+     WAV cleanup and events;
+   - returns ABANDONED "expired" with the attempt_id.
+   The protocol never calls `delete_run` itself.
+5. At the final recheck, any other failure reading the run (not RUN_EXPIRED/RUN_NOT_FOUND) →
+   resolve the attempt `failed`, and return FAILED "history error" (not "window changed").

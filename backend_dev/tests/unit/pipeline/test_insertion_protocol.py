@@ -463,3 +463,56 @@ async def test_T_PRO_017_private_content_absent_from_logs_and_reason(
         assert result.reason == "dispatch error"
         assert "PRIVATE TRANSCRIPT" not in caplog.text + result.reason
         assert "PRIVATE TITLE" not in caplog.text + result.reason
+
+
+@pytest.mark.asyncio
+async def test_T_PRO_018_destination_changes_after_claim(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as s:
+        original = s.history.get
+
+        async def change_during_final_recheck(run_id: str) -> Any:
+            run = await original(run_id)
+            s.win.foreground = 20
+            return run
+
+        s.history.get = change_during_final_recheck  # type: ignore[method-assign]
+        result = await s.attempt()
+        assert (result.outcome, result.reason) == (
+            ProtocolOutcome.FAILED,
+            "window changed",
+        )
+        attempts = await s.history.attempts(s.run_id)
+        assert len(attempts) == 1
+        assert result.attempt_id == attempts[0].attempt_id
+        assert attempts[0].outcome == AttemptOutcome.FAILED
+        assert s.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_PRO_019_idle_resets_after_claim(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as s:
+        s.win.foreground = 20
+        s.win.idle_values = [1500] * 8
+        original = s.history.claim_attempt
+
+        async def claim_then_reset_idle(*args: Any, **kwargs: Any) -> Any:
+            claim = await original(*args, **kwargs)
+            s.win.idle_values = [0]
+            return claim
+
+        s.history.claim_attempt = claim_then_reset_idle  # type: ignore[method-assign]
+        result = await s.protocol.deliver_next(
+            [s.waiting()], is_cancelled=lambda _: False
+        )
+        assert result is not None
+        assert (result[1].outcome, result[1].reason) == (
+            ProtocolOutcome.FAILED,
+            "input during jump",
+        )
+        attempts = await s.history.attempts(s.run_id)
+        assert len(attempts) == 1
+        assert result[1].attempt_id == attempts[0].attempt_id
+        assert attempts[0].outcome == AttemptOutcome.FAILED
+        assert s.win.foreground == 20
+        assert s.uia.tabs[20] == (20, 1)
+        assert s.sends() == 0
