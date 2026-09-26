@@ -174,3 +174,25 @@ class WaitingRun:
 5. **Coordinator review of GREEN:** don't bend the code to the tests. `WisprError` keeps `why`
    out of `str()` by contract, so there is no `_RecoveryError` subclass. Tests assert
    `caught.value.why == "<fixed reason>"` (and `error_code`), not `match=` on the message.
+6. **After Sol's verification (T-RUN-030a-e), binding:**
+   - a. **One controller insertion gate.** A single `asyncio.Lock` (`_insertion_gate`) wraps the
+     whole of every insertion operation: the delivery-tick delivery, `recover(INSERT)`, and the
+     immediate `_insert_selected` path. Inside the gate, re-read state before calling the
+     protocol:
+     - **tick:** the chosen run must still be on the waiting list and its record still
+       `awaiting_destination`; otherwise drop the entry and do nothing;
+     - **recover(INSERT):** the double-paste guard (decision 1: all attempts) is evaluated
+       INSIDE the gate, after any earlier insertion has been persisted.
+     The result: a tick-then-explicit or explicit-then-explicit sequence dispatches exactly once.
+   - b. **Cancel reaches the protocol.** `cancel(run_id)` always sets the run's cancel flag,
+     including for waiting runs with no live task, and keeps it until the run is terminal. The
+     `is_cancelled` passed to `deliver_next` and `attempt` reads that flag, so a tick in progress
+     is suppressed before dispatch. Cancel removes the entry from the waiting list without
+     waiting for the gate; the CANCEL status write happens inside the gate.
+   - c. **run:recovery on every entry** into `error`, `held`, `uncertain`,
+     `awaiting_destination` and `awaiting_cleanup_choice`, including no-speech, startup
+     failure, background failure and recovery-task failure. Route every status write through one
+     helper that publishes run:state and then, when applicable, run:recovery.
+   - d. **Tick and expiry.** A RUN_EXPIRED/RUN_NOT_FOUND raised anywhere in a tick for the chosen
+     run drops that entry, publishes nothing, and does not raise. Other exceptions keep the entry
+     (rule 3).

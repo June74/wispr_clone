@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -477,4 +478,209 @@ async def test_T_RUN_029_tick_exception_retains_waiting_run(tmp_path: Path) -> N
         rig.win.foreground = 10
         await rig.controller.delivery_tick()
         assert (await rig.history.get(run_id)).status == RunStatus.DONE
+        assert rig.sends() == 1
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_030a_tick_must_not_paste_after_explicit_recovery_starts(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id, waiting = await rig.finish(away=True)
+        rig.win.foreground = 10
+        protocol = rig.controller._services.insertion
+        original = protocol.deliver_next
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delay_tick(*args: Any, **kwargs: Any) -> Any:
+            entered.set()
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        protocol.deliver_next = delay_tick  # type: ignore[method-assign]
+        tick = asyncio.create_task(rig.controller.delivery_tick())
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            await rig.controller.recover(
+                run_id, RecoveryAction.INSERT, expected_version=waiting.version
+            )
+        finally:
+            release.set()
+        await tick
+        assert rig.sends() == 1
+        assert len(await rig.history.attempts(run_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_030b_concurrent_explicit_recovery_pastes_once(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        rig.win.windows.remove(10)
+        run_id, held = await rig.finish()
+        rig.win.windows.add(10)
+        protocol = rig.controller._services.insertion
+        original = protocol.attempt
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        calls = 0
+
+        async def delay_first(*args: Any, **kwargs: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                entered.set()
+                await release.wait()
+            return await original(*args, **kwargs)
+
+        protocol.attempt = delay_first  # type: ignore[method-assign]
+        first = asyncio.create_task(
+            rig.controller.recover(
+                run_id, RecoveryAction.INSERT, expected_version=held.version
+            )
+        )
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            await rig.controller.recover(
+                run_id, RecoveryAction.INSERT, expected_version=held.version
+            )
+        finally:
+            release.set()
+        await asyncio.gather(first, return_exceptions=True)
+        assert rig.sends() == 1
+        assert len(await rig.history.attempts(run_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_030c_cancelled_waiting_run_is_not_dispatched_by_running_tick(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id, _ = await rig.finish(away=True)
+        rig.win.foreground = 10
+        protocol = rig.controller._services.insertion
+        original = protocol.deliver_next
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delay_tick(*args: Any, **kwargs: Any) -> Any:
+            entered.set()
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        protocol.deliver_next = delay_tick  # type: ignore[method-assign]
+        tick = asyncio.create_task(rig.controller.delivery_tick())
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            await rig.controller.cancel(run_id)
+        finally:
+            release.set()
+        await tick
+        assert (await rig.history.get(run_id)).status == RunStatus.CANCELLED
+        assert rig.sends() == 0
+        assert await rig.history.attempts(run_id) == []
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_030d_no_speech_error_publishes_recovery(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as rig:
+        stt = rig.controller._services.stt
+        assert isinstance(stt, FakeSttEngine)
+        stt.final_text = ""
+        run_id, error = await rig.finish()
+        assert error.status == RunStatus.ERROR
+        assert rig.recovery(run_id) == [
+            {
+                "name": "run:recovery",
+                "run_id": run_id,
+                "version": error.version,
+                "status": "error",
+                "actions": ["copy", "insert", "retry_stt"],
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_030e_expired_waiting_run_is_removed_by_tick(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id, _ = await rig.finish(away=True)
+        rig.clock.advance(RUN_RETENTION_SECONDS + 1)
+        await rig.controller.delivery_tick()
+        assert rig.controller.waiting_run_ids == ()
+        assert rig.sends() == 0
+        with pytest.raises(WisprError) as caught:
+            await rig.controller.copy_text(run_id)
+        assert caught.value.error_code in {
+            ErrorCode.RUN_EXPIRED,
+            ErrorCode.RUN_NOT_FOUND,
+        }
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_030f_in_flight_attempt_blocks_explicit_recovery(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        rig.win.windows.remove(10)
+        run_id, held = await rig.finish()
+        await rig.history.claim_attempt(
+            run_id,
+            attempt_id="unfinished",
+            request_id="unfinished",
+            kind="explicit",
+        )
+        rig.win.windows.add(10)
+        with pytest.raises(WisprError) as caught:
+            await rig.controller.recover(
+                run_id, RecoveryAction.INSERT, expected_version=held.version
+            )
+        assert caught.value.error_code == ErrorCode.DUPLICATE_REQUEST
+        assert rig.sends() == 0
+        assert (await rig.history.get(run_id)).version == held.version
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_030g_readded_wait_preserves_age_and_order(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as rig:
+        first, first_record = await rig.finish(away=True)
+        rig.clock.advance(1)
+        second, _ = await rig.finish(away=True)
+        with pytest.raises(WisprError) as caught:
+            await rig.controller.recover(
+                first, RecoveryAction.INSERT, expected_version=first_record.version
+            )
+        assert caught.value.error_code == ErrorCode.DESTINATION_UNVERIFIABLE
+        assert rig.controller.waiting_run_ids == (first, second)
+        assert (
+            await rig.history.get(first)
+        ).awaiting_since == first_record.awaiting_since
+        assert rig.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_030h_insert_elsewhere_keeps_original_destination(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id, waiting = await rig.finish(away=True)
+        rig.win.titles[20] = "NEW DESTINATION"
+        rig.win.layouts[20] = 0x0409
+        destination = capture(rig.win, rig.uia)
+        await rig.controller.recover(
+            run_id,
+            RecoveryAction.INSERT,
+            expected_version=waiting.version,
+            destination=destination,
+        )
+        done = await rig.history.get(run_id)
+        assert done.status == RunStatus.DONE
+        assert done.destination == waiting.destination
+        assert rig.controller.waiting_run_ids == ()
+        attempts = await rig.history.attempts(run_id)
+        assert len(attempts) == 1
+        assert attempts[0].target == destination.to_json()
+        await rig.controller.delivery_tick()
         assert rig.sends() == 1
