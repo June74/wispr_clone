@@ -699,3 +699,49 @@ async def test_T_PRO_026_cancel_during_final_verify_suppresses_dispatch(
         assert len(attempts) == 1
         assert result.attempt_id == attempts[0].attempt_id
         assert attempts[0].outcome == AttemptOutcome.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_T_PRO_027_waiting_run_overrides_protocol_limits(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as s:
+        s.win.foreground = 20
+        _confirm(s)
+        s.win.idle_values = [2500] * 8
+        waiting = WaitingRun(
+            s.run_id,
+            "PRIVATE TRANSCRIPT",
+            s.snapshot,
+            "request-1",
+            s.clock.now(),
+            idle_threshold_ms=3000,
+            wait_limit_s=60.0,
+        )
+        before = await s.protocol.deliver_next([waiting], is_cancelled=lambda _: False)
+        assert before is not None
+        assert before[1].outcome == ProtocolOutcome.AWAITING
+        assert s.jump_calls() == 0
+        assert s.sends() == 0
+
+        s.clock.advance(61)
+        expired = await s.protocol.deliver_next([waiting], is_cancelled=lambda _: False)
+        assert expired is not None
+        assert (expired[1].outcome, expired[1].reason) == (
+            ProtocolOutcome.HELD,
+            "wait limit",
+        )
+        assert s.sends() == 0
+
+        s.clock.advance(0)
+        newer = WaitingRun(
+            s.run_id,
+            "PRIVATE TRANSCRIPT",
+            s.snapshot,
+            "request-2",
+            s.clock.now(),
+            idle_threshold_ms=2000,
+            wait_limit_s=60.0,
+        )
+        delivered = await s.protocol.deliver_next([newer], is_cancelled=lambda _: False)
+        assert delivered is not None
+        assert delivered[1].outcome == ProtocolOutcome.INSERTED
+        assert s.sends() == 1
