@@ -51,6 +51,8 @@ class WaitingRun:
     snapshot: DestinationSnapshot
     request_id: str
     awaiting_since: float
+    idle_threshold_ms: int | None = None
+    wait_limit_s: float | None = None
 
 
 T = TypeVar("T")
@@ -277,7 +279,9 @@ class InsertionProtocol:
         async with self._lock:
             if is_cancelled(w.run_id):
                 result = ProtocolResult(ProtocolOutcome.CANCELLED, None, "cancelled")
-            elif self._clock() - w.awaiting_since > self._wait_limit_s:
+            elif self._clock() - w.awaiting_since > (
+                w.wait_limit_s if w.wait_limit_s is not None else self._wait_limit_s
+            ):
                 result = ProtocolResult(ProtocolOutcome.HELD, None, "wait limit")
             else:
                 verified = await self._offload(
@@ -304,7 +308,12 @@ class InsertionProtocol:
                         )
                 else:
                     idle = await self._offload(self._win32.idle_ms)
-                    if idle < self._idle_threshold_ms:
+                    idle_threshold_ms = (
+                        w.idle_threshold_ms
+                        if w.idle_threshold_ms is not None
+                        else self._idle_threshold_ms
+                    )
+                    if idle < idle_threshold_ms:
                         result = ProtocolResult(
                             ProtocolOutcome.AWAITING, None, "window changed"
                         )

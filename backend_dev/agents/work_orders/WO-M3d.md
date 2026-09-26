@@ -171,3 +171,6 @@ class WaitingRun:
      rejected "already inserted";
    - T-RUN-021f: a held run with a closed stored window, and INSERT with a new `destination`
      (the fake foreground on it) → one explicit dispatch to the new target → `done`.
+5. **Coordinator review of GREEN:** don't bend the code to the tests. `WisprError` keeps `why`
+   out of `str()` by contract, so there is no `_RecoveryError` subclass. Tests assert
+   `caught.value.why == "<fixed reason>"` (and `error_code`), not `match=` on the message.

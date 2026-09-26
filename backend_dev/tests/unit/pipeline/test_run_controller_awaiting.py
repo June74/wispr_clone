@@ -18,7 +18,7 @@ from fakes.stt import FakeSttEngine
 from wispr_clone.audio.wav_writer import WavWriter
 from wispr_clone.config import RUN_RETENTION_SECONDS
 from wispr_clone.contracts.common import ErrorCode, ThirdPartyError, WisprError
-from wispr_clone.contracts.run import InsertionOutcome, RecoveryAction, RunStatus
+from wispr_clone.contracts.run import AttemptOutcome, RecoveryAction, RunStatus
 from wispr_clone.dictionary.apply import DictionaryEntry
 from wispr_clone.dictionary.repo import DictionaryRepo
 from wispr_clone.history.repo import HistoryRepo, RunRecord
@@ -224,7 +224,9 @@ async def test_T_RUN_021b_confirmed_attempt_blocks_second_paste(tmp_path: Path) 
     async with scenario(tmp_path) as rig:
         run_id, done = await rig.finish()
         assert done.status == RunStatus.DONE
-        assert await rig.history.insertion_outcome(run_id) == InsertionOutcome.INSERTED
+        assert [attempt.outcome for attempt in await rig.history.attempts(run_id)] == [
+            AttemptOutcome.INSERTED
+        ]
         error = await rig.history.update_run(
             run_id, expected_version=done.version, status=RunStatus.ERROR
         )
@@ -273,6 +275,60 @@ async def test_T_RUN_021d_away_explicit_insert_keeps_wait(tmp_path: Path) -> Non
         assert (await rig.history.get(run_id)).status == RunStatus.AWAITING_DESTINATION
         assert rig.controller.waiting_run_ids == (run_id,)
         assert rig.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_021e_older_inserted_attempt_blocks_paste(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id, done = await rig.finish()
+        await rig.history.claim_attempt(
+            run_id,
+            attempt_id="later-failed",
+            request_id="later-failed",
+            kind="explicit",
+        )
+        await rig.history.resolve_attempt("later-failed", AttemptOutcome.FAILED)
+        error = await rig.history.update_run(
+            run_id, expected_version=done.version, status=RunStatus.ERROR
+        )
+        assert [attempt.outcome for attempt in await rig.history.attempts(run_id)] == [
+            AttemptOutcome.INSERTED,
+            AttemptOutcome.FAILED,
+        ]
+        with pytest.raises(WisprError, match="already inserted") as caught:
+            await rig.controller.recover(
+                run_id, RecoveryAction.INSERT, expected_version=error.version
+            )
+        assert caught.value.error_code == ErrorCode.VALIDATION
+        assert (await rig.history.get(run_id)).version == error.version
+        assert rig.sends() == 1
+        assert len(await rig.history.attempts(run_id)) == 2
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_021f_held_insert_at_new_destination(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as rig:
+        rig.win.windows.remove(10)
+        run_id, held = await rig.finish()
+        assert held.status == RunStatus.HELD
+        assert held.destination is not None and held.destination["hwnd"] == 10
+        rig.win.foreground = 20
+        rig.win.titles[20] = "NEW DESTINATION"
+        rig.win.layouts[20] = 0x0409
+        destination = capture(rig.win, rig.uia)
+        await rig.controller.recover(
+            run_id,
+            RecoveryAction.INSERT,
+            expected_version=held.version,
+            destination=destination,
+        )
+        assert (await rig.history.get(run_id)).status == RunStatus.DONE
+        assert rig.sends() == 1
+        attempts = await rig.history.attempts(run_id)
+        assert len(attempts) == 1
+        assert attempts[0].kind == "explicit"
+        assert attempts[0].target == destination.to_json()
+        assert (await rig.history.get(run_id)).destination == held.destination
 
 
 @pytest.mark.asyncio
