@@ -259,8 +259,13 @@ async def test_T_HIS_011_restart_fails_pending_cleanup(tmp_path: Path) -> None:
     async with database(path) as db:
         history = repo(db, tmp_path, clock, events)
         run = await create(history, ids)
+        processing = await history.update_run(
+            run.id, expected_version=run.version, status=RunStatus.PROCESSING
+        )
         pending = await history.update_run(
-            run.id, expected_version=1, cleanup_status=CleanupStatus.PENDING
+            run.id,
+            expected_version=processing.version,
+            cleanup_status=CleanupStatus.PENDING,
         )
     async with database(path) as reopened:
         history = repo(reopened, tmp_path, clock, FakeEventSink())

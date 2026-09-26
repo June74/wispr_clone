@@ -517,18 +517,20 @@ class HistoryRepo:
             cleanup = tuple(
                 str(row[0])
                 for row in conn.execute(
-                    "SELECT id FROM runs WHERE cleanup_status=? ORDER BY created_at,id",
-                    (CleanupStatus.PENDING.value,),
+                    "SELECT id FROM runs WHERE cleanup_status=? AND status=? "
+                    "ORDER BY created_at,id",
+                    (CleanupStatus.PENDING.value, RunStatus.PROCESSING.value),
                 ).fetchall()
             )
             if cleanup:
                 conn.execute(
                     "UPDATE runs SET cleanup_status=?, status=?, version=version+1 "
-                    "WHERE cleanup_status=?",
+                    "WHERE cleanup_status=? AND status=?",
                     (
                         CleanupStatus.FAILED.value,
                         RunStatus.AWAITING_CLEANUP_CHOICE.value,
                         CleanupStatus.PENDING.value,
+                        RunStatus.PROCESSING.value,
                     ),
                 )
             expired = tuple(_expire(conn, now))

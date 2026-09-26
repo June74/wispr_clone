@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from wispr_clone.audio.capture import CaptureChunk
+from wispr_clone.cleanup.base import CleanupEngine, CleanupRequest
+from wispr_clone.cleanup.guard import check as check_cleanup
 from wispr_clone.contracts.common import ErrorCode, ThirdPartyError, WisprError
 from wispr_clone.contracts.events import EventSink
-from wispr_clone.contracts.run import CleanupStatus
+from wispr_clone.contracts.run import CleanupStatus, RecoveryAction
 from wispr_clone.dictionary.apply import apply_dictionary
 from wispr_clone.dictionary.repo import DictionaryRepo
 from wispr_clone.history.repo import HistoryRepo, RunRecord
@@ -25,6 +27,7 @@ from wispr_clone.pipeline.insertion_protocol import (
 from wispr_clone.pipeline.state_machine import (
     RunEvent,
     RunState,
+    allowed_recovery_actions,
     is_terminal,
     transition,
 )
@@ -63,6 +66,7 @@ class RunServices:
     new_id: Callable[[], str]
     audio_dir: Path
     config_snapshot: Callable[[], Mapping[str, object]]
+    cleanup: CleanupEngine | None = None
 
 
 def events_for(result: ProtocolResult) -> tuple[RunEvent, ...]:
@@ -144,8 +148,9 @@ class RunController:
                 updated = await self._services.history.update_run(
                     run_id,
                     expected_version=record.version,
-                    status=failed.status,
-                    error_code=error_code.value,
+                    **_terminal_changes(
+                        record, RunEvent.FAIL, failed.status, error_code.value
+                    ),
                 )
                 self._publish_state(updated)
                 raise
@@ -178,6 +183,21 @@ class RunController:
     async def cancel(self, run_id: str) -> None:
         task = self._tasks.get(run_id)
         if task is None or task.done() or run_id not in self._cancel_flags:
+            try:
+                record = await self._services.history.get(run_id)
+            except WisprError:
+                return
+            state = RunState(record.status, record.version)
+            try:
+                cancelled = transition(state, RunEvent.CANCEL)
+            except Exception:
+                return
+            updated = await self._services.history.update_run(
+                run_id,
+                expected_version=record.version,
+                **_terminal_changes(record, RunEvent.CANCEL, cancelled.status),
+            )
+            self._publish_state(updated)
             return
         self._cancel_flags[run_id] = True
         capture = self._captures.get(run_id)
@@ -221,6 +241,70 @@ class RunController:
             raise error
         return record
 
+    async def recover(
+        self, run_id: str, action: RecoveryAction, *, expected_version: int
+    ) -> None:
+        record = await self._services.history.get(run_id)
+        if record.version != expected_version:
+            raise WisprError(ErrorCode.STALE_VERSION, "run", "version")
+        state = RunState(record.status, record.version)
+        if action not in allowed_recovery_actions(state):
+            raise WisprError(ErrorCode.VALIDATION, "run", "action")
+        if action not in {RecoveryAction.RETRY_CLEANUP, RecoveryAction.USE_ORIGINAL}:
+            raise WisprError(ErrorCode.VALIDATION, "run", "action")
+        event = (
+            RunEvent.RETRY_CLEANUP
+            if action == RecoveryAction.RETRY_CLEANUP
+            else RunEvent.USE_ORIGINAL
+        )
+        next_state = transition(state, event)
+        record = await self._services.history.update_run(
+            run_id, expected_version=record.version, status=next_state.status
+        )
+        self._publish_state(record)
+        self._cancel_flags[run_id] = False
+        task = asyncio.create_task(self._recover_task(run_id, action))
+        self._tasks[run_id] = task
+        task.add_done_callback(_consume_task_exception)
+        self._task_errors_pending.add(run_id)
+
+    async def _recover_task(self, run_id: str, action: RecoveryAction) -> None:
+        try:
+            record = await self._services.history.get(run_id)
+            if action == RecoveryAction.USE_ORIGINAL:
+                record = await self._services.history.update_run(
+                    run_id,
+                    expected_version=record.version,
+                    output_selection="original",
+                )
+                await self._insert_selected(record, record.original_text or "")
+            else:
+                await self._cleanup_and_select(record, retry=True)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as error:
+            record = await self._services.history.get(run_id)
+            state = RunState(record.status, record.version)
+            if not is_terminal(state):
+                failed = transition(state, RunEvent.FAIL)
+                error_code = _error_code(error).value
+                changes: dict[str, object] = {
+                    "status": failed.status,
+                    "error_code": error_code,
+                }
+                if record.cleanup_status == CleanupStatus.PENDING:
+                    changes.update(
+                        cleanup_status=CleanupStatus.FAILED,
+                        cleanup_reason=error_code,
+                    )
+                updated = await self._services.history.update_run(
+                    run_id, expected_version=record.version, **changes
+                )
+                self._publish_state(updated)
+            raise
+        finally:
+            self._cancel_flags.pop(run_id, None)
+
     async def _process(
         self, run_id: str, capture: CaptureLike, session: SttSession, wav: WavLike
     ) -> None:
@@ -258,8 +342,12 @@ class RunController:
                 updated = await self._services.history.update_run(
                     run_id,
                     expected_version=record.version,
-                    status=failed.status,
-                    error_code=ErrorCode.NO_SPEECH_DETECTED.value,
+                    **_terminal_changes(
+                        record,
+                        RunEvent.FAIL,
+                        failed.status,
+                        ErrorCode.NO_SPEECH_DETECTED.value,
+                    ),
                 )
                 self._publish_state(updated)
                 return
@@ -268,37 +356,22 @@ class RunController:
                 await self._transition(run_id, RunEvent.CANCEL)
                 return
             adjusted = apply_dictionary(text, entries)
+            cleanup_enabled = record.config.get("cleanup_enabled") is True
             record = await self._services.history.update_run(
                 run_id,
                 expected_version=record.version,
                 original_text=text,
                 adjusted_text=adjusted,
-                output_selection="adjusted",
-                cleanup_status=CleanupStatus.OFF,
                 audio_duration=wav.frames_written / 16000,
+                **(
+                    {"cleanup_status": CleanupStatus.PENDING} if cleanup_enabled else {}
+                ),
             )
             if self._cancel_flags.get(run_id, False):
                 await self._transition(run_id, RunEvent.CANCEL)
                 return
-            snapshot = self._snapshots[run_id]
-            if snapshot is None:
-                held = ProtocolResult(
-                    ProtocolOutcome.HELD, None, "destination unavailable"
-                )
-                await self._apply_result(record, held)
+            if not await self._cleanup_and_select(record, retry=False):
                 return
-            result = await self._services.insertion.attempt(
-                run_id,
-                adjusted,
-                snapshot,
-                request_id=self._services.new_id(),
-                kind="automatic",
-                is_cancelled=lambda: self._cancel_flags.get(run_id, False),
-            )
-            if result.outcome == ProtocolOutcome.CANCELLED:
-                if not self._cancel_flags.get(run_id, False):
-                    self._cancel_flags[run_id] = True
-            await self._apply_result(record, result)
         except asyncio.CancelledError:
             for cleanup in (session.cancel, capture.cancel, wav.close):
                 try:
@@ -332,8 +405,12 @@ class RunController:
                     updated = await self._services.history.update_run(
                         run_id,
                         expected_version=record.version,
-                        status=failed.status,
-                        error_code=_error_code(error).value,
+                        **_terminal_changes(
+                            record,
+                            RunEvent.FAIL,
+                            failed.status,
+                            _error_code(error).value,
+                        ),
                     )
                     self._publish_state(updated)
             except Exception:
@@ -353,10 +430,156 @@ class RunController:
         record = await self._services.history.get(run_id)
         state = transition(RunState(record.status, record.version), event)
         updated = await self._services.history.update_run(
-            run_id, expected_version=record.version, status=state.status
+            run_id,
+            expected_version=record.version,
+            **(
+                _terminal_changes(record, event, state.status)
+                if event == RunEvent.CANCEL
+                else {"status": state.status}
+            ),
         )
         self._publish_state(updated)
         return updated
+
+    async def _cleanup_and_select(self, record: RunRecord, *, retry: bool) -> bool:
+        run_id = record.id
+        adjusted = record.adjusted_text or ""
+        config = record.config
+        enabled = config.get("cleanup_enabled") is True
+        if not enabled and not retry:
+            record = await self._services.history.update_run(
+                run_id,
+                expected_version=record.version,
+                output_selection="adjusted",
+                cleanup_status=CleanupStatus.OFF,
+            )
+            if self._cancel_flags.get(run_id, False):
+                await self._transition(run_id, RunEvent.CANCEL)
+                return False
+            await self._insert_selected(record, adjusted)
+            return True
+        if retry or record.cleanup_status != CleanupStatus.PENDING:
+            record = await self._services.history.update_run(
+                run_id,
+                expected_version=record.version,
+                cleanup_status=CleanupStatus.PENDING,
+                cleanup_reason=None,
+                cleaned_text=None,
+                output_selection=None,
+            )
+        entries = await self._services.dictionary.entries()
+        if self._cancel_flags.get(run_id, False):
+            await self._transition(run_id, RunEvent.CANCEL)
+            return False
+        engine = self._services.cleanup
+        instructions = config.get("cleanup_instructions", "")
+        if not isinstance(instructions, str):
+            instructions = ""
+        try:
+            if engine is None:
+                raise RuntimeError
+            cleaned = await engine.clean(
+                CleanupRequest(
+                    text=adjusted,
+                    glossary=tuple(entry.spelling for entry in entries),
+                    instructions=instructions,
+                )
+            )
+        except (ThirdPartyError, WisprError) as error:
+            if self._cancel_flags.get(run_id, False):
+                await self._transition(run_id, RunEvent.CANCEL)
+                return False
+            return await self._cleanup_failure(
+                record, CleanupStatus.FAILED, error.error_code.value
+            )
+        except Exception:
+            if self._cancel_flags.get(run_id, False):
+                await self._transition(run_id, RunEvent.CANCEL)
+                return False
+            return await self._cleanup_failure(
+                record, CleanupStatus.FAILED, "cleanup_unavailable"
+            )
+        if self._cancel_flags.get(run_id, False):
+            await self._transition(run_id, RunEvent.CANCEL)
+            return False
+        verdict = check_cleanup(adjusted, cleaned)
+        if not verdict.accepted:
+            return await self._cleanup_failure(
+                record, CleanupStatus.REJECTED, ",".join(sorted(verdict.reasons))
+            )
+        record = await self._services.history.update_run(
+            run_id,
+            expected_version=record.version,
+            cleaned_text=cleaned,
+            output_selection="cleaned",
+            cleanup_status=CleanupStatus.OK,
+            cleanup_reason=None,
+        )
+        if self._cancel_flags.get(run_id, False):
+            await self._transition(run_id, RunEvent.CANCEL)
+            return False
+        await self._insert_selected(record, cleaned)
+        return True
+
+    async def _cleanup_failure(
+        self, record: RunRecord, status: CleanupStatus, reason: str
+    ) -> bool:
+        run_id = record.id
+        if self._cancel_flags.get(run_id, False):
+            await self._transition(run_id, RunEvent.CANCEL)
+            return False
+        failed = transition(
+            RunState(record.status, record.version), RunEvent.CLEANUP_FAILED
+        )
+        updated = await self._services.history.update_run(
+            run_id,
+            expected_version=record.version,
+            status=failed.status,
+            cleanup_status=status,
+            cleanup_reason=reason,
+            cleaned_text=None,
+            output_selection=None,
+        )
+        self._publish_state(updated)
+        self._services.events.publish(
+            {
+                "name": "run:recovery",
+                "run_id": run_id,
+                "version": updated.version,
+                "status": updated.status.value,
+                "actions": sorted(
+                    action.value
+                    for action in allowed_recovery_actions(
+                        RunState(updated.status, updated.version)
+                    )
+                ),
+            }
+        )
+        return False
+
+    async def _insert_selected(self, record: RunRecord, text: str) -> None:
+        run_id = record.id
+        if self._cancel_flags.get(run_id, False):
+            await self._transition(run_id, RunEvent.CANCEL)
+            return
+        snapshot_json = record.destination
+        if snapshot_json is None:
+            result = ProtocolResult(
+                ProtocolOutcome.HELD, None, "destination unavailable"
+            )
+        else:
+            snapshot = DestinationSnapshot.from_json(snapshot_json)
+            result = await self._services.insertion.attempt(
+                run_id,
+                text,
+                snapshot,
+                request_id=self._services.new_id(),
+                kind="automatic",
+                is_cancelled=lambda: self._cancel_flags.get(run_id, False),
+            )
+        if result.outcome == ProtocolOutcome.CANCELLED:
+            self._cancel_flags[run_id] = True
+        await self._apply_result(record, result)
 
     async def _apply_result(self, record: RunRecord, result: ProtocolResult) -> None:
         state = RunState(record.status, record.version)
@@ -365,7 +588,13 @@ class RunController:
         if not events_for(result) or state.status == record.status:
             return
         updated = await self._services.history.update_run(
-            record.id, expected_version=record.version, status=state.status
+            record.id,
+            expected_version=record.version,
+            **(
+                _terminal_changes(record, RunEvent.CANCEL, state.status)
+                if result.outcome == ProtocolOutcome.CANCELLED
+                else {"status": state.status}
+            ),
         )
         self._publish_state(updated)
 
@@ -384,6 +613,23 @@ def _error_code(error: BaseException) -> ErrorCode:
     if isinstance(error, (ThirdPartyError, WisprError)):
         return error.error_code
     return ErrorCode.STORAGE_ERROR
+
+
+def _terminal_changes(
+    record: RunRecord,
+    event: RunEvent,
+    status: object,
+    error_code: str | None = None,
+) -> dict[str, object]:
+    changes: dict[str, object] = {"status": status}
+    if error_code is not None:
+        changes["error_code"] = error_code
+    if record.cleanup_status == CleanupStatus.PENDING:
+        changes.update(
+            cleanup_status=CleanupStatus.FAILED,
+            cleanup_reason="cancelled" if event == RunEvent.CANCEL else error_code,
+        )
+    return changes
 
 
 def _consume_task_exception(task: asyncio.Task[None]) -> None:
