@@ -170,10 +170,16 @@ class RunController:
 
     async def settled(self, run_id: str) -> RunRecord:
         task = self._tasks.get(run_id)
-        if task is not None and run_id in self._task_errors_pending:
-            self._task_errors_pending.discard(run_id)
-            await task
-        return await self._services.history.get(run_id)
+        error: BaseException | None = None
+        if task is not None:
+            await asyncio.wait({task})
+            if run_id in self._task_errors_pending:
+                self._task_errors_pending.discard(run_id)
+                error = task.exception()
+        record = await self._services.history.get(run_id)
+        if error is not None:
+            raise error
+        return record
 
     async def _process(
         self, run_id: str, capture: CaptureLike, session: SttSession, wav: WavLike

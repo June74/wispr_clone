@@ -205,3 +205,4 @@ def events_for(result: ProtocolResult) -> tuple[RunEvent, ...]: ...   # pure map
    (for example, `await asyncio.wait({task})`, which never raises the task's exception). Only then
    does it decide whether it is the one caller that re-raises the stored exception. Every caller
    then reads the final record.
+   - M3b: a failed task nobody awaits logs 'Task exception was never retrieved'; M3b/M4 must always consume it (e.g. a done-callback that marks it retrieved).
