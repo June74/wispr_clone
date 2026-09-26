@@ -154,7 +154,11 @@ class InsertionProtocol:
                 ProtocolOutcome.DUPLICATE, attempt_id, "duplicate request"
             )
 
-        if is_cancelled():
+        try:
+            cancelled = is_cancelled()
+        except Exception:
+            cancelled = True
+        if cancelled:
             await self._resolve(attempt_id, AttemptOutcome.CANCELLED)
             return ProtocolResult(ProtocolOutcome.CANCELLED, attempt_id, "cancelled")
         try:
@@ -163,7 +167,11 @@ class InsertionProtocol:
             # The protocol must still enforce the dispatch-time expiry boundary.
             if is_expired(run.created_at, self._clock()):
                 await self._resolve(attempt_id, AttemptOutcome.CANCELLED)
-                await self._history.enforce_retention()
+                try:
+                    await self._history.enforce_retention()
+                except Exception:
+                    # Expiry is already determined; retention errors are private.
+                    pass
                 return ProtocolResult(ProtocolOutcome.ABANDONED, attempt_id, "expired")
         except WisprError as error:
             if error.error_code in (ErrorCode.RUN_EXPIRED, ErrorCode.RUN_NOT_FOUND):
@@ -174,7 +182,13 @@ class InsertionProtocol:
             await self._resolve(attempt_id, AttemptOutcome.FAILED)
             return ProtocolResult(ProtocolOutcome.FAILED, attempt_id, "history error")
 
-        check = await self._offload(lambda: verify(snapshot, self._win32, self._uia))
+        try:
+            check = await self._offload(
+                lambda: verify(snapshot, self._win32, self._uia)
+            )
+        except Exception:
+            await self._resolve(attempt_id, AttemptOutcome.FAILED)
+            return ProtocolResult(ProtocolOutcome.FAILED, attempt_id, "unverifiable")
         if check.status != "same":
             await self._resolve(attempt_id, AttemptOutcome.FAILED)
             reason = (
@@ -188,7 +202,13 @@ class InsertionProtocol:
             )
             return ProtocolResult(ProtocolOutcome.FAILED, attempt_id, reason)
         if idle_start is not None:
-            idle_now = await self._offload(self._win32.idle_ms)
+            try:
+                idle_now = await self._offload(self._win32.idle_ms)
+            except Exception:
+                await self._resolve(attempt_id, AttemptOutcome.FAILED)
+                return ProtocolResult(
+                    ProtocolOutcome.FAILED, attempt_id, "input during jump"
+                )
             if idle_now < idle_start:
                 await self._resolve(attempt_id, AttemptOutcome.FAILED)
                 return ProtocolResult(
@@ -213,9 +233,15 @@ class InsertionProtocol:
         if sent.events_accepted == 0:
             await self._resolve(attempt_id, AttemptOutcome.FAILED)
             return ProtocolResult(ProtocolOutcome.FAILED, attempt_id, "no events")
-        confirmed = await self._offload(
-            lambda: confirm(text, sent, snapshot, self._uia)
-        )
+        try:
+            confirmed = await self._offload(
+                lambda: confirm(text, sent, snapshot, self._uia)
+            )
+        except Exception:
+            await self._resolve(attempt_id, AttemptOutcome.UNCERTAIN)
+            return ProtocolResult(
+                ProtocolOutcome.UNCERTAIN, attempt_id, "not confirmed"
+            )
         if confirmed == "inserted":
             await self._resolve(attempt_id, AttemptOutcome.INSERTED)
             return ProtocolResult(ProtocolOutcome.INSERTED, attempt_id, "")
