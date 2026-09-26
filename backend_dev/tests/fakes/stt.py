@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import array
+import sys
+import wave
 from pathlib import Path
 
 from wispr_clone.contracts.common import ErrorCode, WisprError
-from wispr_clone.stt.base import SttEngine, SttSession, TextCallback
+from wispr_clone.stt.base import (
+    CHUNK_SAMPLES,
+    SAMPLE_RATE,
+    SttEngine,
+    SttSession,
+    TextCallback,
+)
 
 
 class FakeSttSession:
@@ -68,7 +76,34 @@ class FakeSttEngine:
 
     async def transcribe_file(self, path: Path) -> str:
         self.transcribed.append(path)
-        return self.final_text
+        try:
+            with wave.open(str(path), "rb") as reader:
+                if (
+                    reader.getframerate() != SAMPLE_RATE
+                    or reader.getnchannels() != 1
+                    or reader.getsampwidth() != 2
+                    or reader.getcomptype() != "NONE"
+                ):
+                    raise WisprError(ErrorCode.VALIDATION, "stt", "wav format")
+                raw = reader.readframes(reader.getnframes())
+        except (wave.Error, EOFError):
+            raise WisprError(ErrorCode.VALIDATION, "stt", "wav format") from None
+        samples = array.array("h")
+        samples.frombytes(raw)
+        if sys.byteorder != "little":
+            samples.byteswap()
+        session = self.start_session()
+        for offset in range(0, len(samples), CHUNK_SAMPLES):
+            session.push_audio(
+                array.array(
+                    "f",
+                    (
+                        sample / 32768.0
+                        for sample in samples[offset : offset + CHUNK_SAMPLES]
+                    ),
+                )
+            )
+        return await session.finish()
 
     async def close(self) -> None:
         self.closed = True
