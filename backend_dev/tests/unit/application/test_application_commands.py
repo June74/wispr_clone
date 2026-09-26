@@ -15,10 +15,10 @@ from fakes.clock import FakeClock
 from fakes.events import FakeEventSink
 from fakes.insertion import FakeUiaApi, FakeWin32Api
 from fakes.stt import FakeSttEngine
+
 from wispr_clone.application.api import Api, CommandSpec
 from wispr_clone.application.commands.run_commands import RunCommands
 from wispr_clone.application.commands.settings_commands import SettingsCommands
-
 from wispr_clone.audio.wav_writer import WavWriter
 from wispr_clone.contracts.common import ErrorCode, ThirdPartyError, WisprError
 from wispr_clone.contracts.run import RecoveryAction, RunStatus

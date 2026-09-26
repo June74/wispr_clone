@@ -125,6 +125,20 @@ class RunController:
             for entry in sorted(self._waiting, key=lambda item: item.awaiting_since)
         )
 
+    def run_snapshot(self, record: RunRecord) -> dict[str, object]:
+        """Return the public, text-free view of a retained run."""
+        state = RunState(record.status, record.version)
+        return {
+            "run_id": record.id,
+            "version": record.version,
+            "status": record.status.value,
+            "created_at": record.created_at,
+            "actions": sorted(
+                action.value
+                for action in self._effective_recovery_actions(record, state)
+            ),
+        }
+
     async def start(self, *, start_request_id: str) -> str:
         if self._slot_reserved:
             raise WisprError(ErrorCode.DEVICE_LEASE_CONFLICT, "run", "busy")
