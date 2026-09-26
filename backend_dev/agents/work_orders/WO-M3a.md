@@ -166,3 +166,21 @@ def events_for(result: ProtocolResult) -> tuple[RunEvent, ...]: ...   # pure map
    - publish ONE run:state with the final status and the record's new version.
    The durable record of "an insertion is in progress" is the `in_flight` attempt row (M2), not
    the run.
+2. **Coordinator review of GREEN (binding):**
+   - a. The recording slot is reserved synchronously at the top of `start`, before any `await`
+     (for example, `_active_run_id = <reserved>`). Concurrent `start` calls therefore get
+     DEVICE_LEASE_CONFLICT, and at most one capture ever starts. Any failure inside `start`
+     frees the reservation.
+   - b. If `capture.start()`, `stt.start_session()` or `new_wav()` raises after the run was
+     created:
+     - call `capture.cancel()` if the capture was started, and `session.cancel()` if the
+       session was started;
+     - transition FAIL, persisting `error_code` = the error's code
+       (`ThirdPartyError.error_code` / `WisprError.error_code`, else STORAGE_ERROR);
+     - free the slot and re-raise. The mic lease is never left held.
+   - c. The background task frees the recording slot in a `finally` if it still holds it.
+     Pump, STT or storage errors must never leave `active_run_id` set.
+   - d. `capture_destination: Callable[[], Awaitable[DestinationSnapshot]]`, exactly as pinned.
+   - e. When a run's task ends, drop its capture and snapshot entries. `settled` still works for
+     a finished run: it returns `history.get(run_id)`, and re-raises the task's exception only
+     the first time.

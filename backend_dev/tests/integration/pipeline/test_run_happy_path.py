@@ -16,7 +16,6 @@ from fakes.clock import FakeClock
 from fakes.events import FakeEventSink
 from fakes.insertion import FakeUiaApi, FakeWin32Api
 from fakes.stt import FakeSttEngine
-from wispr_clone.pipeline.run_controller import RunController, RunServices
 
 from wispr_clone.audio.capture import CaptureChunk
 from wispr_clone.audio.wav_writer import WavWriter
@@ -29,6 +28,7 @@ from wispr_clone.history.repo import HistoryRepo
 from wispr_clone.hotkeys.hotkey_service import HotkeyService, KeyAction
 from wispr_clone.insertion.destination import DestinationSnapshot, capture
 from wispr_clone.pipeline.insertion_protocol import InsertionProtocol
+from wispr_clone.pipeline.run_controller import RunController, RunServices
 from wispr_clone.storage import Database, Migration
 from wispr_clone.storage.migrations import (
     m001_base,

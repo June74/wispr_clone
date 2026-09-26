@@ -1,9 +1,9 @@
 """WO-M3a protocol outcomes mapped to lifecycle events."""
 
 import pytest
-from wispr_clone.pipeline.run_controller import events_for
 
 from wispr_clone.pipeline.insertion_protocol import ProtocolOutcome, ProtocolResult
+from wispr_clone.pipeline.run_controller import events_for
 from wispr_clone.pipeline.state_machine import RunEvent
 
 
