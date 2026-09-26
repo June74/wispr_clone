@@ -230,11 +230,12 @@ async def test_T_RUN_021b_confirmed_attempt_blocks_second_paste(tmp_path: Path) 
         error = await rig.history.update_run(
             run_id, expected_version=done.version, status=RunStatus.ERROR
         )
-        with pytest.raises(WisprError, match="already inserted") as caught:
+        with pytest.raises(WisprError) as caught:
             await rig.controller.recover(
                 run_id, RecoveryAction.INSERT, expected_version=error.version
             )
         assert caught.value.error_code == ErrorCode.VALIDATION
+        assert caught.value.why == "already inserted"
         assert rig.sends() == 1
         assert len(await rig.history.attempts(run_id)) == 1
 
@@ -245,11 +246,12 @@ async def test_T_RUN_021c_uncertain_requires_acknowledgement(tmp_path: Path) -> 
         rig.win.on_send = None
         run_id, uncertain = await rig.finish()
         assert uncertain.status == RunStatus.UNCERTAIN
-        with pytest.raises(WisprError, match="acknowledge") as caught:
+        with pytest.raises(WisprError) as caught:
             await rig.controller.recover(
                 run_id, RecoveryAction.INSERT, expected_version=uncertain.version
             )
         assert caught.value.error_code == ErrorCode.VALIDATION
+        assert caught.value.why == "acknowledge"
         assert rig.sends() == 1
         rig.win.on_send = lambda: rig.uia.texts.__setitem__((1, 2), "before" + ADJUSTED)
         await rig.controller.recover(
@@ -295,11 +297,12 @@ async def test_T_RUN_021e_older_inserted_attempt_blocks_paste(tmp_path: Path) ->
             AttemptOutcome.INSERTED,
             AttemptOutcome.FAILED,
         ]
-        with pytest.raises(WisprError, match="already inserted") as caught:
+        with pytest.raises(WisprError) as caught:
             await rig.controller.recover(
                 run_id, RecoveryAction.INSERT, expected_version=error.version
             )
         assert caught.value.error_code == ErrorCode.VALIDATION
+        assert caught.value.why == "already inserted"
         assert (await rig.history.get(run_id)).version == error.version
         assert rig.sends() == 1
         assert len(await rig.history.attempts(run_id)) == 2

@@ -274,11 +274,11 @@ class RunController:
             attempts = await self._services.history.attempts(run_id)
             outcomes = {attempt.outcome.value for attempt in attempts}
             if "inserted" in outcomes:
-                raise _RecoveryError(ErrorCode.VALIDATION, "run", "already inserted")
+                raise WisprError(ErrorCode.VALIDATION, "run", "already inserted")
             if "in_flight" in outcomes:
                 raise WisprError(ErrorCode.DUPLICATE_REQUEST, "run", "in flight")
             if "uncertain" in outcomes and not acknowledge_uncertain:
-                raise _RecoveryError(ErrorCode.VALIDATION, "run", "acknowledge")
+                raise WisprError(ErrorCode.VALIDATION, "run", "acknowledge")
             stored_snapshot = (
                 DestinationSnapshot.from_json(record.destination)
                 if record.destination is not None
@@ -331,7 +331,7 @@ class RunController:
             ):
                 self._waiting.append(waiting_entry)
             if result.outcome == ProtocolOutcome.AWAITING:
-                raise _RecoveryError(
+                raise WisprError(
                     ErrorCode.DESTINATION_UNVERIFIABLE,
                     "run",
                     "not in destination",
@@ -843,10 +843,3 @@ def _selected_text(record: RunRecord) -> str:
     if selection == "original" and record.original_text is not None:
         return record.original_text
     raise ValueError("no selected text")
-
-
-class _RecoveryError(WisprError):
-    """Expose only fixed recovery reasons in diagnostics."""
-
-    def __str__(self) -> str:
-        return f"{super().__str__()}: {self.why}"
