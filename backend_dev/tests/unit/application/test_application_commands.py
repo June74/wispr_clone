@@ -444,7 +444,7 @@ async def test_T_APP_012_invalidate_during_pending_start_blocks_replay(
         finally:
             release.set()
         first = await task
-        assert first.data == {"run_id": "run-0", "deduplicated": False}
+        assert_error(first, ErrorCode.RUN_DELETED)
         assert await rig.history.list_runs() == ()
         assert_error(
             await rig.call("run_start", request_id="deleted-while-pending"),
@@ -454,25 +454,34 @@ async def test_T_APP_012_invalidate_during_pending_start_blocks_replay(
 
 
 @pytest.mark.asyncio
-async def test_T_APP_012_replay_with_live_deadline_outlasts_dedupe(
+async def test_T_APP_012_late_replay_with_fresh_deadline_stays_deduplicated(
     tmp_path: Path,
 ) -> None:
     async with scenario(tmp_path) as rig:
-        rig.runs._dedupe_window_s = 2.0
+        original_start = rig.controller.start
+        start_calls = 0
+
+        async def counted_start(*, start_request_id: str) -> str:
+            nonlocal start_calls
+            start_calls += 1
+            return await original_start(start_request_id=start_request_id)
+
+        rig.controller.start = counted_start  # type: ignore[method-assign]
         first = await rig.call("run_start", request_id="live-replay")
         assert first.data == {"run_id": "run-0", "deduplicated": False}
         await rig.call("run_cancel", run_id="run-0")
         await rig.controller.settled("run-0")
-        rig.clock.advance(3)
+        rig.clock.advance(120)
         replay = await rig.api.call(
             "run_start",
             {
                 "session_token": "session-1",
-                "deadline": 105,
+                "deadline": rig.clock.now() + 5,
                 "request_id": "live-replay",
             },
         )
         assert replay.data == {"run_id": "run-0", "deduplicated": True}
+        assert start_calls == 1
         assert len(await rig.history.list_runs()) == 1
 
 

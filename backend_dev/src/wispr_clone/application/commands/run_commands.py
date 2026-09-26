@@ -11,6 +11,8 @@ from wispr_clone.contracts.common import ErrorCode, WisprError
 from wispr_clone.contracts.run import RecoveryAction
 from wispr_clone.pipeline.run_controller import RunController
 
+_MAX_TRACKED_ENTRIES = 1000
+
 
 class RunCommands:
     def __init__(
@@ -20,16 +22,14 @@ class RunCommands:
         clock: Callable[[], float],
         copy_to_clipboard: Callable[[str], Awaitable[None]],
         last_external_destination: Callable[[], object | None],
-        dedupe_window_s: float = 30.0,
     ) -> None:
         self._controller = controller
-        self._clock = clock
         self._copy_to_clipboard = copy_to_clipboard
         self._last_external_destination = last_external_destination
-        self._dedupe_window_s = dedupe_window_s
-        self._dedupe: dict[str, tuple[str, float]] = {}
+        self._dedupe: dict[str, str] = {}
         self._pending: dict[str, asyncio.Future[str]] = {}
-        self._invalidated: dict[str, float] = {}
+        self._invalidated: dict[str, None] = {}
+        self._invalidated_runs: dict[str, None] = {}
 
     def specs(self) -> dict[str, CommandSpec]:
         return {
@@ -40,20 +40,19 @@ class RunCommands:
         }
 
     def invalidate(self, run_id: str) -> None:
-        expires = self._clock() + self._dedupe_window_s
-        for request_id, (mapped_run_id, _) in tuple(self._dedupe.items()):
+        self._remember(self._invalidated_runs, run_id)
+        for request_id, mapped_run_id in tuple(self._dedupe.items()):
             if mapped_run_id == run_id:
                 del self._dedupe[request_id]
-                self._invalidated[request_id] = expires
+                self._remember(self._invalidated, request_id)
 
     async def _start(self, payload: Mapping[str, object]) -> Mapping[str, object]:
         request_id = _required_string(payload, "request_id")
-        self._prune()
         if request_id in self._invalidated:
             raise WisprError(ErrorCode.RUN_DELETED, "run", "invalidated")
         previous = self._dedupe.get(request_id)
         if previous is not None:
-            return {"run_id": previous[0], "deduplicated": True}
+            return {"run_id": previous, "deduplicated": True}
         pending = self._pending.get(request_id)
         if pending is not None:
             return {"run_id": await asyncio.shield(pending), "deduplicated": True}
@@ -61,7 +60,11 @@ class RunCommands:
         self._pending[request_id] = future
         try:
             run_id = await self._controller.start(start_request_id=request_id)
-            self._dedupe[request_id] = (run_id, self._clock())
+            if run_id in self._invalidated_runs:
+                self._remember(self._invalidated, request_id)
+                error = WisprError(ErrorCode.RUN_DELETED, "run", "invalidated")
+                raise error
+            self._remember(self._dedupe, request_id, run_id)
             future.set_result(run_id)
             return {"run_id": run_id, "deduplicated": False}
         except BaseException as error:
@@ -127,14 +130,12 @@ class RunCommands:
             )
         return {"run_id": run_id}
 
-    def _prune(self) -> None:
-        now = self._clock()
-        for request_id, (_, recorded_at) in tuple(self._dedupe.items()):
-            if now - recorded_at > self._dedupe_window_s:
-                del self._dedupe[request_id]
-        for request_id, expires in tuple(self._invalidated.items()):
-            if now > expires:
-                del self._invalidated[request_id]
+    @staticmethod
+    def _remember[T](entries: dict[str, T], key: str, value: T | None = None) -> None:
+        entries.pop(key, None)
+        entries[key] = cast(T, value)
+        if len(entries) > _MAX_TRACKED_ENTRIES:
+            del entries[next(iter(entries))]
 
 
 def _required_string(payload: Mapping[str, object], name: str) -> str:
