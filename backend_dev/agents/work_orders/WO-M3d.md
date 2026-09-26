@@ -196,3 +196,16 @@ class WaitingRun:
    - d. **Tick and expiry.** A RUN_EXPIRED/RUN_NOT_FOUND raised anywhere in a tick for the chosen
      run drops that entry, publishes nothing, and does not raise. Other exceptions keep the entry
      (rule 3).
+7. **Coordinator review of the gate fix (binding; supersedes Luna's variant):**
+   - The tick must hold `_insertion_gate` for the WHOLE delivery, including the awaited
+     `deliver_next`, exactly as decision 6a says. Releasing it during `deliver_next` leaves a
+     double-paste interleaving:
+     1. recover's guard reads the attempts (none yet);
+     2. the tick claims, passes its final pre-dispatch check, and starts dispatch;
+     3. recover removes the waiting entry and queues on the protocol lock;
+     4. after the tick's insert, recover claims explicitly and dispatches again.
+   - Cancel never takes the gate for its flag or the waiting-list removal, so it stays prompt;
+     only its status write waits.
+   - Explicit Insert is supposed to wait for an in-progress tick, then see its attempt and
+     reject "already inserted".
+   - Add T-RUN-030f (Sol) for exactly the interleaving above.

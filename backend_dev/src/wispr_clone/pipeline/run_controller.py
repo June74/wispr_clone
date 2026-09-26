@@ -105,6 +105,8 @@ class RunController:
         self._sessions: dict[str, SttSession] = {}
         self._wavs: dict[str, WavLike] = {}
         self._waiting: list[WaitingRun] = []
+        self._insertion_gate = asyncio.Lock()
+        self._inserting_run_ids: set[str] = set()
 
     @property
     def active_run_id(self) -> str | None:
@@ -163,7 +165,7 @@ class RunController:
                         record, RunEvent.FAIL, failed.status, error_code.value
                     ),
                 )
-                self._publish_state(updated)
+                self._publish_updated(updated)
                 raise
             assert capture is not None and session is not None
             self._active_run_id = run_id
@@ -192,26 +194,31 @@ class RunController:
             self._slot_reserved = False
 
     async def cancel(self, run_id: str) -> None:
+        # Cancellation must be visible to a protocol call even while it owns the gate.
+        self._cancel_flags[run_id] = True
+        self._waiting = [entry for entry in self._waiting if entry.run_id != run_id]
         task = self._tasks.get(run_id)
-        if task is None or task.done() or run_id not in self._cancel_flags:
-            self._waiting = [entry for entry in self._waiting if entry.run_id != run_id]
+        if task is None or task.done():
             try:
                 record = await self._services.history.get(run_id)
             except WisprError:
+                self._cancel_flags.pop(run_id, None)
                 return
             state = RunState(record.status, record.version)
             try:
                 cancelled = transition(state, RunEvent.CANCEL)
             except Exception:
+                self._cancel_flags.pop(run_id, None)
                 return
-            updated = await self._services.history.update_run(
-                run_id,
-                expected_version=record.version,
-                **_terminal_changes(record, RunEvent.CANCEL, cancelled.status),
-            )
-            self._publish_state(updated)
+            async with self._insertion_gate:
+                updated = await self._services.history.update_run(
+                    run_id,
+                    expected_version=record.version,
+                    **_terminal_changes(record, RunEvent.CANCEL, cancelled.status),
+                )
+                self._publish_updated(updated)
+                self._cancel_flags.pop(run_id, None)
             return
-        self._cancel_flags[run_id] = True
         capture = self._captures.get(run_id)
         if capture is not None:
             capture.cancel()
@@ -271,83 +278,22 @@ class RunController:
         if action == RecoveryAction.COPY:
             raise WisprError(ErrorCode.VALIDATION, "run", "use copy_text")
         if action == RecoveryAction.INSERT:
-            attempts = await self._services.history.attempts(run_id)
-            outcomes = {attempt.outcome.value for attempt in attempts}
-            if "inserted" in outcomes:
-                raise WisprError(ErrorCode.VALIDATION, "run", "already inserted")
-            if "in_flight" in outcomes:
-                raise WisprError(ErrorCode.DUPLICATE_REQUEST, "run", "in flight")
-            if "uncertain" in outcomes and not acknowledge_uncertain:
-                raise WisprError(ErrorCode.VALIDATION, "run", "acknowledge")
-            stored_snapshot = (
-                DestinationSnapshot.from_json(record.destination)
-                if record.destination is not None
-                else None
-            )
-            snapshot = destination or stored_snapshot
-            if snapshot is None:
-                raise WisprError(
-                    ErrorCode.DESTINATION_UNVERIFIABLE, "run", "destination"
-                )
-            waiting_entry = next(
-                (entry for entry in self._waiting if entry.run_id == run_id), None
-            )
-            self._waiting = [entry for entry in self._waiting if entry.run_id != run_id]
-            self._cancel_flags[run_id] = False
-            text = _selected_text(record)
-            result = await self._services.insertion.attempt(
-                run_id,
-                text,
-                snapshot,
-                request_id=self._services.new_id(),
-                kind="explicit",
-                is_cancelled=lambda: self._cancel_flags.get(run_id, False),
-            )
-            if result.outcome in {
-                ProtocolOutcome.INSERTED,
-                ProtocolOutcome.UNCERTAIN,
-                ProtocolOutcome.FAILED,
-            }:
-                events = {
-                    ProtocolOutcome.INSERTED: (
-                        RunEvent.DISPATCH_BEGIN_EXPLICIT,
-                        RunEvent.INSERTED,
-                    ),
-                    ProtocolOutcome.UNCERTAIN: (
-                        RunEvent.DISPATCH_BEGIN_EXPLICIT,
-                        RunEvent.INSERT_UNCERTAIN,
-                    ),
-                    ProtocolOutcome.FAILED: (
-                        RunEvent.DISPATCH_BEGIN_EXPLICIT,
-                        RunEvent.INSERT_FAILED,
-                    ),
-                }[result.outcome]
-                await self._apply_events(record, events)
-                self._cancel_flags.pop(run_id, None)
+            # A second recovery request for the same run is already covered by the
+            # operation holding the gate; returning avoids waiting on its completion.
+            if run_id in self._inserting_run_ids:
                 return
-            if (
-                waiting_entry is not None
-                and result.outcome != ProtocolOutcome.CANCELLED
-            ):
-                self._waiting.append(waiting_entry)
-            if result.outcome == ProtocolOutcome.AWAITING:
-                raise WisprError(
-                    ErrorCode.DESTINATION_UNVERIFIABLE,
-                    "run",
-                    "not in destination",
-                )
-            if result.outcome == ProtocolOutcome.HELD:
-                code = (
-                    ErrorCode.DESTINATION_CLOSED
-                    if result.reason == "window closed"
-                    else ErrorCode.DESTINATION_UNVERIFIABLE
-                )
-                raise WisprError(code, "run", result.reason)
-            if result.outcome == ProtocolOutcome.DUPLICATE:
-                raise WisprError(ErrorCode.DUPLICATE_REQUEST, "run", "in flight")
-            if result.outcome == ProtocolOutcome.ABANDONED:
-                raise WisprError(ErrorCode.RUN_EXPIRED, "run", "expired")
-            self._cancel_flags.pop(run_id, None)
+            async with self._insertion_gate:
+                self._inserting_run_ids.add(run_id)
+                try:
+                    await self._recover_insert(
+                        run_id,
+                        record,
+                        expected_version,
+                        acknowledge_uncertain,
+                        destination,
+                    )
+                finally:
+                    self._inserting_run_ids.discard(run_id)
             return
         if action not in {RecoveryAction.RETRY_CLEANUP, RecoveryAction.USE_ORIGINAL}:
             raise WisprError(ErrorCode.VALIDATION, "run", "action")
@@ -360,12 +306,108 @@ class RunController:
         record = await self._services.history.update_run(
             run_id, expected_version=record.version, status=next_state.status
         )
-        self._publish_state(record)
+        self._publish_updated(record)
         self._cancel_flags[run_id] = False
         task = asyncio.create_task(self._recover_task(run_id, action))
         self._tasks[run_id] = task
         task.add_done_callback(_consume_task_exception)
         self._task_errors_pending.add(run_id)
+
+    async def _recover_insert(
+        self,
+        run_id: str,
+        record: RunRecord,
+        expected_version: int,
+        acknowledge_uncertain: bool,
+        destination: DestinationSnapshot | None,
+    ) -> None:
+        # Re-read under the gate: a preceding insertion may have completed.
+        record = await self._services.history.get(run_id)
+        if record.version != expected_version:
+            raise WisprError(ErrorCode.STALE_VERSION, "run", "version")
+        state = RunState(record.status, record.version)
+        if RecoveryAction.INSERT not in allowed_recovery_actions(state):
+            raise WisprError(ErrorCode.VALIDATION, "run", "action")
+        attempts = await self._services.history.attempts(run_id)
+        outcomes = {attempt.outcome.value for attempt in attempts}
+        if "inserted" in outcomes:
+            raise WisprError(ErrorCode.VALIDATION, "run", "already inserted")
+        if "in_flight" in outcomes:
+            raise WisprError(ErrorCode.DUPLICATE_REQUEST, "run", "in flight")
+        if "uncertain" in outcomes and not acknowledge_uncertain:
+            raise WisprError(ErrorCode.VALIDATION, "run", "acknowledge")
+        stored_snapshot = (
+            DestinationSnapshot.from_json(record.destination)
+            if record.destination is not None
+            else None
+        )
+        snapshot = destination or stored_snapshot
+        if snapshot is None:
+            raise WisprError(ErrorCode.DESTINATION_UNVERIFIABLE, "run", "destination")
+        waiting_entry = next(
+            (entry for entry in self._waiting if entry.run_id == run_id), None
+        )
+        self._waiting = [entry for entry in self._waiting if entry.run_id != run_id]
+        self._cancel_flags[run_id] = False
+        text = _selected_text(record)
+        result = await self._services.insertion.attempt(
+            run_id,
+            text,
+            snapshot,
+            request_id=self._services.new_id(),
+            kind="explicit",
+            is_cancelled=lambda: self._cancel_flags.get(run_id, False),
+        )
+        if result.outcome in {
+            ProtocolOutcome.INSERTED,
+            ProtocolOutcome.UNCERTAIN,
+            ProtocolOutcome.FAILED,
+        }:
+            events = {
+                ProtocolOutcome.INSERTED: (
+                    RunEvent.DISPATCH_BEGIN_EXPLICIT,
+                    RunEvent.INSERTED,
+                ),
+                ProtocolOutcome.UNCERTAIN: (
+                    RunEvent.DISPATCH_BEGIN_EXPLICIT,
+                    RunEvent.INSERT_UNCERTAIN,
+                ),
+                ProtocolOutcome.FAILED: (
+                    RunEvent.DISPATCH_BEGIN_EXPLICIT,
+                    RunEvent.INSERT_FAILED,
+                ),
+            }[result.outcome]
+            await self._apply_events(record, events)
+            self._cancel_flags.pop(run_id, None)
+            return
+        if waiting_entry is not None and result.outcome != ProtocolOutcome.CANCELLED:
+            self._waiting.append(waiting_entry)
+        if result.outcome == ProtocolOutcome.AWAITING:
+            raise WisprError(
+                ErrorCode.DESTINATION_UNVERIFIABLE,
+                "run",
+                "not in destination",
+            )
+        if result.outcome == ProtocolOutcome.HELD:
+            code = (
+                ErrorCode.DESTINATION_CLOSED
+                if result.reason == "window closed"
+                else ErrorCode.DESTINATION_UNVERIFIABLE
+            )
+            raise WisprError(code, "run", result.reason)
+        if result.outcome == ProtocolOutcome.DUPLICATE:
+            raise WisprError(ErrorCode.DUPLICATE_REQUEST, "run", "in flight")
+        if result.outcome == ProtocolOutcome.ABANDONED:
+            raise WisprError(ErrorCode.RUN_EXPIRED, "run", "expired")
+        final_record: RunRecord | None
+        try:
+            final_record = await self._services.history.get(run_id)
+        except WisprError:
+            final_record = None
+        if final_record is None or is_terminal(
+            RunState(final_record.status, final_record.version)
+        ):
+            self._cancel_flags.pop(run_id, None)
 
     async def copy_text(self, run_id: str) -> str:
         record = await self._services.history.get(run_id)
@@ -379,14 +421,34 @@ class RunController:
     async def delivery_tick(self) -> None:
         if not self._waiting:
             return
+        chosen = min(self._waiting, key=lambda item: item.awaiting_since)
         try:
+            async with self._insertion_gate:
+                if chosen not in self._waiting:
+                    return
+                record = await self._services.history.get(chosen.run_id)
+                if record.status.value != "awaiting_destination":
+                    self._waiting = [
+                        e for e in self._waiting if e.run_id != chosen.run_id
+                    ]
+                    return
+                waiting = tuple(self._waiting)
+            # The protocol may wait on window checks. Keep the controller gate free
+            # so explicit recovery or cancel can withdraw this run; the callback
+            # below then suppresses dispatch when that happens.
             delivered = await self._services.insertion.deliver_next(
-                tuple(self._waiting),
-                is_cancelled=lambda rid: self._cancel_flags.get(rid, False),
+                waiting,
+                is_cancelled=lambda rid: (
+                    self._cancel_flags.get(rid, False)
+                    or not any(entry.run_id == rid for entry in self._waiting)
+                ),
             )
             if delivered is None:
                 return
             run_id, result = delivered
+            async with self._insertion_gate:
+                if not any(entry.run_id == run_id for entry in self._waiting):
+                    return
             if result.outcome == ProtocolOutcome.AWAITING:
                 return
             if result.outcome in {ProtocolOutcome.ABANDONED, ProtocolOutcome.DUPLICATE}:
@@ -397,6 +459,11 @@ class RunController:
             record = await self._services.history.get(run_id)
             await self._apply_events(record, events_for(result), awaiting=True)
             self._waiting = [entry for entry in self._waiting if entry.run_id != run_id]
+        except WisprError as error:
+            if error.error_code in {ErrorCode.RUN_EXPIRED, ErrorCode.RUN_NOT_FOUND}:
+                self._waiting = [e for e in self._waiting if e.run_id != chosen.run_id]
+                return
+            return
         except Exception:
             # A later app tick retries the retained waiting entry.
             return
@@ -433,7 +500,7 @@ class RunController:
                 updated = await self._services.history.update_run(
                     run_id, expected_version=record.version, **changes
                 )
-                self._publish_state(updated)
+                self._publish_updated(updated)
             raise
         finally:
             self._cancel_flags.pop(run_id, None)
@@ -482,7 +549,7 @@ class RunController:
                         ErrorCode.NO_SPEECH_DETECTED.value,
                     ),
                 )
-                self._publish_state(updated)
+                self._publish_updated(updated)
                 return
             entries = await self._services.dictionary.entries()
             if self._cancel_flags.get(run_id, False):
@@ -545,14 +612,22 @@ class RunController:
                             _error_code(error).value,
                         ),
                     )
-                    self._publish_state(updated)
+                    self._publish_updated(updated)
             except Exception:
                 pass
             raise
         finally:
             self._captures.pop(run_id, None)
             self._snapshots.pop(run_id, None)
-            self._cancel_flags.pop(run_id, None)
+            final_record: RunRecord | None
+            try:
+                final_record = await self._services.history.get(run_id)
+            except WisprError:
+                final_record = None
+            if final_record is None or is_terminal(
+                RunState(final_record.status, final_record.version)
+            ):
+                self._cancel_flags.pop(run_id, None)
             self._sessions.pop(run_id, None)
             self._wavs.pop(run_id, None)
             if self._active_run_id == run_id:
@@ -571,7 +646,7 @@ class RunController:
                 else {"status": state.status}
             ),
         )
-        self._publish_state(updated)
+        self._publish_updated(updated)
         return updated
 
     async def _cleanup_and_select(self, record: RunRecord, *, retry: bool) -> bool:
@@ -673,24 +748,14 @@ class RunController:
             cleaned_text=None,
             output_selection=None,
         )
-        self._publish_state(updated)
-        self._services.events.publish(
-            {
-                "name": "run:recovery",
-                "run_id": run_id,
-                "version": updated.version,
-                "status": updated.status.value,
-                "actions": sorted(
-                    action.value
-                    for action in allowed_recovery_actions(
-                        RunState(updated.status, updated.version)
-                    )
-                ),
-            }
-        )
+        self._publish_updated(updated)
         return False
 
     async def _insert_selected(self, record: RunRecord, text: str) -> None:
+        async with self._insertion_gate:
+            await self._insert_selected_gated(record, text)
+
+    async def _insert_selected_gated(self, record: RunRecord, text: str) -> None:
         run_id = record.id
         if self._cancel_flags.get(run_id, False):
             await self._transition(run_id, RunEvent.CANCEL)
@@ -742,16 +807,8 @@ class RunController:
             expected_version=record.version,
             **changes,
         )
-        self._publish_state(updated)
+        self._publish_updated(updated)
         status = updated.status.value
-        if status in {
-            "awaiting_destination",
-            "held",
-            "error",
-            "uncertain",
-            "awaiting_cleanup_choice",
-        }:
-            self._publish_recovery(updated)
         if status == "awaiting_destination" and awaiting:
             return
         if status == "awaiting_destination":
@@ -794,6 +851,17 @@ class RunController:
                 ),
             }
         )
+
+    def _publish_updated(self, record: RunRecord) -> None:
+        self._publish_state(record)
+        if record.status.value in {
+            "awaiting_destination",
+            "held",
+            "error",
+            "uncertain",
+            "awaiting_cleanup_choice",
+        }:
+            self._publish_recovery(record)
 
     def _publish_state(self, record: RunRecord) -> None:
         self._services.events.publish(
