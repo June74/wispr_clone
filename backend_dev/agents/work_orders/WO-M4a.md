@@ -156,3 +156,16 @@ class SettingsCommands:
      `model_dump(mode="json")`.
    - `HistoryRepo.list_runs()` is async and already returns newest first.
    - `Result` requires non-None data on success; every handler returns a dict (never None).
+2. **After Sol's verification (T-APP-012), binding:**
+   - a. The session token must be a `str` and equal to the current token
+     (`hmac.compare_digest`). Anything else → PREVIOUS_SESSION_TOKEN.
+   - b. The deadline must be a finite int/float (`math.isfinite`, no bool). NaN/inf → VALIDATION.
+   - c. `invalidate(run_id)` also records the run_id in an invalidated-runs set. When a pending
+     `run_start` resolves to an invalidated run_id, map its request_id to invalidated and raise
+     RUN_DELETED. Later replays then get RUN_DELETED too.
+   - d. **No time-based dedupe window** (the `dedupe_window_s` parameter is removed from the
+     pinned API). Dedupe and invalidation entries are kept until `invalidate` or until a cap of
+     1000 entries each (oldest dropped). A replay therefore can never reach `controller.start`
+     twice, whatever the command deadline. History also dedupes `start_request_id`
+     persistently.
+     - Sol updates the tests that construct `RunCommands(dedupe_window_s=...)`.

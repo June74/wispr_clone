@@ -343,6 +343,7 @@ async def test_T_APP_009_selected_destination_requires_snapshot(tmp_path: Path) 
             await rig.call("run_recover", **payload), ErrorCode.DESTINATION_UNVERIFIABLE
         )
         rig.selected_destination = rig.destination
+        rig.win.foreground = 10
         original_recover = rig.controller.recover
         received: list[object | None] = []
 
@@ -383,3 +384,151 @@ async def test_T_APP_011_settings_patch_validation_and_persistence(
         assert changed.data["theme"] == "dark"
         assert (await rig.call("settings_get")).data == changed.data
         assert (await rig.store.load()).theme == "dark"
+
+
+@pytest.mark.asyncio
+async def test_T_APP_012_non_string_session_token_is_rejected(tmp_path: Path) -> None:
+    class EqualToken:
+        def __eq__(self, other: object) -> bool:
+            return other == "session-1"
+
+    async with scenario(tmp_path) as rig:
+        assert_error(
+            await rig.api.call("settings_get", {"session_token": EqualToken()}),
+            ErrorCode.PREVIOUS_SESSION_TOKEN,
+        )
+
+
+@pytest.mark.asyncio
+async def test_T_APP_012_nan_deadline_is_rejected(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as rig:
+        assert_error(
+            await rig.api.call(
+                "run_start",
+                {
+                    "session_token": "session-1",
+                    "deadline": float("nan"),
+                    "request_id": "nan",
+                },
+            ),
+            ErrorCode.VALIDATION,
+        )
+        assert await rig.history.list_runs() == ()
+
+
+@pytest.mark.asyncio
+async def test_T_APP_012_invalidate_during_pending_start_blocks_replay(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        original_start = rig.controller.start
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def gated_start(*, start_request_id: str) -> str:
+            run_id = await original_start(start_request_id=start_request_id)
+            started.set()
+            await release.wait()
+            return run_id
+
+        rig.controller.start = gated_start  # type: ignore[method-assign]
+        task = asyncio.create_task(
+            rig.call("run_start", request_id="deleted-while-pending")
+        )
+        try:
+            await started.wait()
+            await rig.call("run_cancel", run_id="run-0")
+            await rig.controller.settled("run-0")
+            await rig.history.delete_run("run-0")
+            rig.runs.invalidate("run-0")
+        finally:
+            release.set()
+        first = await task
+        assert first.data == {"run_id": "run-0", "deduplicated": False}
+        assert await rig.history.list_runs() == ()
+        assert_error(
+            await rig.call("run_start", request_id="deleted-while-pending"),
+            ErrorCode.RUN_DELETED,
+        )
+        assert await rig.history.list_runs() == ()
+
+
+@pytest.mark.asyncio
+async def test_T_APP_012_replay_with_live_deadline_outlasts_dedupe(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        rig.runs._dedupe_window_s = 2.0
+        first = await rig.call("run_start", request_id="live-replay")
+        assert first.data == {"run_id": "run-0", "deduplicated": False}
+        await rig.call("run_cancel", run_id="run-0")
+        await rig.controller.settled("run-0")
+        rig.clock.advance(3)
+        replay = await rig.api.call(
+            "run_start",
+            {
+                "session_token": "session-1",
+                "deadline": 105,
+                "request_id": "live-replay",
+            },
+        )
+        assert replay.data == {"run_id": "run-0", "deduplicated": True}
+        assert len(await rig.history.list_runs()) == 1
+
+
+@pytest.mark.asyncio
+async def test_T_APP_012_failed_pending_start_allows_retry(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as rig:
+        original_start = rig.controller.start
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        calls = 0
+
+        async def failing_once(*, start_request_id: str) -> str:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                entered.set()
+                await release.wait()
+                raise WisprError(ErrorCode.DEVICE_LEASE_CONFLICT, "run", "busy")
+            return await original_start(start_request_id=start_request_id)
+
+        rig.controller.start = failing_once  # type: ignore[method-assign]
+        first = asyncio.create_task(
+            rig.call("run_start", request_id="retry-after-failure")
+        )
+        await entered.wait()
+        second = asyncio.create_task(
+            rig.call("run_start", request_id="retry-after-failure")
+        )
+        await asyncio.sleep(0)
+        release.set()
+        for result in await asyncio.gather(first, second):
+            assert_error(result, ErrorCode.DEVICE_LEASE_CONFLICT)
+        retried = await rig.call("run_start", request_id="retry-after-failure")
+        assert retried.data == {"run_id": "run-0", "deduplicated": False}
+        assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_T_APP_012_recovery_payload_types_are_validated(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id = (await rig.call("run_start", request_id="types")).data["run_id"]
+        for fields in (
+            {"expected_version": True, "action": RecoveryAction.COPY.value},
+            {
+                "expected_version": 1,
+                "action": RecoveryAction.COPY.value,
+                "acknowledge_uncertain": 1,
+            },
+            {
+                "expected_version": 1,
+                "action": RecoveryAction.INSERT.value,
+                "use_selected_destination": 1,
+            },
+        ):
+            assert_error(
+                await rig.call("run_recover", run_id=run_id, **fields),
+                ErrorCode.VALIDATION,
+            )
+        assert rig.clipboard == []
