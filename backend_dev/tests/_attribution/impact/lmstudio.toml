@@ -1,0 +1,6 @@
+dependency = "lmstudio"
+kind = "service"
+modules = []
+features = ["cleanup after dictation", "retry cleanup", "model readiness"]
+error_codes = ["cleanup_unavailable", "cleanup_timeout"]
+action = "Load the pinned model in LM Studio yourself or check its idle-unload setting; this is not a wispr_clone code fix"
