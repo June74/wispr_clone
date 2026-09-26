@@ -216,6 +216,14 @@ class InsertionProtocol:
                 )
 
         try:
+            cancelled = is_cancelled()
+        except Exception:
+            cancelled = True
+        if cancelled:
+            await self._resolve(attempt_id, AttemptOutcome.CANCELLED)
+            return ProtocolResult(ProtocolOutcome.CANCELLED, attempt_id, "cancelled")
+
+        try:
             sent: DispatchResult = await self._offload(
                 lambda: dispatch(
                     text,

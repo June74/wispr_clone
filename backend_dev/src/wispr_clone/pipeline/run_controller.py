@@ -94,6 +94,9 @@ class RunController:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._snapshots: dict[str, DestinationSnapshot | None] = {}
         self._task_errors_pending: set[str] = set()
+        self._cancel_flags: dict[str, bool] = {}
+        self._sessions: dict[str, SttSession] = {}
+        self._wavs: dict[str, WavLike] = {}
 
     @property
     def active_run_id(self) -> str | None:
@@ -150,8 +153,12 @@ class RunController:
             self._active_run_id = run_id
             self._captures[run_id] = capture
             self._snapshots[run_id] = snapshot
+            self._cancel_flags[run_id] = False
+            self._sessions[run_id] = session
+            self._wavs[run_id] = wav
             task = asyncio.create_task(self._process(run_id, capture, session, wav))
             self._tasks[run_id] = task
+            task.add_done_callback(_consume_task_exception)
             self._task_errors_pending.add(run_id)
             return run_id
         except BaseException:
@@ -167,6 +174,39 @@ class RunController:
         if self._active_run_id == run_id:
             self._active_run_id = None
             self._slot_reserved = False
+
+    async def cancel(self, run_id: str) -> None:
+        task = self._tasks.get(run_id)
+        if task is None or task.done() or run_id not in self._cancel_flags:
+            return
+        self._cancel_flags[run_id] = True
+        capture = self._captures.get(run_id)
+        if capture is not None and self._active_run_id == run_id:
+            capture.cancel()
+            if self._active_run_id == run_id:
+                self._active_run_id = None
+                self._slot_reserved = False
+        task_session = self._sessions.get(run_id)
+        if task_session is not None:
+            task_session.cancel()
+        task_wav = self._wavs.get(run_id)
+        if task_wav is not None:
+            task_wav.close()
+
+    async def cancel_current(self) -> str | None:
+        run_id = self._active_run_id
+        if run_id is None:
+            run_id = next(
+                (key for key in reversed(self._tasks) if not self._tasks[key].done()),
+                None,
+            )
+        if run_id is None:
+            return None
+        task = self._tasks.get(run_id)
+        if task is None or task.done():
+            return None
+        await self.cancel(run_id)
+        return run_id if self._cancel_flags.get(run_id) else None
 
     async def settled(self, run_id: str) -> RunRecord:
         task = self._tasks.get(run_id)
@@ -186,15 +226,48 @@ class RunController:
     ) -> None:
         try:
             async for chunk in capture.chunks():
+                if self._cancel_flags.get(run_id, False):
+                    break
                 session.push_audio(array.array("f", chunk.samples))
                 wav.write(chunk.samples)
-                self._services.events.publish(
-                    {"name": "audio:level", "run_id": run_id, "bands": chunk.bands}
-                )
+                if not self._cancel_flags.get(run_id, False):
+                    self._services.events.publish(
+                        {"name": "audio:level", "run_id": run_id, "bands": chunk.bands}
+                    )
+            if self._cancel_flags.get(run_id, False):
+                await self._transition(run_id, RunEvent.CANCEL)
+                return
             wav.close()
             record = await self._transition(run_id, RunEvent.STOP)
+            if self._cancel_flags.get(run_id, False):
+                await self._transition(run_id, RunEvent.CANCEL)
+                return
             text = await session.finish()
-            adjusted = apply_dictionary(text, await self._services.dictionary.entries())
+            if self._cancel_flags.get(run_id, False):
+                await self._transition(run_id, RunEvent.CANCEL)
+                return
+            if text.strip() == "":
+                record = await self._services.history.update_run(
+                    run_id,
+                    expected_version=record.version,
+                    original_text="",
+                )
+                failed = transition(
+                    RunState(record.status, record.version), RunEvent.FAIL
+                )
+                updated = await self._services.history.update_run(
+                    run_id,
+                    expected_version=record.version,
+                    status=failed.status,
+                    error_code=ErrorCode.NO_SPEECH_DETECTED.value,
+                )
+                self._publish_state(updated)
+                return
+            entries = await self._services.dictionary.entries()
+            if self._cancel_flags.get(run_id, False):
+                await self._transition(run_id, RunEvent.CANCEL)
+                return
+            adjusted = apply_dictionary(text, entries)
             record = await self._services.history.update_run(
                 run_id,
                 expected_version=record.version,
@@ -204,6 +277,9 @@ class RunController:
                 cleanup_status=CleanupStatus.OFF,
                 audio_duration=wav.frames_written / 16000,
             )
+            if self._cancel_flags.get(run_id, False):
+                await self._transition(run_id, RunEvent.CANCEL)
+                return
             snapshot = self._snapshots[run_id]
             if snapshot is None:
                 held = ProtocolResult(
@@ -217,10 +293,32 @@ class RunController:
                 snapshot,
                 request_id=self._services.new_id(),
                 kind="automatic",
-                is_cancelled=lambda: False,
+                is_cancelled=lambda: self._cancel_flags.get(run_id, False),
             )
+            if result.outcome == ProtocolOutcome.CANCELLED:
+                if not self._cancel_flags.get(run_id, False):
+                    self._cancel_flags[run_id] = True
             await self._apply_result(record, result)
+        except asyncio.CancelledError:
+            for cleanup in (session.cancel, capture.cancel, wav.close):
+                try:
+                    cleanup()
+                except Exception:
+                    pass
+            raise
         except BaseException as error:
+            if self._cancel_flags.get(run_id, False):
+                try:
+                    record = await self._services.history.get(run_id)
+                    if not is_terminal(RunState(record.status, record.version)):
+                        await self._transition(run_id, RunEvent.CANCEL)
+                finally:
+                    for cleanup in (session.cancel, capture.cancel, wav.close):
+                        try:
+                            cleanup()
+                        except Exception:
+                            pass
+                return
             for cleanup in (session.cancel, capture.cancel, wav.close):
                 try:
                     cleanup()
@@ -244,6 +342,9 @@ class RunController:
         finally:
             self._captures.pop(run_id, None)
             self._snapshots.pop(run_id, None)
+            self._cancel_flags.pop(run_id, None)
+            self._sessions.pop(run_id, None)
+            self._wavs.pop(run_id, None)
             if self._active_run_id == run_id:
                 self._active_run_id = None
                 self._slot_reserved = False
@@ -283,3 +384,8 @@ def _error_code(error: BaseException) -> ErrorCode:
     if isinstance(error, (ThirdPartyError, WisprError)):
         return error.error_code
     return ErrorCode.STORAGE_ERROR
+
+
+def _consume_task_exception(task: asyncio.Task[None]) -> None:
+    if not task.cancelled():
+        task.exception()

@@ -668,3 +668,34 @@ async def test_T_PRO_025_final_cancel_check_error_resolves_claim(
             0
         ].outcome != AttemptOutcome.IN_FLIGHT
         assert s.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_PRO_026_cancel_during_final_verify_suppresses_dispatch(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as s:
+        cancelled = False
+        offloads = 0
+
+        async def cancel_during_final_verify(call: Callable[[], Any]) -> Any:
+            nonlocal cancelled, offloads
+            offloads += 1
+            result = call()
+            if offloads == 2:
+                assert len(await s.history.attempts(s.run_id)) == 1
+                cancelled = True
+            return result
+
+        s.protocol._offload = cancel_during_final_verify  # type: ignore[method-assign]
+        result = await s.attempt(cancelled=lambda: cancelled)
+
+        assert (result.outcome, result.reason) == (
+            ProtocolOutcome.CANCELLED,
+            "cancelled",
+        )
+        assert s.sends() == 0
+        attempts = await s.history.attempts(s.run_id)
+        assert len(attempts) == 1
+        assert result.attempt_id == attempts[0].attempt_id
+        assert attempts[0].outcome == AttemptOutcome.CANCELLED
