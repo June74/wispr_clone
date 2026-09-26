@@ -68,3 +68,31 @@ def test_entrypoint_returns_three_while_lock_held(
         assert not list(tmp_path.rglob("*.db"))
     finally:
         lock.release()
+
+
+def test_T_APP_016_crashed_process_leaves_reacquirable_lock(tmp_path: Path) -> None:
+    from wispr_clone.app import acquire_single_instance
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import os, pathlib; "
+                "from wispr_clone.app import acquire_single_instance; "
+                "lock = acquire_single_instance("
+                "lock_dir=pathlib.Path(os.environ['LOCK_DIR'])); "
+                "os._exit(0 if lock is not None else 1)"
+            ),
+        ],
+        env={**os.environ, "LOCK_DIR": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / ".WisprClone.lock").exists()
+    lock = acquire_single_instance(lock_dir=tmp_path)
+    assert lock is not None
+    lock.release()

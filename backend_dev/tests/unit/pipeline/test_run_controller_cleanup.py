@@ -106,8 +106,11 @@ async def scenario(
         win.calls.clear()
         uia.calls.clear()
         inserted = [ADJUSTED]
-        win.on_send = lambda: uia.texts.__setitem__((1, 2), "before" + inserted[0])
+        win.on_send = lambda: uia.texts.__setitem__(
+            (1, 2), uia.texts[(1, 2)] + inserted[0]
+        )
         ids = iter(f"id-{number}" for number in range(20))
+        attempt_ids = iter(f"attempt-{number}" for number in range(20))
         config: dict[str, object] = {
             "cleanup_enabled": enabled,
             "cleanup_instructions": "Keep the wording",
@@ -125,7 +128,7 @@ async def scenario(
             uia,
             offload=inline,
             clock=clock.now,
-            new_id=lambda: "attempt-1",
+            new_id=lambda: next(attempt_ids),
             paste_settle_s=0.0,
         )
         services = RunServices(

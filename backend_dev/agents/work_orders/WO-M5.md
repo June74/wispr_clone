@@ -208,3 +208,13 @@ def acquire_single_instance(name: str = "WisprClone") -> SingleInstance | None: 
      "pywebview", kind "library", modules ["app"], features ["settings window", "HUD"],
      error_codes ["storage_error"], action "Check the pywebview pin in uv.lock and the
      WebView2 runtime"). Writable for Luna: that one file.
+4. **After Sol's verification (T-APP-016), binding:**
+   - a. The retention timer: an exception from `next_expiry_at()`/`enforce_retention()` is counted
+     in `timer_errors["retention"]`, and the timer re-arms (fallback 60 s). It never dies.
+   - b. Startup checks a `stopping` flag after every await (notably after `stt.start()`). If
+     shutdown began, it starts no listener, timers or windows, and returns.
+   - c. `App.run()` wraps the webview start in `try/finally`, so a webview factory or `start()`
+     exception still runs the ordered worker shutdown, then returns exit code 1.
+   - d. The webview factory is called exactly once per run, and the module object is reused.
+   - (Not a defect.) Sol also raised `App._on_evicted` being synchronous. History already defers
+     `on_run_evicted` with `call_soon` (CODEMAP §3), and `abort` is sync by design (WO-M3e rule 1).
