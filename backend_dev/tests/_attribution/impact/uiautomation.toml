@@ -1,0 +1,6 @@
+dependency = "uiautomation"
+kind = "library"
+modules = ["insertion.uia"]
+features = ["tab and field capture", "read-back", "hybrid delivery"]
+error_codes = ["insertion_failed", "insertion_uncertain", "destination_unverifiable", "destination_closed"]
+action = "Check uiautomation 2.0.29 and the interactive desktop; run P-UIA-001"

@@ -204,3 +204,10 @@ T-DIAG-010 (Sol, tests/diag/test_import_names.py): a fragment with `import_names
 module's import of one of those names count as that dependency (sync passes without the package
 installed); a listed module that is not imported, or an import not covered by any fragment, still
 fails; fragments without the key behave exactly as before.
+
+## Coordinator decisions after RED review
+
+1. P-WIN32-002 (clipboard round trip) runs only when `CI == "true"` (GitHub-hosted runners, whose
+   clipboard belongs to nobody) and restores the previous clipboard text; on any other machine it
+   skips with the reason "clipboard round trip runs on hosted CI only". Sol adjusts it in VERIFY.
+2. The G4b record is on main (PR #20); this branch is rebased onto it.
