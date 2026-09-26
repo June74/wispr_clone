@@ -24,6 +24,9 @@ jobs:
           enable-cache: true
       - name: Set up Python
         run: uv python install 3.12
+      - name: Web runtime tests
+        working-directory: .
+        run: node --test "backend_dev/web/tests/*.test.mjs"
       - name: Sync locked environment
         run: uv sync --locked
       - name: Ruff lint

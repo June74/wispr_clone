@@ -1,0 +1,40 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { hudState, shouldToastInserted, recoveryButtons, waveformActive } from '../lib/view.js';
+
+test('T-WEB-004: insertion toast requires a confirmed done event', () => {
+  assert.equal(shouldToastInserted({ name: 'run:state', run_id: 'r', version: 5, status: 'done' }), true);
+  for (const status of ['uncertain', 'error', 'awaiting_cleanup_choice', 'awaiting_destination', 'processing', 'recording', 'held', 'cancelled']) {
+    assert.equal(shouldToastInserted({ name: 'run:state', run_id: 'r', version: 5, status }), false, status);
+  }
+  assert.equal(shouldToastInserted({ name: 'run:recovery', run_id: 'r', version: 5, status: 'done', actions: [] }), false);
+});
+
+test('T-WEB-005: cleanup recovery offers backend actions and cancel', () => {
+  const event = {
+    name: 'run:recovery', run_id: 'r', version: 7,
+    status: 'awaiting_cleanup_choice', actions: ['retry_cleanup', 'use_original', 'copy'],
+  };
+  assert.deepEqual(recoveryButtons(event), ['retry_cleanup', 'use_original', 'copy', 'cancel']);
+  assert.equal(shouldToastInserted(event), false);
+  assert.deepEqual(recoveryButtons({ ...event, actions: ['copy'] }), ['copy', 'cancel']);
+});
+
+test('T-WEB-007: HUD colors and motion follow the run lifecycle', () => {
+  const expected = {
+    recording: ['green', true], processing: ['yellow', false],
+    awaiting_destination: ['yellow', false], awaiting_cleanup_choice: ['red', false],
+    error: ['red', false], uncertain: ['red', false],
+    held: ['blue', false], idle: ['blue', false],
+  };
+  for (const [status, [color, animate]] of Object.entries(expected)) {
+    assert.deepEqual(hudState(status), { color, animate }, status);
+  }
+});
+
+test('waveform moves only for a recent recording level', () => {
+  assert.equal(waveformActive('recording', 900, 1000), true);
+  assert.equal(waveformActive('recording', null, 1000), false);
+  assert.equal(waveformActive('processing', 900, 1000), false);
+  assert.equal(waveformActive('awaiting_destination', 900, 1000), false);
+});
