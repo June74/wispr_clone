@@ -142,3 +142,24 @@ backend_dev/web/
      audio:level.
    - The same CSP, and it reuses `styles.css`, `waveform.js` and `lib/view.js`.
    - T-WEB-002b's static checks cover it too.
+5. **Coordinator review of GREEN: the waveform was rewritten, not ported (binding fix).** The
+   approved "Frequency Lanes on Quiet Pillars" renderer (ui_development/code/waveform_final.js,
+   spec in git history) must be preserved exactly:
+   - geometry: N=29, W=340, H=72, SCALE=2, CENTER=36, REST=2, `X(i)=44+9i`,
+     `OPACITY = 0.30 + 0.55·sin(πi/28)`;
+   - `interpolate` / `smoothSample`;
+   - `targets(level, bands, wave) = REST + 57·clamp(level)·(0.025 + 0.84·band + 0.135·waveform)`,
+     with the same sampling (`u*31` radius 1, `u*127` radius 2);
+   - the easing/draw loop that stops when still and settles to the exact resting pixels;
+   - `prefers-reduced-motion` handling;
+   - color from the theme.
+   ONLY the input changes:
+   - `bands32 = resample(backend 12 bands → 32)` by linear interpolation;
+   - `level = clamp(max(bands12))`;
+   - `wave = zeros(128)` (the backend sends no waveform, so the 0.135 texture term is 0;
+     documented in web/README.md);
+   - remove the mic analysis and the synthetic `sampleFrame`.
+   Export the pure helpers `targets`, `resampleBands`, `levelFromBands` (ES module) for tests.
+   Sol adds T-WEB-009 (node): targets() equals the reference formula for sampled inputs,
+   resampleBands() endpoints/midpoints are correct, silence gives exactly REST for all 29
+   pillars, and the geometry constants match.
