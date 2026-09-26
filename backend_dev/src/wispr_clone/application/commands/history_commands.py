@@ -58,6 +58,9 @@ class HistoryCommands:
             self._controller.abort(record.id)
             self._runs.invalidate(record.id)
         result = await self._history.delete_all()
+        for run_id in result.run_ids:
+            self._controller.abort(run_id)
+            self._runs.invalidate(run_id)
         return {"run_ids": list(result.run_ids), "audio_pending": result.audio_pending}
 
     async def _copy(self, payload: Mapping[str, object]) -> Mapping[str, object]:

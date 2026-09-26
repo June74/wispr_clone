@@ -27,7 +27,7 @@ from wispr_clone.audio.capture import CaptureChunk
 from wispr_clone.audio.device_lease import DeviceLease
 from wispr_clone.audio.devices import InputDevice
 from wispr_clone.audio.wav_writer import WavWriter
-from wispr_clone.contracts.common import ErrorCode
+from wispr_clone.contracts.common import ErrorCode, WisprError
 from wispr_clone.dictionary.repo import DictionaryRepo
 from wispr_clone.history.repo import HistoryRepo
 from wispr_clone.insertion.destination import capture
@@ -373,10 +373,16 @@ async def test_T_APP_028_delete_all_does_not_orphan_concurrent_start(
         result = await deletion
         monkeypatch.setattr(rig.history, "list_runs", list_runs)
 
-        # A start acknowledged to the caller must not be silently removed by
-        # a delete that did not include it in the abort/invalidate snapshot.
-        assert run_id not in result.data["run_ids"]
-        assert (await rig.history.get(run_id)).id == run_id
+        assert run_id in result.data["run_ids"]
+        with pytest.raises(WisprError) as error:
+            await rig.history.get(run_id)
+        assert error.value.error_code == ErrorCode.RUN_NOT_FOUND
+        assert rig.controller.active_run_id is None
+        assert rig.lease.holder is None
+        assert_error(
+            await rig.call("run_start", request_id="during-delete"),
+            ErrorCode.RUN_DELETED,
+        )
 
 
 @pytest.mark.asyncio

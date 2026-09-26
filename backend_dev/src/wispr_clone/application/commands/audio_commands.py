@@ -67,7 +67,14 @@ class AudioCommands:
         if device_id is not None and type(device_id) is not int:
             raise WisprError(ErrorCode.VALIDATION, "audio", "device_id")
         capture = self._new_test_capture(device_id)
-        capture.start()
+        try:
+            capture.start()
+        except Exception:
+            try:
+                capture.cancel()
+            except Exception:
+                pass
+            raise
         self._capture = capture
         self._task = asyncio.create_task(self._pump(capture))
         return {"started": True}

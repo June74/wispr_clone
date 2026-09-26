@@ -123,3 +123,10 @@ class AudioCommands:
    - c. Accepted boundary: a manual delete of a run whose insertion has already begun cannot
      undo that dispatch. Aborting first prevents any later write or dispatch. This is the
      existing, tested history behavior for an explicit user delete.
+3. **Semantics of delete-all (resolves the T-APP-028 conflict):** `history_delete_all` deletes
+   every run present when `delete_all()` executes, using history's single atomic delete, and
+   stops every run it deleted (2a). A run started concurrently is therefore deleted AND stopped:
+   - it is in `run_ids`, and `history.get` → RUN_NOT_FOUND;
+   - `active_run_id` is None and the lease is free;
+   - a replay of its start request → RUN_DELETED.
+   It is never orphaned.
