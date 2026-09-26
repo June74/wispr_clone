@@ -280,3 +280,43 @@ async def test_T_RUN_001j_stt_finish_error_cleans_up_and_releases_session(
         await controller.stop(next_run_id)
         await controller.settled(next_run_id)
         assert len(stt.sessions) == 2
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_001k_concurrent_settled_waits_for_final_record(
+    tmp_path: Path,
+) -> None:
+    entered, release = asyncio.Event(), asyncio.Event()
+    stt = FakeSttEngine("text")
+
+    async with scenario(tmp_path, new_capture=FakeCapture, stt=stt) as (
+        controller,
+        history,
+    ):
+        run_id = await controller.start(start_request_id="start-1")
+
+        async def held_finish() -> str:
+            entered.set()
+            await release.wait()
+            stt.sessions[0].finished = True
+            return "text"
+
+        with patch.object(stt.sessions[0], "finish", side_effect=held_finish):
+            await controller.stop(run_id)
+            await entered.wait()
+            first = asyncio.create_task(controller.settled(run_id))
+            second = asyncio.create_task(controller.settled(run_id))
+            try:
+                await asyncio.sleep(0)
+                assert not first.done()
+                assert not second.done(), (
+                    "settled returned a processing record while STT was still running"
+                )
+            finally:
+                release.set()
+                await asyncio.gather(first, second)
+
+        final = await history.get(run_id)
+        assert first.result() == final
+        assert second.result() == final
+        assert final.status == RunStatus.HELD

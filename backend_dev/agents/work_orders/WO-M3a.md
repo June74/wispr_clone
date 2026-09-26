@@ -201,3 +201,7 @@ def events_for(result: ProtocolResult) -> tuple[RunEvent, ...]: ...   # pure map
    - M3d: explicit Insert recovery must check `history.insertion_outcome(run_id)` first. If
      `update_run` failed after a confirmed insert, the run can show `error` while its attempt is
      `inserted`, and a blind explicit insert would paste twice.
+5. After Sol's verification (T-RUN-001k): every `settled` caller waits for the task to finish
+   (for example, `await asyncio.wait({task})`, which never raises the task's exception). Only then
+   does it decide whether it is the one caller that re-raises the stored exception. Every caller
+   then reads the final record.
