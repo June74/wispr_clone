@@ -31,3 +31,11 @@ export function applyEvent(state, event) {
   if (event.name === 'audio:level') return { ...state, latestLevel: { ...event, receivedAt: Date.now() } };
   return state;
 }
+
+export function acceptsEvent(state, event) {
+  if (!event || typeof event !== 'object' || !['run:state', 'run:recovery'].includes(event.name)) return false;
+  const version = Number(event.version);
+  if (!Number.isFinite(version)) return false;
+  const current = state.runs.find((run) => run.run_id === event.run_id);
+  return !current || version > Number(current.version);
+}

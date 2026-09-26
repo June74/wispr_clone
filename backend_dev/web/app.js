@@ -1,16 +1,16 @@
 import { createBridge } from './lib/bridge.js';
-import { createStore, applyEvent } from './lib/store.js';
+import { createStore, applyEvent, acceptsEvent } from './lib/store.js';
 import { hudState, shouldToastInserted, recoveryButtons } from './lib/view.js';
 import { messageFor } from './lib/messages.js';
 import { createWaveform } from './waveform.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const bridge = createBridge(window);
 let state = createStore();
 let currentRun = null;
 let historyFilter = 'all';
 let editingTermId = null;
+const bridge = createBridge(window, { onSnapshot(snapshot) { state = createStore(snapshot); currentRun = snapshot.active_run_id; render(); } });
 const icon = (name) => `<svg class="i"><use href="#i-${name}"/></svg>`;
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 const waveform = $('#wave') ? createWaveform($('#wave'), () => getComputedStyle($('#dictate')).getPropertyValue('--wave-color').trim()) : null;
@@ -54,7 +54,7 @@ function renderDictionary() {
   const body = $('#dict-body'); if (!body) return;
   const q = ($('#dict-search')?.value ?? '').toLowerCase();
   const rows = state.dictionary.filter((entry) => `${entry.spelling} ${(entry.aliases ?? []).join(' ')}`.toLowerCase().includes(q));
-  body.innerHTML = rows.map((entry) => `<tr><td class="term">${esc(entry.spelling)}</td><td><div class="chips">${(entry.aliases ?? []).map((alias) => `<span class="chip">${esc(alias)}</span>`).join('') || '<span class="faint">—</span>'}</div></td><td class="faint"></td><td class="actions"><div><button class="btn btn-ghost btn-icon btn-sm" aria-label="Edit ${esc(entry.spelling)}" data-edit-term="${entry.id}">${icon('pencil')}</button><button class="btn btn-ghost btn-icon btn-sm danger" aria-label="Delete ${esc(entry.spelling)}" data-delete-term="${entry.id}">${icon('trash')}</button></div></td></tr>`).join('');
+  body.innerHTML = rows.map((entry) => `<tr><td class="term">${esc(entry.spelling)}</td><td><div class="chips">${(entry.aliases ?? []).map((alias) => `<span class="chip">${esc(alias)}</span>`).join('') || '<span class="faint">—</span>'}</div></td><td class="faint"></td><td class="actions"><div><button class="btn btn-ghost btn-icon btn-sm" aria-label="Edit ${esc(entry.spelling)}" data-edit-term="${esc(entry.id)}">${icon('pencil')}</button><button class="btn btn-ghost btn-icon btn-sm danger" aria-label="Delete ${esc(entry.spelling)}" data-delete-term="${esc(entry.id)}">${icon('trash')}</button></div></td></tr>`).join('');
   $('#dict-empty').hidden = rows.length > 0; $('.table thead').style.display = rows.length ? '' : 'none'; $('#dict-count').textContent = state.dictionary.length;
 }
 function renderModels() {
@@ -116,10 +116,11 @@ async function refreshLists() {
   render();
 }
 window.wisprEvent = (jsonText) => {
-  try { const event = JSON.parse(jsonText); if (!event || typeof event !== 'object' || typeof event.name !== 'string') return; state = applyEvent(state, event); if (event.name.startsWith('run:')) { state.lastEvent = event.name === 'run:state' ? event : null; if (event.name === 'run:recovery') state.lastRecovery = event; currentRun = event.run_id; } if (event.name === 'history:changed') void refreshLists(); render(); }
+  try { const event = JSON.parse(jsonText); if (!event || typeof event !== 'object' || typeof event.name !== 'string') return; const accepted = acceptsEvent(state, event); state = applyEvent(state, event); if (event.name.startsWith('run:')) { if (!accepted) state.lastEvent = null; else state.lastEvent = event.name === 'run:state' ? event : null; if (event.name === 'run:recovery' && accepted) state.lastRecovery = event; currentRun = event.run_id; } if (event.name === 'history:changed') void refreshLists(); render(); }
   catch { /* Invalid event payloads are ignored. */ }
 };
 window.wisprReconnect = async () => {
+  // The bridge handles previous_session_token by fetching a fresh snapshot; its onSnapshot callback installs it here.
   const result = await bridge.reconnect();
   if (!result?.ok) { failed(result); return; }
   state = createStore(result.data); currentRun = result.data.active_run_id; $('#title-status').innerHTML = '<span class="status-dot success"></span>Connected'; render(); await refreshLists();

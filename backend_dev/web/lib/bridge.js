@@ -3,6 +3,7 @@ export function createBridge(windowLike, options = {}) {
   const hostCall = typeof windowLike === 'function' ? windowLike : async (name, payload) => windowLike?.pywebview?.api?.call(name, payload);
   const clock = options.now ?? Date.now;
   const uuid = options.randomUUID ?? (() => globalThis.crypto.randomUUID());
+  const onSnapshot = options.onSnapshot ?? (() => {});
   let token = null;
   let reconnecting = null;
   const available = () => typeof windowLike === 'function' || typeof windowLike?.pywebview?.api?.call === 'function';
@@ -11,7 +12,10 @@ export function createBridge(windowLike, options = {}) {
     if (reconnecting) return reconnecting;
     reconnecting = (async () => {
       const result = await hostCall('state_get', {});
-      if (result?.ok) token = result.data?.session_token ?? null;
+      if (result?.ok) {
+        token = result.data?.session_token ?? null;
+        onSnapshot(result.data);
+      }
       return result;
     })();
     try { return await reconnecting; } finally { reconnecting = null; }
