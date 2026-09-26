@@ -348,6 +348,88 @@ async def test_T_APP_024_delete_all_aborts_and_invalidates(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_T_APP_028_delete_all_does_not_orphan_concurrent_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with scenario(tmp_path) as rig:
+        await rig.finished_run("old")
+        listed = asyncio.Event()
+        resume = asyncio.Event()
+        list_runs = rig.history.list_runs
+
+        async def pause_after_snapshot() -> Any:
+            records = await list_runs()
+            listed.set()
+            await resume.wait()
+            return records
+
+        monkeypatch.setattr(rig.history, "list_runs", pause_after_snapshot)
+        deletion = asyncio.create_task(rig.call("history_delete_all"))
+        await asyncio.wait_for(listed.wait(), 1)
+        started = await rig.call("run_start", request_id="during-delete")
+        assert started.ok
+        run_id = started.data["run_id"]
+        resume.set()
+        result = await deletion
+        monkeypatch.setattr(rig.history, "list_runs", list_runs)
+
+        # A start acknowledged to the caller must not be silently removed by
+        # a delete that did not include it in the abort/invalidate snapshot.
+        assert run_id not in result.data["run_ids"]
+        assert (await rig.history.get(run_id)).id == run_id
+
+
+@pytest.mark.asyncio
+async def test_T_APP_028_failed_mic_start_releases_acquired_lease(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with scenario(tmp_path) as rig:
+
+        def broken_capture(device_id: int | None) -> LeasedCapture:
+            capture = LeasedCapture(rig.lease, "mic_test")
+
+            def start_then_fail() -> None:
+                LeasedCapture.start(capture)
+                raise RuntimeError("synthetic open failure")
+
+            monkeypatch.setattr(capture, "start", start_then_fail)
+            return capture
+
+        monkeypatch.setattr(rig.audio, "_new_test_capture", broken_capture)
+        assert_error(
+            await rig.call("mic_test_start", device_id=None), ErrorCode.STORAGE_ERROR
+        )
+        assert rig.lease.holder is None
+
+
+@pytest.mark.asyncio
+async def test_T_APP_028_dictionary_types_and_empty_history_text(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        for entry in (
+            {"spelling": "Bad", "aliases": "alias"},
+            {"spelling": "Bad", "aliases": [1]},
+        ):
+            assert_error(await rig.call("dict_add", entry=entry), ErrorCode.VALIDATION)
+        for entry_id in (True, "1"):
+            assert_error(
+                await rig.call("dict_update", id=entry_id, entry={"spelling": "Good"}),
+                ErrorCode.VALIDATION,
+            )
+            assert_error(
+                await rig.call("dict_delete", id=entry_id), ErrorCode.VALIDATION
+            )
+
+        started = await rig.call("run_start", request_id="without-output")
+        assert started.ok
+        run_id = started.data["run_id"]
+        listed = (await rig.call("history_list")).data["runs"]
+        assert listed[0]["run_id"] == run_id
+        assert listed[0]["text"] is None
+
+
+@pytest.mark.asyncio
 async def test_T_APP_025_history_copy_uses_only_clipboard(tmp_path: Path) -> None:
     async with scenario(tmp_path) as rig:
         run_id = await rig.finished_run("copy")

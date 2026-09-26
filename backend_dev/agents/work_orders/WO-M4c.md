@@ -114,3 +114,12 @@ class AudioCommands:
 
 1. The mic-test auto-stop uses `asyncio.sleep(max_test_s)` / `wait_for` with no clock
    injection. Tests pass a tiny `max_test_s` and bound their waits. Accepted as is.
+2. **After Sol's verification (T-APP-028), binding:**
+   - a. `history_delete_all`: abort + invalidate the snapshot ids, call `delete_all()`, then
+     abort + invalidate every id in the `DeleteResult` too. `abort` is a no-op for unknown or
+     finished runs, so a run started between the snapshot and the delete is still stopped.
+   - b. `mic_test_start`: if `capture.start()` raises, call `capture.cancel()` (best effort)
+     before re-raising, so the lease is never left held, whatever the capture implementation.
+   - c. Accepted boundary: a manual delete of a run whose insertion has already begun cannot
+     undo that dispatch. Aborting first prevents any later write or dispatch. This is the
+     existing, tested history behavior for an explicit user delete.
