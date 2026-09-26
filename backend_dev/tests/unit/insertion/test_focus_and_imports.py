@@ -1,7 +1,7 @@
 """T-INS focus transition, settle and lazy import contracts."""
 
-import importlib
 import logging
+import subprocess
 import sys
 
 from .fake_apis import FakeUiaApi, FakeWin32Api
@@ -75,18 +75,28 @@ def test_T_INS_011_bring_forward_times_out_and_waits_for_settle() -> None:
 def test_T_INS_012_imports_are_lazy_and_logs_do_not_contain_text(caplog) -> None:
     from wispr_clone.insertion.inserter import dispatch
 
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import importlib\n"
+            "import sys\n"
+            "for name in (\n"
+            "    'wispr_clone.insertion.destination',\n"
+            "    'wispr_clone.insertion.verifier',\n"
+            "    'wispr_clone.insertion.inserter',\n"
+            "    'wispr_clone.insertion.app_strategies',\n"
+            "    'wispr_clone.insertion.win32',\n"
+            "    'wispr_clone.insertion.uia',\n"
+            "):\n"
+            "    importlib.import_module(name)\n"
+            "assert 'win32clipboard' not in sys.modules\n"
+            "assert 'uiautomation' not in sys.modules\n",
+        ],
+        check=True,
+        timeout=10,
+    )
     with caplog.at_level(logging.DEBUG):
-        for name in (
-            "wispr_clone.insertion.destination",
-            "wispr_clone.insertion.verifier",
-            "wispr_clone.insertion.inserter",
-            "wispr_clone.insertion.app_strategies",
-            "wispr_clone.insertion.win32",
-            "wispr_clone.insertion.uia",
-        ):
-            importlib.import_module(name)
-        assert "win32clipboard" not in sys.modules
-        assert "uiautomation" not in sys.modules
         win, uia = FakeWin32Api(), FakeUiaApi()
         dispatch("PRIVATE TRANSCRIPT sentinel 81", _target(), win, uia)
     assert "PRIVATE TRANSCRIPT sentinel 81" not in caplog.text
