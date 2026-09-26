@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from copy import deepcopy
 
 from wispr_clone.cleanup.base import CleanupEngine
 from wispr_clone.contracts.common import ErrorCode, WisprError
@@ -33,7 +34,9 @@ class ModelService:
         self._cleanup_for = cleanup_for
         self._events = events
         self._health_timeout_s = health_timeout_s
-        self._last_published: list[dict[str, object]] | None = None
+        self._last_published: list[ModelStatusItem] | None = None
+        self._publication_lock = asyncio.Lock()
+        self._generation = 0
 
     async def status(self) -> list[ModelStatusItem]:
         settings = self._store.current()
@@ -52,18 +55,26 @@ class ModelService:
 
     async def select(self, model_id: str) -> dict[str, object]:
         model = self._known_model(model_id)
-        settings = await self._store.update({f"{model.role}_model_id": model_id})
-        models = await self.status()
-        self._events.publish({"name": "models:status", "models": models})
-        self._last_published = [dict(item) for item in models]
-        return {"settings": settings_to_data(settings), "models": models}
+        async with self._publication_lock:
+            self._generation += 1
+            settings = await self._store.update({f"{model.role}_model_id": model_id})
+            models = await self.status()
+            self._events.publish({"name": "models:status", "models": deepcopy(models)})
+            self._last_published = deepcopy(models)
+            return {"settings": settings_to_data(settings), "models": deepcopy(models)}
 
     async def poll(self) -> None:
         try:
+            generation = self._generation
             models = await self.status()
-            if models != self._last_published:
-                self._events.publish({"name": "models:status", "models": models})
-                self._last_published = [dict(item) for item in models]
+            async with self._publication_lock:
+                if generation != self._generation:
+                    return
+                if models != self._last_published:
+                    self._events.publish(
+                        {"name": "models:status", "models": deepcopy(models)}
+                    )
+                    self._last_published = deepcopy(models)
         except Exception:
             # A background health poll must not break its scheduler or expose details.
             return
@@ -85,9 +96,10 @@ class ModelService:
                 error_code = ErrorCode.CLEANUP_UNAVAILABLE.value
             else:
                 try:
-                    ready = await asyncio.wait_for(
+                    health = await asyncio.wait_for(
                         cleanup_engine.health(), timeout=self._health_timeout_s
                     )
+                    ready = health is True
                     if not ready:
                         error_code = ErrorCode.CLEANUP_UNAVAILABLE.value
                 except TimeoutError:
