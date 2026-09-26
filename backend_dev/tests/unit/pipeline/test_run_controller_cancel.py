@@ -185,7 +185,7 @@ async def test_T_RUN_010_cancel_after_stop_discards_queued_audio(
 
 
 @pytest.mark.asyncio
-async def test_T_RUN_011_cancel_during_transcript_write_discards_text(
+async def test_T_RUN_011_cancel_during_transcript_write_keeps_text(
     tmp_path: Path,
 ) -> None:
     async with scenario(tmp_path) as rig:
@@ -206,8 +206,8 @@ async def test_T_RUN_011_cancel_during_transcript_write_discards_text(
         release.set()
         record = await rig.controller.settled(run_id)
         assert record.status == RunStatus.CANCELLED
-        assert record.original_text is None
-        assert record.adjusted_text is None
+        assert record.original_text == "spoken words"
+        assert record.adjusted_text == "spoken words"
         assert rig.sends() == 0
 
 

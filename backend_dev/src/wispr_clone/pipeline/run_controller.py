@@ -181,11 +181,11 @@ class RunController:
             return
         self._cancel_flags[run_id] = True
         capture = self._captures.get(run_id)
-        if capture is not None and self._active_run_id == run_id:
+        if capture is not None:
             capture.cancel()
-            if self._active_run_id == run_id:
-                self._active_run_id = None
-                self._slot_reserved = False
+        if self._active_run_id == run_id:
+            self._active_run_id = None
+            self._slot_reserved = False
         task_session = self._sessions.get(run_id)
         if task_session is not None:
             task_session.cancel()
