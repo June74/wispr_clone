@@ -76,6 +76,16 @@ def test_T_INS_009_confirmation_requires_exactly_one_new_occurrence() -> None:
         assert confirm("sample", result, snapshot, uia) == expected
 
 
+def test_T_INS_009_confirmation_rejects_unrelated_whitespace_change() -> None:
+    from wispr_clone.insertion.inserter import DispatchResult, confirm
+
+    uia = FakeUiaApi()
+    snapshot = _snapshot()
+    uia.texts[snapshot.field] = " before sample"
+    result = DispatchResult("paste", 4, "before")
+    assert confirm("sample", result, snapshot, uia) == "uncertain"
+
+
 def test_T_INS_010_korean_layout_and_known_apps_choose_paste() -> None:
     from wispr_clone.insertion.app_strategies import PASTE_APPS, choose_strategy
 

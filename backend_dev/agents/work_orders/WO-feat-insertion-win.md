@@ -238,3 +238,6 @@ fails; fragments without the key behave exactly as before.
 8. Any exception from the UIA or Win32 boundary inside `verify` → `Verification("unverifiable",
    "uia error" | "win32 error")`; `verify` never raises.
 9. Review items 3-5 confirmed by Sol's tests.
+10. `confirm` compares exactly: removing the one new occurrence of the text from the after-text
+    must give the before-text exactly (no `.strip()`); any other change → `uncertain`. A false
+    `uncertain` is safe (the user is offered copy/retry); a false `inserted` is not.

@@ -119,8 +119,23 @@ def test_T_INS_007_rejects_desktop_foreground_before_querying_its_process() -> N
     win, uia = FakeWin32Api(foreground=0), FakeUiaApi()
     with pytest.raises(WisprError) as error:
         capture(win, uia)
-    assert error.value.error_code == ErrorCode.VALIDATION
+    assert error.value.error_code == ErrorCode.DESTINATION_UNVERIFIABLE
+    assert error.value.where == "insertion"
+    assert error.value.why == "no window"
     assert not any(name == "window_process" for name, *_ in win.calls)
+
+
+def test_T_INS_007_rejects_excluded_foreground_process() -> None:
+    win, uia = FakeWin32Api(), FakeUiaApi()
+    with pytest.raises(WisprError) as error:
+        capture(win, uia, exclude_pids=frozenset({101}))
+    assert error.value.error_code == ErrorCode.DESTINATION_UNVERIFIABLE
+    assert error.value.where == "insertion"
+    assert error.value.why == "own window"
+    assert not any(
+        name in {"window_title", "keyboard_layout"} for name, *_ in win.calls
+    )
+    assert uia.calls == []
 
 
 @pytest.mark.parametrize(
