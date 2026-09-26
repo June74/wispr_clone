@@ -71,6 +71,7 @@ class RunServices:
     config_snapshot: Callable[[], Mapping[str, object]]
     cleanup: CleanupEngine | None = None
     clock: Callable[[], float] = time.time
+    cleanup_for: Callable[[str], CleanupEngine | None] | None = None
 
 
 def events_for(result: ProtocolResult) -> tuple[RunEvent, ...]:
@@ -980,7 +981,12 @@ class RunController:
         if self._cancel_flags.get(run_id, False):
             await self._transition(run_id, RunEvent.CANCEL)
             return False
-        engine = self._services.cleanup
+        model_id = config.get("cleanup_model_id")
+        engine = (
+            self._services.cleanup_for(model_id)
+            if self._services.cleanup_for is not None and isinstance(model_id, str)
+            else self._services.cleanup
+        )
         instructions = config.get("cleanup_instructions", "")
         if not isinstance(instructions, str):
             instructions = ""

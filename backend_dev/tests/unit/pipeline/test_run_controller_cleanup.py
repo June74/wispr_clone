@@ -7,6 +7,7 @@ import gc
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +89,7 @@ async def scenario(
     *,
     cleanup: FakeCleanupEngine | None,
     enabled: bool = True,
+    cleanup_for: Callable[[str], FakeCleanupEngine | None] | None = None,
 ) -> AsyncIterator[Rig]:
     migrations = [
         Migration(module.VERSION, module.NAME, module.apply)
@@ -126,22 +128,23 @@ async def scenario(
             new_id=lambda: "attempt-1",
             paste_settle_s=0.0,
         )
-        controller = RunController(
-            RunServices(
-                history=history,
-                dictionary=dictionary,
-                stt=FakeSttEngine(RAW),
-                insertion=protocol,
-                events=events,
-                capture_destination=destination,
-                new_capture=FakeCapture,
-                new_wav=WavWriter,
-                new_id=lambda: next(ids),
-                audio_dir=path,
-                config_snapshot=lambda: dict(config),
-                cleanup=cleanup,
-            )
+        services = RunServices(
+            history=history,
+            dictionary=dictionary,
+            stt=FakeSttEngine(RAW),
+            insertion=protocol,
+            events=events,
+            capture_destination=destination,
+            new_capture=FakeCapture,
+            new_wav=WavWriter,
+            new_id=lambda: next(ids),
+            audio_dir=path,
+            config_snapshot=lambda: dict(config),
+            cleanup=cleanup,
         )
+        if cleanup_for is not None:
+            services = replace(services, cleanup_for=cleanup_for)
+        controller = RunController(services)
         yield Rig(controller, history, events, win, uia, cleanup, config, inserted)
 
 
@@ -195,6 +198,51 @@ async def test_T_RUN_009b_uses_stored_config_after_live_edit(tmp_path: Path) -> 
         assert record.config["cleanup_enabled"] is True
         assert cleanup.requests[0].instructions == "Keep the wording"
         assert rig.uia.texts[(1, 2)] == "before" + CLEANED
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_018_cleanup_engine_uses_snapshotted_model_on_retry(
+    tmp_path: Path,
+) -> None:
+    first_engine = FakeCleanupEngine(timeout(), CLEANED)
+    second_engine = FakeCleanupEngine(CLEANED)
+    engines = {"first-model": first_engine, "second-model": second_engine}
+    selected_models: list[str] = []
+
+    def cleanup_for(model_id: str) -> FakeCleanupEngine | None:
+        selected_models.append(model_id)
+        return engines.get(model_id)
+
+    async with scenario(tmp_path, cleanup=None, cleanup_for=cleanup_for) as rig:
+        rig.config["cleanup_model_id"] = "first-model"
+        first_id = await rig.controller.start(start_request_id="start-1")
+        rig.config["cleanup_model_id"] = "second-model"
+        await rig.controller.stop(first_id)
+        first_failed = await rig.controller.settled(first_id)
+        assert first_failed.status == RunStatus.AWAITING_CLEANUP_CHOICE
+        assert first_failed.config["cleanup_model_id"] == "first-model"
+        assert len(first_engine.requests) == 1
+        assert second_engine.requests == []
+
+        rig.inserted[0] = CLEANED
+        second_id = await rig.controller.start(start_request_id="start-2")
+        await rig.controller.stop(second_id)
+        second_done = await rig.controller.settled(second_id)
+        assert second_done.status == RunStatus.DONE
+        assert second_done.config["cleanup_model_id"] == "second-model"
+        assert len(second_engine.requests) == 1
+
+        await rig.controller.recover(
+            first_id,
+            RecoveryAction.RETRY_CLEANUP,
+            expected_version=first_failed.version,
+        )
+        first_done = await rig.controller.settled(first_id)
+        assert first_done.status == RunStatus.DONE
+        assert first_done.cleanup_status == CleanupStatus.OK
+        assert len(first_engine.requests) == 2
+        assert len(second_engine.requests) == 1
+        assert selected_models == ["first-model", "second-model", "first-model"]
 
 
 @pytest.mark.asyncio

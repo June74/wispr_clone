@@ -83,13 +83,10 @@ def real_factories() -> AppFactories:
     """Create lazy adapters; platform libraries load only when a factory is used."""
 
     def stt(settings: Settings) -> SttEngine:
-        import importlib
-
         del settings
-        native = importlib.import_module("transcribe_cpp")
         from wispr_clone.stt.voxtral_transcribe_cpp import VoxtralTranscribeCpp
 
-        return VoxtralTranscribeCpp(config.stt_model_path(), module=native)
+        return VoxtralTranscribeCpp(config.stt_model_path())
 
     def cleanup(model_id: str) -> CleanupEngine:
         return LmStudioCleanup(model_id=model_id, base_url=config.LM_STUDIO_ENDPOINT)
@@ -97,22 +94,15 @@ def real_factories() -> AppFactories:
     def make_capture(
         lease: DeviceLease, device: int | None, owner: LeaseOwner
     ) -> CaptureLike:
-        import sounddevice  # type: ignore[import-untyped]
-
-        return AudioCapture(lease, device_id=device, owner=owner, module=sounddevice)
+        return AudioCapture(lease, device_id=device, owner=owner)
 
     def devices() -> tuple[InputDevice, ...]:
-        import sounddevice
-
-        return list_input_devices(sounddevice)
+        return list_input_devices()
 
     def listener(service: HotkeyService) -> ListenerLike:
-        import importlib
-
-        keyboard = importlib.import_module("pynput.keyboard")
         from wispr_clone.hotkeys.pynput_listener import PynputListener
 
-        return PynputListener(service, module=keyboard)
+        return PynputListener(service)
 
     def win32() -> Win32Api:
         from wispr_clone.insertion.win32 import RealWin32
@@ -400,6 +390,7 @@ class App:
                 if self._settings and self._settings.cleanup_enabled
                 else None,
                 clock=self.factories.clock,
+                cleanup_for=self._cleanup,
             )
         )
 
