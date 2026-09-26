@@ -442,6 +442,15 @@ def check_impact_map_sync(src_root: Path, impact_dir: Path) -> None:
                 continue
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                 top = node.module.split(".", 1)[0]
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "import_module"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                top = node.args[0].value.split(".", 1)[0]
             if top and top != "wispr_clone":
                 imports.setdefault(module, set()).add(top)
 
@@ -469,6 +478,16 @@ def check_impact_map_sync(src_root: Path, impact_dir: Path) -> None:
                 raise ValueError(f"{path}: invalid ErrorCode {code}")
         fragments[dist] = (path, data)
 
+    import_name_fragments: dict[str, list[tuple[str, Path, dict[str, Any]]]] = {}
+    for dist, (path, data) in fragments.items():
+        names = data.get("import_names", [])
+        if not isinstance(names, list) or not all(
+            isinstance(value, str) and value for value in names
+        ):
+            raise ValueError(f"{path}: import_names must be a list of strings")
+        for name in names:
+            import_name_fragments.setdefault(name, []).append((dist, path, data))
+
     for source_module, top_levels in imports.items():
         for top_level in top_levels:
             if top_level in sys.stdlib_module_names:
@@ -488,6 +507,11 @@ def check_impact_map_sync(src_root: Path, impact_dir: Path) -> None:
                 for dist, entry in fragments.items()
                 if dist in distributions and source_module in entry[1]["modules"]
             ]
+            matching.extend(
+                (path, data)
+                for _, path, data in import_name_fragments.get(top_level, [])
+                if source_module in data["modules"]
+            )
             if not matching:
                 raise ValueError(
                     f"third-party module {top_level} imported by {source_module} "
@@ -511,8 +535,12 @@ def check_impact_map_sync(src_root: Path, impact_dir: Path) -> None:
             if dist in mapped_dists:
                 distributions_for_fragment.add(top_level)
         distributions_for_fragment.add(dist.replace("-", "_"))
+        import_names = set(data.get("import_names", []))
         for source_module in declared:
-            if not imports.get(source_module, set()) & distributions_for_fragment:
+            if not (
+                imports.get(source_module, set()) & distributions_for_fragment
+                or imports.get(source_module, set()) & import_names
+            ):
                 raise ValueError(
                     f"{dist} fragment {path.name} lists {source_module}, "
                     "which does not import it"

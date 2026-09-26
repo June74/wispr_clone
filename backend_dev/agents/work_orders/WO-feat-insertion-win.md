@@ -211,3 +211,19 @@ fails; fragments without the key behave exactly as before.
    clipboard belongs to nobody) and restores the previous clipboard text; on any other machine it
    skips with the reason "clipboard round trip runs on hosted CI only". Sol adjusts it in VERIFY.
 2. The G4b record is on main (PR #20); this branch is rebased onto it.
+
+## Coordinator review of GREEN (binding)
+
+3. **Paste must land before the clipboard is restored.** `SendInput` only queues keystrokes; the
+   target processes Ctrl+V later. Restoring the previous clipboard immediately can make the app
+   paste the USER'S old clipboard text instead of the dictation. `dispatch` takes
+   `paste_settle_s: float = 0.5` and an injected `sleep`; after Ctrl+V it waits until the field's
+   read-back shows one new occurrence of the text, polling up to `paste_settle_s`, and only then
+   restores the clipboard. If the text never appears, it still restores after `paste_settle_s`
+   (and `confirm` will say `uncertain`).
+4. **Always return the user to their window.** If `bring_forward` fails after changing the
+   foreground (tab select fails, field focus fails, or no settle), it calls `restore(previous)`
+   before returning None.
+5. **The user's own clipboard is restored as it was:** `set_clipboard(old_text,
+   exclusion_formats=False)`. Only transcript text carries the exclusion formats (T-INS-004).
+6. Sol fixes the ruff import-order finding in its own test file.
