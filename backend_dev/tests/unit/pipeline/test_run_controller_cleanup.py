@@ -384,6 +384,63 @@ async def test_T_RUN_004_cancel_while_cleanup_pending(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_T_RUN_017e_cancel_during_cleanup_survives_startup(
+    tmp_path: Path,
+) -> None:
+    cleanup = FakeCleanupEngine(CLEANED)
+    cleanup.release.clear()
+    async with scenario(tmp_path, cleanup=cleanup) as rig:
+        run_id = await rig.controller.start(start_request_id="start-1")
+        await rig.controller.stop(run_id)
+        await cleanup.entered.wait()
+        assert (await rig.history.get(run_id)).cleanup_status == CleanupStatus.PENDING
+        await rig.controller.cancel(run_id)
+        cleanup.release.set()
+        cancelled = await rig.controller.settled(run_id)
+        assert cancelled.status == RunStatus.CANCELLED
+        assert cancelled.cleanup_status == CleanupStatus.FAILED
+        assert cancelled.cleanup_reason == "cancelled"
+        assert rig.sends() == 0 and await rig.history.attempts(run_id) == ()
+
+        report = await rig.history.recover_on_startup()
+        assert report.pending_cleanup_failed == ()
+        assert await rig.history.get(run_id) == cancelled
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_017f_fail_during_cleanup_survives_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cleanup = FakeCleanupEngine(CLEANED)
+    cleanup.release.clear()
+    async with scenario(tmp_path, cleanup=cleanup) as rig:
+        run_id = await rig.controller.start(start_request_id="start-1")
+        await rig.controller.stop(run_id)
+        await cleanup.entered.wait()
+        assert (await rig.history.get(run_id)).cleanup_status == CleanupStatus.PENDING
+
+        def broken_guard(_adjusted: str, _cleaned: str) -> None:
+            raise RuntimeError("guard unavailable")
+
+        monkeypatch.setattr(
+            "wispr_clone.pipeline.run_controller.check_cleanup", broken_guard
+        )
+        cleanup.release.set()
+        with pytest.raises(RuntimeError, match="guard unavailable"):
+            await rig.controller.settled(run_id)
+        failed = await rig.history.get(run_id)
+        assert failed.status == RunStatus.ERROR
+        assert failed.error_code == ErrorCode.STORAGE_ERROR.value
+        assert failed.cleanup_status == CleanupStatus.FAILED
+        assert failed.cleanup_reason == ErrorCode.STORAGE_ERROR.value
+        assert rig.sends() == 0 and await rig.history.attempts(run_id) == ()
+
+        report = await rig.history.recover_on_startup()
+        assert report.pending_cleanup_failed == ()
+        assert await rig.history.get(run_id) == failed
+
+
+@pytest.mark.asyncio
 async def test_T_RUN_015_cancel_choice_without_live_task(tmp_path: Path) -> None:
     async with scenario(tmp_path, cleanup=FakeCleanupEngine(timeout())) as rig:
         run_id, failed = await rig.finish()

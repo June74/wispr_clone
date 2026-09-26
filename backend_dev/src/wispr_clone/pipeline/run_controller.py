@@ -148,8 +148,9 @@ class RunController:
                 updated = await self._services.history.update_run(
                     run_id,
                     expected_version=record.version,
-                    status=failed.status,
-                    error_code=error_code.value,
+                    **_terminal_changes(
+                        record, RunEvent.FAIL, failed.status, error_code.value
+                    ),
                 )
                 self._publish_state(updated)
                 raise
@@ -192,7 +193,9 @@ class RunController:
             except Exception:
                 return
             updated = await self._services.history.update_run(
-                run_id, expected_version=record.version, status=cancelled.status
+                run_id,
+                expected_version=record.version,
+                **_terminal_changes(record, RunEvent.CANCEL, cancelled.status),
             )
             self._publish_state(updated)
             return
@@ -339,8 +342,12 @@ class RunController:
                 updated = await self._services.history.update_run(
                     run_id,
                     expected_version=record.version,
-                    status=failed.status,
-                    error_code=ErrorCode.NO_SPEECH_DETECTED.value,
+                    **_terminal_changes(
+                        record,
+                        RunEvent.FAIL,
+                        failed.status,
+                        ErrorCode.NO_SPEECH_DETECTED.value,
+                    ),
                 )
                 self._publish_state(updated)
                 return
@@ -398,8 +405,12 @@ class RunController:
                     updated = await self._services.history.update_run(
                         run_id,
                         expected_version=record.version,
-                        status=failed.status,
-                        error_code=_error_code(error).value,
+                        **_terminal_changes(
+                            record,
+                            RunEvent.FAIL,
+                            failed.status,
+                            _error_code(error).value,
+                        ),
                     )
                     self._publish_state(updated)
             except Exception:
@@ -419,7 +430,13 @@ class RunController:
         record = await self._services.history.get(run_id)
         state = transition(RunState(record.status, record.version), event)
         updated = await self._services.history.update_run(
-            run_id, expected_version=record.version, status=state.status
+            run_id,
+            expected_version=record.version,
+            **(
+                _terminal_changes(record, event, state.status)
+                if event == RunEvent.CANCEL
+                else {"status": state.status}
+            ),
         )
         self._publish_state(updated)
         return updated
@@ -571,7 +588,13 @@ class RunController:
         if not events_for(result) or state.status == record.status:
             return
         updated = await self._services.history.update_run(
-            record.id, expected_version=record.version, status=state.status
+            record.id,
+            expected_version=record.version,
+            **(
+                _terminal_changes(record, RunEvent.CANCEL, state.status)
+                if result.outcome == ProtocolOutcome.CANCELLED
+                else {"status": state.status}
+            ),
         )
         self._publish_state(updated)
 
@@ -590,6 +613,23 @@ def _error_code(error: BaseException) -> ErrorCode:
     if isinstance(error, (ThirdPartyError, WisprError)):
         return error.error_code
     return ErrorCode.STORAGE_ERROR
+
+
+def _terminal_changes(
+    record: RunRecord,
+    event: RunEvent,
+    status: object,
+    error_code: str | None = None,
+) -> dict[str, object]:
+    changes: dict[str, object] = {"status": status}
+    if error_code is not None:
+        changes["error_code"] = error_code
+    if record.cleanup_status == CleanupStatus.PENDING:
+        changes.update(
+            cleanup_status=CleanupStatus.FAILED,
+            cleanup_reason="cancelled" if event == RunEvent.CANCEL else error_code,
+        )
+    return changes
 
 
 def _consume_task_exception(task: asyncio.Task[None]) -> None:
