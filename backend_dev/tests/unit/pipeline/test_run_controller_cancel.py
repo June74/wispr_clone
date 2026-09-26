@@ -348,7 +348,7 @@ async def test_T_RUN_007_empty_transcript_fails_without_dispatch(
         record = await rig.controller.settled(run_id)
         assert record.status == RunStatus.ERROR
         assert record.error_code == ErrorCode.NO_SPEECH_DETECTED.value
-        assert record.original_text == ""
+        assert record.original_text is None
         assert rig.sends() == 0
 
 

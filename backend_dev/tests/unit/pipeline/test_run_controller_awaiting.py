@@ -605,7 +605,7 @@ async def test_T_RUN_030d_no_speech_error_publishes_recovery(tmp_path: Path) -> 
                 "run_id": run_id,
                 "version": error.version,
                 "status": "error",
-                "actions": ["copy", "insert", "retry_stt"],
+                "actions": ["copy", "insert"],
             }
         ]
 
