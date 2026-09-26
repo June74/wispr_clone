@@ -96,12 +96,21 @@ class DestinationSnapshot:
             raise bad() from error
 
 
-def capture(win32: Win32Api, uia: UiaApi) -> DestinationSnapshot:
+def capture(
+    win32: Win32Api,
+    uia: UiaApi,
+    *,
+    exclude_pids: frozenset[int] = frozenset(),
+) -> DestinationSnapshot:
     hwnd = win32.foreground_window()
+    if hwnd == 0 or not win32.is_window(hwnd):
+        raise WisprError(ErrorCode.DESTINATION_UNVERIFIABLE, "insertion", "no window")
     pid, exe = win32.window_process(hwnd)
+    if pid in exclude_pids:
+        raise WisprError(ErrorCode.DESTINATION_UNVERIFIABLE, "insertion", "own window")
     title_hash = sha256(win32.window_title(hwnd).encode("utf-8")).hexdigest()
     field = uia.focused_element()
-    return DestinationSnapshot(
+    snapshot = DestinationSnapshot(
         hwnd=hwnd,
         pid=pid,
         exe=exe.lower(),
@@ -111,3 +120,6 @@ def capture(win32: Win32Api, uia: UiaApi) -> DestinationSnapshot:
         field_type=uia.element_control_type(field) if field is not None else None,
         langid=win32.keyboard_layout(hwnd),
     )
+    if not win32.is_window(hwnd):
+        raise WisprError(ErrorCode.DESTINATION_UNVERIFIABLE, "insertion", "no window")
+    return snapshot

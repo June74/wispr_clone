@@ -49,30 +49,37 @@ def bring_forward(
 ) -> PreviousFocus | None:
     previous_hwnd = win32.foreground_window()
     previous = PreviousFocus(previous_hwnd, uia.selected_tab(previous_hwnd))
-    win32.set_foreground(snapshot.hwnd)
-    if snapshot.tab is not None and not uia.select_tab(snapshot.hwnd, snapshot.tab):
-        return None
-    if snapshot.field is None or not uia.focus_element(snapshot.field):
-        return None
-    start = clock()
-    deadline = start + max(0.0, timeout_s)
-    stable_since: float | None = None
-    while True:
-        now = clock()
-        settled = (
-            win32.foreground_window() == snapshot.hwnd
-            and uia.focused_element() == snapshot.field
-        )
-        if settled:
-            if stable_since is None:
-                stable_since = now
-            if now - stable_since >= max(0.0, settle_s):
-                return previous
-        else:
-            stable_since = None
-        if now >= deadline:
+    try:
+        win32.set_foreground(snapshot.hwnd)
+        if snapshot.tab is not None and not uia.select_tab(snapshot.hwnd, snapshot.tab):
+            restore(previous, win32, uia)
             return None
-        sleep(min(0.01, max(0.0, deadline - now)))
+        if snapshot.field is None or not uia.focus_element(snapshot.field):
+            restore(previous, win32, uia)
+            return None
+        start = clock()
+        deadline = start + max(0.0, timeout_s)
+        stable_since: float | None = None
+        while True:
+            now = clock()
+            settled = (
+                win32.foreground_window() == snapshot.hwnd
+                and uia.focused_element() == snapshot.field
+            )
+            if settled:
+                if stable_since is None:
+                    stable_since = now
+                if now - stable_since >= max(0.0, settle_s):
+                    return previous
+            else:
+                stable_since = None
+            if now >= deadline:
+                restore(previous, win32, uia)
+                return None
+            sleep(min(0.01, max(0.0, deadline - now)))
+    except Exception:
+        restore(previous, win32, uia)
+        return None
 
 
 def restore(previous: PreviousFocus, win32: Win32Api, uia: UiaApi) -> None:
@@ -91,7 +98,13 @@ class DispatchResult:
 
 
 def dispatch(
-    text: str, snapshot: DestinationSnapshot, win32: Win32Api, uia: UiaApi
+    text: str,
+    snapshot: DestinationSnapshot,
+    win32: Win32Api,
+    uia: UiaApi,
+    *,
+    paste_settle_s: float = 0.5,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> DispatchResult:
     strategy = choose_strategy(snapshot)
     before_text = (
@@ -110,11 +123,30 @@ def dispatch(
                 KeyEvent(vk=VK_CONTROL, flags=KEYEVENTF_KEYUP),
             ]
             accepted = win32.send_inputs(inputs)
+            elapsed = 0.0
+            deadline = max(0.0, paste_settle_s)
+            while True:
+                current = (
+                    uia.element_text(snapshot.field)
+                    if snapshot.field is not None
+                    else None
+                )
+                if (
+                    current is not None
+                    and before_text is not None
+                    and _one_insertion(before_text, current, text)
+                ):
+                    break
+                if elapsed >= deadline:
+                    break
+                interval = min(0.01, deadline - elapsed)
+                sleep(interval)
+                elapsed += interval
         finally:
             if old_clipboard is None:
                 win32.clear_clipboard()
             else:
-                win32.set_clipboard(old_clipboard, exclusion_formats=True)
+                win32.set_clipboard(old_clipboard, exclusion_formats=False)
     return DispatchResult(strategy, accepted, before_text)
 
 
