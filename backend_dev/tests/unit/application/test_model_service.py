@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 from fakes.events import FakeEventSink
-from wispr_clone.application.commands.model_commands import ModelCommands
-from wispr_clone.application.model_service import ModelService
 
 from wispr_clone.application.api import Api
+from wispr_clone.application.commands.model_commands import ModelCommands
+from wispr_clone.application.model_service import ModelService
 from wispr_clone.contracts.common import ErrorCode, WisprError
 from wispr_clone.history.repo import HistoryRepo
 from wispr_clone.models.registry import ModelInfo, ModelRegistry, default_registry
@@ -149,7 +149,7 @@ async def test_T_APP_005_poll_preserves_active_run_and_publishes_only_changes(
             rig.events.publish(
                 {
                     "name": "run:state",
-                    "run_id": before.run_id,
+                    "run_id": before.id,
                     "version": before.version,
                     "status": before.status.value,
                 }
