@@ -31,3 +31,7 @@ picker is disabled and displays the selected model. Recording-mode and shortcut 
 settings, but the desktop hotkey service owns those interactions; the web runtime does not capture
 or rebind browser keys. The web runtime does not show reference-only aggregate usage statistics
 because there is no statistics command.
+
+The backend supplies twelve frequency bands but no waveform texture samples. The renderer
+therefore uses a zero-filled waveform buffer, so the reference's texture term contributes zero;
+pillar heights come from the resampled bands and overall level alone.

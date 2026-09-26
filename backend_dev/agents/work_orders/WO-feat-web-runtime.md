@@ -163,3 +163,24 @@ backend_dev/web/
    Sol adds T-WEB-009 (node): targets() equals the reference formula for sampled inputs,
    resampleBands() endpoints/midpoints are correct, silence gives exactly REST for all 29
    pillars, and the geometry constants match.
+6. **Test runner trap:** `node --test backend_dev/web/tests/` runs only what `web/tests/index.js`
+   imports, so new test files are silently skipped. Use the explicit glob
+   `node --test "backend_dev/web/tests/*.test.mjs"` in CI and the check commands, and remove the
+   `index.js` aggregator.
+7. **Coordinator review of the waveform port (binding):** in the port, `update()` writes the
+   incoming level/bands into the same variables the tick smooths, so the reference's
+   45 ms attack / 150 ms release level smoothing and 70 ms band smoothing are no-ops. The
+   reduced-motion `REDUCED_TRACE` was also dropped. Fix:
+   - `update()` sets `targetLevel` / `targetBands` only. The tick eases the displayed `level` /
+     `bands` toward them exactly as the reference does. Snap `level` to 0 when
+     `targetLevel === 0 && level < 0.008`.
+   - Export pure helpers and use them in the tick:
+     - `smoothLevel(current, target, dt)` =
+       `current + (target-current)·(1-exp(-dt/(target>current ? 0.045 : 0.150)))`,
+       then the snap rule;
+     - `smoothBands(current32, target32, dt)` returns a new Float32Array with the 0.07 time
+       constant.
+   - Under reduced motion, pass `REDUCED_TRACE` (`sin(i·0.18)·0.7`, 128 values) as `wave`, as the
+     reference does; otherwise `ZERO_WAVE`.
+   - Sol adds T-WEB-009b: `smoothLevel` rise and fall constants, the snap to exactly 0, and
+     `smoothBands` convergence, all from the reference formulas.
