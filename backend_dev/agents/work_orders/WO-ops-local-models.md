@@ -160,3 +160,6 @@ with its reason. No transcript text.
 5. **User decision 2026-09-25:** skip the Voxtral-loading tier G probes (P-TCPP-002/003,
    T-STT-A01) for now. They stay in the suite (they skip off Windows / without the model) and are
    run before a release per dev_pipeline §4.3.
+6. Decision 4 amended: the status for HTTP ≥ 400 or an unreadable/non-JSON body is
+   `"invalid_response"` (Sol's test name; clearer: the service answered, but badly). Redirects keep
+   status `"error"`, detail `"redirect"`.
