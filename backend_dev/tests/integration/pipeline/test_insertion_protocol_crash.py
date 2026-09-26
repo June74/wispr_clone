@@ -13,11 +13,11 @@ import pytest
 from fakes.clock import FakeClock
 from fakes.events import FakeEventSink
 from fakes.insertion import FakeUiaApi, FakeWin32Api
-from wispr_clone.pipeline.insertion_protocol import InsertionProtocol, ProtocolOutcome
 
 from wispr_clone.contracts.run import AttemptOutcome
 from wispr_clone.history.repo import HistoryRepo
 from wispr_clone.insertion.destination import capture
+from wispr_clone.pipeline.insertion_protocol import InsertionProtocol, ProtocolOutcome
 from wispr_clone.storage import Connection, Database, Migration
 
 
