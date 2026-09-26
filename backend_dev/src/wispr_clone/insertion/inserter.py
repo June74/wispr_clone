@@ -154,7 +154,7 @@ def _one_insertion(before: str, after: str, text: str) -> bool:
     if not text or after.count(text) != before.count(text) + 1:
         return False
     return any(
-        (after[:index] + after[index + len(text) :]).strip() == before.strip()
+        after[:index] + after[index + len(text) :] == before
         for index in range(len(after) - len(text) + 1)
         if after[index : index + len(text)] == text
     )
