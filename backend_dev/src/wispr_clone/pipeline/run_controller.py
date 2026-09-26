@@ -105,6 +105,9 @@ class RunController:
         self._sessions: dict[str, SttSession] = {}
         self._wavs: dict[str, WavLike] = {}
         self._waiting: list[WaitingRun] = []
+        self._aborted: set[str] = set()
+        self._starting: set[str] = set()
+        self._dictionary_snapshots: dict[str, tuple[Any, ...]] = {}
         self._insertion_gate = asyncio.Lock()
         self._inserting_run_ids: set[str] = set()
 
@@ -123,6 +126,11 @@ class RunController:
         if self._slot_reserved:
             raise WisprError(ErrorCode.DEVICE_LEASE_CONFLICT, "run", "busy")
         self._slot_reserved = True
+        run_id = self._services.new_id()
+        self._starting.add(run_id)
+        capture: CaptureLike | None = None
+        session: SttSession | None = None
+        wav: WavLike | None = None
         try:
             try:
                 snapshot = await self._services.capture_destination()
@@ -130,7 +138,7 @@ class RunController:
                 if error.error_code != ErrorCode.DESTINATION_UNVERIFIABLE:
                     raise
                 snapshot = None
-            run_id = self._services.new_id()
+            self._raise_if_aborted(run_id)
             path = self._services.audio_dir / f"{run_id}.wav"
             record = await self._services.history.create_run(
                 run_id=run_id,
@@ -139,21 +147,28 @@ class RunController:
                 destination=snapshot.to_json() if snapshot is not None else None,
                 audio_path=str(path),
             )
+            self._raise_if_aborted(run_id)
+            entries = await self._services.dictionary.entries()
+            self._raise_if_aborted(run_id)
+            self._dictionary_snapshots[run_id] = tuple(entries)
             self._publish_state(record)
-            capture: CaptureLike | None = None
             capture_started = False
-            session: SttSession | None = None
             try:
                 capture = self._services.new_capture()
                 capture.start()
                 capture_started = True
                 session = self._services.stt.start_session()
                 wav = self._services.new_wav(path)
+                self._raise_if_aborted(run_id)
             except Exception as error:
                 if capture is not None and capture_started:
                     capture.cancel()
                 if session is not None:
                     session.cancel()
+                if self._is_aborted(run_id):
+                    raise WisprError(
+                        ErrorCode.RUN_NOT_FOUND, "run", "aborted"
+                    ) from None
                 error_code = _error_code(error)
                 failed = transition(
                     RunState(record.status, record.version), RunEvent.FAIL
@@ -176,13 +191,87 @@ class RunController:
             self._wavs[run_id] = wav
             task = asyncio.create_task(self._process(run_id, capture, session, wav))
             self._tasks[run_id] = task
+            self._starting.discard(run_id)
             task.add_done_callback(_consume_task_exception)
             self._task_errors_pending.add(run_id)
             return run_id
         except BaseException:
-            self._slot_reserved = False
-            self._active_run_id = None
+            if capture is not None:
+                try:
+                    capture.cancel()
+                except Exception:
+                    pass
+            if session is not None:
+                try:
+                    session.cancel()
+                except Exception:
+                    pass
+            if wav is not None:
+                try:
+                    wav.close()
+                except Exception:
+                    pass
+            self._starting.discard(run_id)
+            if self._active_run_id == run_id or self._active_run_id is None:
+                self._slot_reserved = False
+                self._active_run_id = None
+            was_aborted = self._is_aborted(run_id)
+            self._aborted.discard(run_id)
+            if was_aborted:
+                raise WisprError(ErrorCode.RUN_NOT_FOUND, "run", "aborted") from None
             raise
+
+    def abort(self, run_id: str) -> None:
+        """Stop work for a run whose history record was evicted or expired."""
+        task = self._tasks.get(run_id)
+        was_starting = run_id in self._starting
+        waiting = any(entry.run_id == run_id for entry in self._waiting)
+        if (
+            (task is None or task.done())
+            and run_id not in self._captures
+            and run_id not in self._starting
+            and not waiting
+        ):
+            return
+        self._aborted.add(run_id)
+        self._waiting = [entry for entry in self._waiting if entry.run_id != run_id]
+        for resource in (
+            self._captures.get(run_id),
+            self._sessions.get(run_id),
+        ):
+            if resource is not None:
+                try:
+                    resource.cancel()
+                except Exception:
+                    pass
+        wav = self._wavs.get(run_id)
+        if wav is not None:
+            try:
+                wav.close()
+            except Exception:
+                pass
+        self._starting.discard(run_id)
+        if self._active_run_id == run_id or (
+            was_starting and self._active_run_id is None
+        ):
+            self._active_run_id = None
+            self._slot_reserved = False
+        if (task is None or task.done()) and not was_starting:
+            self._aborted.discard(run_id)
+
+    def _raise_if_aborted(self, run_id: str) -> None:
+        if self._is_aborted(run_id):
+            raise WisprError(ErrorCode.RUN_NOT_FOUND, "run", "aborted")
+
+    def _is_aborted(self, run_id: str) -> bool:
+        return run_id in self._aborted
+
+    @staticmethod
+    def _is_missing_run(error: BaseException) -> bool:
+        return isinstance(error, WisprError) and error.error_code in {
+            ErrorCode.RUN_NOT_FOUND,
+            ErrorCode.RUN_EXPIRED,
+        }
 
     async def stop(self, run_id: str) -> None:
         capture = self._captures.get(run_id)
@@ -356,8 +445,12 @@ class RunController:
             snapshot,
             request_id=self._services.new_id(),
             kind="explicit",
-            is_cancelled=lambda: self._cancel_flags.get(run_id, False),
+            is_cancelled=lambda: (
+                self._cancel_flags.get(run_id, False) or self._is_aborted(run_id)
+            ),
         )
+        if self._is_aborted(run_id):
+            return
         if result.outcome in {
             ProtocolOutcome.INSERTED,
             ProtocolOutcome.UNCERTAIN,
@@ -437,6 +530,7 @@ class RunController:
                     waiting,
                     is_cancelled=lambda rid: (
                         self._cancel_flags.get(rid, False)
+                        or self._is_aborted(rid)
                         or not any(entry.run_id == rid for entry in self._waiting)
                     ),
                 )
@@ -470,6 +564,8 @@ class RunController:
     async def _recover_task(self, run_id: str, action: RecoveryAction) -> None:
         try:
             record = await self._services.history.get(run_id)
+            if self._is_aborted(run_id):
+                return
             if action == RecoveryAction.USE_ORIGINAL:
                 record = await self._services.history.update_run(
                     run_id,
@@ -482,6 +578,8 @@ class RunController:
         except asyncio.CancelledError:
             raise
         except BaseException as error:
+            if self._is_aborted(run_id) or self._is_missing_run(error):
+                return
             record = await self._services.history.get(run_id)
             state = RunState(record.status, record.version)
             if not is_terminal(state):
@@ -509,6 +607,8 @@ class RunController:
     ) -> None:
         try:
             async for chunk in capture.chunks():
+                if self._is_aborted(run_id):
+                    return
                 if self._cancel_flags.get(run_id, False):
                     break
                 session.push_audio(array.array("f", chunk.samples))
@@ -522,10 +622,14 @@ class RunController:
                 return
             wav.close()
             record = await self._transition(run_id, RunEvent.STOP)
+            if self._is_aborted(run_id):
+                return
             if self._cancel_flags.get(run_id, False):
                 await self._transition(run_id, RunEvent.CANCEL)
                 return
             text = await session.finish()
+            if self._is_aborted(run_id):
+                return
             if self._cancel_flags.get(run_id, False):
                 await self._transition(run_id, RunEvent.CANCEL)
                 return
@@ -550,7 +654,9 @@ class RunController:
                 )
                 self._publish_updated(updated)
                 return
-            entries = await self._services.dictionary.entries()
+            entries = self._dictionary_snapshots.get(run_id, ())
+            if self._is_aborted(run_id):
+                return
             if self._cancel_flags.get(run_id, False):
                 await self._transition(run_id, RunEvent.CANCEL)
                 return
@@ -566,6 +672,8 @@ class RunController:
                     {"cleanup_status": CleanupStatus.PENDING} if cleanup_enabled else {}
                 ),
             )
+            if self._is_aborted(run_id):
+                return
             if self._cancel_flags.get(run_id, False):
                 await self._transition(run_id, RunEvent.CANCEL)
                 return
@@ -579,6 +687,8 @@ class RunController:
                     pass
             raise
         except BaseException as error:
+            if self._is_aborted(run_id) or self._is_missing_run(error):
+                return
             if self._cancel_flags.get(run_id, False):
                 try:
                     record = await self._services.history.get(run_id)
@@ -618,6 +728,7 @@ class RunController:
         finally:
             self._captures.pop(run_id, None)
             self._snapshots.pop(run_id, None)
+            self._dictionary_snapshots.pop(run_id, None)
             final_record: RunRecord | None
             try:
                 final_record = await self._services.history.get(run_id)
@@ -629,12 +740,15 @@ class RunController:
                 self._cancel_flags.pop(run_id, None)
             self._sessions.pop(run_id, None)
             self._wavs.pop(run_id, None)
+            self._aborted.discard(run_id)
             if self._active_run_id == run_id:
                 self._active_run_id = None
                 self._slot_reserved = False
 
     async def _transition(self, run_id: str, event: RunEvent) -> RunRecord:
         record = await self._services.history.get(run_id)
+        if self._is_aborted(run_id):
+            raise WisprError(ErrorCode.RUN_NOT_FOUND, "run", "aborted")
         state = transition(RunState(record.status, record.version), event)
         updated = await self._services.history.update_run(
             run_id,
@@ -645,11 +759,15 @@ class RunController:
                 else {"status": state.status}
             ),
         )
+        if self._is_aborted(run_id):
+            raise WisprError(ErrorCode.RUN_NOT_FOUND, "run", "aborted")
         self._publish_updated(updated)
         return updated
 
     async def _cleanup_and_select(self, record: RunRecord, *, retry: bool) -> bool:
         run_id = record.id
+        if self._is_aborted(run_id):
+            return False
         adjusted = record.adjusted_text or ""
         config = record.config
         enabled = config.get("cleanup_enabled") is True
@@ -674,7 +792,13 @@ class RunController:
                 cleaned_text=None,
                 output_selection=None,
             )
-        entries = await self._services.dictionary.entries()
+        entries = (
+            await self._services.dictionary.entries()
+            if retry
+            else self._dictionary_snapshots.get(run_id, ())
+        )
+        if self._is_aborted(run_id):
+            return False
         if self._cancel_flags.get(run_id, False):
             await self._transition(run_id, RunEvent.CANCEL)
             return False
@@ -692,7 +816,11 @@ class RunController:
                     instructions=instructions,
                 )
             )
+            if self._is_aborted(run_id):
+                return False
         except (ThirdPartyError, WisprError) as error:
+            if self._is_aborted(run_id) or self._is_missing_run(error):
+                return False
             if self._cancel_flags.get(run_id, False):
                 await self._transition(run_id, RunEvent.CANCEL)
                 return False
@@ -700,6 +828,8 @@ class RunController:
                 record, CleanupStatus.FAILED, error.error_code.value
             )
         except Exception:
+            if self._is_aborted(run_id):
+                return False
             if self._cancel_flags.get(run_id, False):
                 await self._transition(run_id, RunEvent.CANCEL)
                 return False
@@ -756,6 +886,8 @@ class RunController:
 
     async def _insert_selected_gated(self, record: RunRecord, text: str) -> None:
         run_id = record.id
+        if self._is_aborted(run_id):
+            return
         if self._cancel_flags.get(run_id, False):
             await self._transition(run_id, RunEvent.CANCEL)
             return
@@ -772,8 +904,12 @@ class RunController:
                 snapshot,
                 request_id=self._services.new_id(),
                 kind="automatic",
-                is_cancelled=lambda: self._cancel_flags.get(run_id, False),
+                is_cancelled=lambda: (
+                    self._cancel_flags.get(run_id, False) or self._is_aborted(run_id)
+                ),
             )
+        if self._is_aborted(run_id):
+            return
         if result.outcome == ProtocolOutcome.CANCELLED:
             self._cancel_flags[run_id] = True
         await self._apply_result(record, result)
@@ -788,6 +924,8 @@ class RunController:
         *,
         awaiting: bool = False,
     ) -> None:
+        if self._is_aborted(record.id):
+            return
         state = RunState(record.status, record.version)
         for event in events:
             state = transition(state, event)
@@ -806,6 +944,8 @@ class RunController:
             expected_version=record.version,
             **changes,
         )
+        if self._is_aborted(record.id):
+            return
         self._publish_updated(updated)
         status = updated.status.value
         if status == "awaiting_destination" and awaiting:
@@ -838,6 +978,8 @@ class RunController:
                 )
 
     def _publish_recovery(self, record: RunRecord) -> None:
+        if self._is_aborted(record.id):
+            return
         state = RunState(record.status, record.version)
         self._services.events.publish(
             {
@@ -863,6 +1005,8 @@ class RunController:
             self._publish_recovery(record)
 
     def _publish_state(self, record: RunRecord) -> None:
+        if self._is_aborted(record.id):
+            return
         self._services.events.publish(
             {
                 "name": "run:state",
