@@ -10,8 +10,9 @@ from wispr_clone.stt.base import SttEngine, SttSession, TextCallback
 
 
 class FakeSttSession:
-    def __init__(self, final_text: str) -> None:
+    def __init__(self, final_text: str, on_text: TextCallback | None = None) -> None:
         self.final_text = final_text
+        self.on_text = on_text
         self.pushed: list[array.array[float]] = []
         self.finished = False
         self.cancelled = False
@@ -27,6 +28,11 @@ class FakeSttSession:
 
     def cancel(self) -> None:
         self.cancelled = True
+
+    def emit_text(self, committed: str, tentative: str = "") -> None:
+        """Deliver a scripted late callback if the consumer registered one."""
+        if self.on_text is not None:
+            self.on_text(committed, tentative)
 
 
 class FakeSttEngine:
@@ -46,12 +52,11 @@ class FakeSttEngine:
         self.started = True
 
     def start_session(self, on_text: TextCallback | None = None) -> FakeSttSession:
-        del on_text
         if self.sessions and not (
             self.sessions[-1].finished or self.sessions[-1].cancelled
         ):
             raise WisprError(ErrorCode.STT_UNAVAILABLE, "stt", "session active")
-        session = FakeSttSession(self.final_text)
+        session = FakeSttSession(self.final_text, on_text)
         self.sessions.append(session)
         return session
 
