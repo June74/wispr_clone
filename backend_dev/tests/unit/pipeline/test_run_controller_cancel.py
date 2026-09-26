@@ -169,6 +169,80 @@ async def test_T_RUN_002_cancel_recording_releases_slot_and_ignores_audio(
 
 
 @pytest.mark.asyncio
+async def test_T_RUN_010_cancel_after_stop_discards_queued_audio(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id = await rig.controller.start(start_request_id="one")
+        rig.captures[0].queue(CaptureChunk(np.zeros(1280, dtype=np.float32), [0.0]))
+        await rig.controller.stop(run_id)
+        await rig.controller.cancel(run_id)
+        assert rig.captures[0].cancelled
+        assert rig.captures[0].queued == []
+        assert (await rig.controller.settled(run_id)).status == RunStatus.CANCELLED
+        assert rig.statuses(run_id) == ["recording", "cancelled"]
+        assert rig.events.by_name("audio:level") == []
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_011_cancel_during_transcript_write_discards_text(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id = await rig.controller.start(start_request_id="one")
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_update = rig.history.update_run
+
+        async def gated_update(*args: Any, **kwargs: Any) -> Any:
+            if "original_text" in kwargs:
+                entered.set()
+                await release.wait()
+            return await original_update(*args, **kwargs)
+
+        rig.history.update_run = gated_update  # type: ignore[method-assign]
+        await rig.controller.stop(run_id)
+        await entered.wait()
+        await rig.controller.cancel(run_id)
+        release.set()
+        record = await rig.controller.settled(run_id)
+        assert record.status == RunStatus.CANCELLED
+        assert record.original_text is None
+        assert record.adjusted_text is None
+        assert rig.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_012_double_cancel_and_old_task_preserve_new_run(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        old = await rig.controller.start(start_request_id="one")
+        old_session = rig.stt.sessions[0]
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def blocked_finish() -> str:
+            entered.set()
+            await release.wait()
+            return "late text"
+
+        old_session.finish = blocked_finish  # type: ignore[method-assign]
+        await rig.controller.stop(old)
+        await entered.wait()
+        await rig.controller.cancel(old)
+        await rig.controller.cancel(old)
+        new = await rig.controller.start(start_request_id="two")
+        assert rig.controller.active_run_id == new
+        release.set()
+        assert (await rig.controller.settled(old)).status == RunStatus.CANCELLED
+        assert rig.controller.active_run_id == new
+        assert not rig.captures[1].cancelled
+        assert not rig.stt.sessions[1].cancelled
+        assert rig.statuses(old) == ["recording", "processing", "cancelled"]
+        await rig.controller.stop(new)
+        assert (await rig.controller.settled(new)).status == RunStatus.DONE
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("late_text", [False, True])
 async def test_T_RUN_003_cancel_while_finish_pending_discards_text(
     tmp_path: Path, late_text: bool

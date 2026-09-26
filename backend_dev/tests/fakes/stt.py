@@ -20,18 +20,24 @@ class FakeSttSession:
     def push_audio(self, samples: array.array[float]) -> None:
         if samples.typecode != "f":
             raise TypeError("STT requires an array with typecode f")
+        if self.finished or self.cancelled:
+            raise WisprError(ErrorCode.STT_STREAM_CLOSED, "stt", "closed")
         self.pushed.append(array.array("f", samples))
 
     async def finish(self) -> str:
+        if self.cancelled or self.finished:
+            raise WisprError(ErrorCode.STT_STREAM_CLOSED, "stt", "closed")
         self.finished = True
         return self.final_text
 
     def cancel(self) -> None:
+        if self.finished or self.cancelled:
+            return
         self.cancelled = True
 
     def emit_text(self, committed: str, tentative: str = "") -> None:
-        """Deliver a scripted late callback if the consumer registered one."""
-        if self.on_text is not None:
+        """Deliver a scripted callback while the session is active."""
+        if self.on_text is not None and not (self.finished or self.cancelled):
             self.on_text(committed, tentative)
 
 

@@ -110,3 +110,12 @@ Use a real HistoryRepo, DictionaryRepo and InsertionProtocol (with the fakes), a
    - Nothing else in the protocol changes.
    - Sol adds T-PRO-026 in `test_insertion_protocol.py`: the cancel flag flips during the final
      verify → no dispatch, attempt `cancelled`.
+2. **After Sol's verification (T-RUN-010):** `cancel` always calls `capture.cancel()` when the
+   run's capture still exists, even after `stop()` freed the slot, so queued audio is discarded
+   during the drain. Only the slot release stays conditional on holding the slot.
+3. **Amends rule 3 (T-RUN-011):** `original_text` is immutable after its first write (history
+   T-HIS-013). A cancel that lands while or after the transcript `update_run` runs therefore
+   keeps the stored text. The run still ends `cancelled`, with 0 dispatch, and COPY remains the
+   only recovery action for a cancelled run.
+   - Text stays None only when the cancel is observed before the transcript is persisted.
+   - Sol corrects T-RUN-011 to expect: `cancelled`, 0 `send_inputs`, text kept.
