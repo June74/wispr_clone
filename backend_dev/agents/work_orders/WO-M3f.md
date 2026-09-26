@@ -84,3 +84,12 @@ Authorization: edit only writable paths; no git writes; no PRs; the coordinator 
    - The recording slot stays held until `transcribe_file` returns, because the engine really
      is busy, and is freed then.
    - T-RUN-040e asserts the slot is free after the transcription returns, not before.
+2. **After Sol's verification (T-RUN-042a, 042b, 042e), binding:**
+   - a. `recover(RETRY_STT)` reserves the recording slot synchronously, before its first await.
+     If the slot is already held → DEVICE_LEASE_CONFLICT. Any failure before the task starts
+     frees it.
+   - b. While `transcribe_file` is in progress, neither `abort` nor `cancel` frees the slot;
+     only the return or raise of `transcribe_file` does. This is an explicit exception to M3e
+     rule 1, because the engine's one session is really in use.
+   - c. The cancel/abort flag is checked immediately before calling `transcribe_file`. If it is
+     set, don't transcribe: free the slot and end the run `cancelled` (abort: quietly).

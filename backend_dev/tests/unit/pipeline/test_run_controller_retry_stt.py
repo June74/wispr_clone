@@ -222,6 +222,7 @@ async def test_T_RUN_040_retry_replays_wav_and_preserves_age(tmp_path: Path) -> 
 async def test_T_RUN_040b_failed_replay_remains_retryable(tmp_path: Path) -> None:
     async with scenario(tmp_path) as rig:
         run_id, first = await rig.captured_failure()
+        await rig.dictionary.add(DictionaryEntry("OpenWhispr", ("open whisper",)))
         rig.stt.fail_replay = ErrorCode.STT_UNAVAILABLE
         await rig.controller.recover(
             run_id, RecoveryAction.RETRY_STT, expected_version=first.version
@@ -245,6 +246,7 @@ async def test_T_RUN_040b_failed_replay_remains_retryable(tmp_path: Path) -> Non
 async def test_T_RUN_040c_no_speech_can_be_retried(tmp_path: Path) -> None:
     async with scenario(tmp_path) as rig:
         run_id, empty = await rig.captured_failure(text="")
+        await rig.dictionary.add(DictionaryEntry("OpenWhispr", ("open whisper",)))
         assert empty.original_text is None
         assert empty.error_code == ErrorCode.NO_SPEECH_DETECTED.value
         assert "retry_stt" in rig.actions(run_id)
@@ -366,6 +368,128 @@ async def test_T_RUN_041c_stale_and_expired_precede_audio_checks(
         assert caught.value.error_code == ErrorCode.STALE_VERSION
         rig.clock.advance(RUN_RETENTION_SECONDS)
         await rejects(rig, failed, ErrorCode.RUN_EXPIRED)
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_042a_start_cannot_claim_slot_during_retry_write(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id, failed = await rig.captured_failure()
+        original_update = rig.history.update_run
+        writing = asyncio.Event()
+        release = asyncio.Event()
+
+        async def paused_update(target_run_id: str, **changes: Any) -> RunRecord:
+            if (
+                target_run_id == run_id
+                and changes.get("status") == RunStatus.PROCESSING
+            ):
+                writing.set()
+                await release.wait()
+            return await original_update(target_run_id, **changes)
+
+        rig.history.update_run = paused_update  # type: ignore[method-assign]
+        retry = asyncio.create_task(
+            rig.controller.recover(
+                run_id, RecoveryAction.RETRY_STT, expected_version=failed.version
+            )
+        )
+        started: str | None = None
+        start_error: WisprError | None = None
+        try:
+            await asyncio.wait_for(writing.wait(), 1)
+            try:
+                started = await rig.controller.start(start_request_id="racing-start")
+            except WisprError as error:
+                start_error = error
+            if started is not None:
+                await rig.controller.cancel(started)
+                await rig.controller.settled(started)
+        finally:
+            release.set()
+        await retry
+        await rig.controller.settled(run_id)
+        assert start_error is not None
+        assert start_error.error_code == ErrorCode.DEVICE_LEASE_CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_042b_abort_holds_slot_until_transcription_returns(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id, failed = await rig.captured_failure()
+        rig.stt.replay_release.clear()
+        await rig.controller.recover(
+            run_id, RecoveryAction.RETRY_STT, expected_version=failed.version
+        )
+        await asyncio.wait_for(rig.stt.replay_entered.wait(), 1)
+        await rig.history.delete_run(run_id)
+        rig.controller.abort(run_id)
+        try:
+            with pytest.raises(WisprError) as caught:
+                await rig.controller.start(start_request_id="during-abort")
+            assert caught.value.error_code == ErrorCode.DEVICE_LEASE_CONFLICT
+        finally:
+            rig.stt.replay_release.set()
+        with pytest.raises(WisprError) as caught:
+            await rig.controller.settled(run_id)
+        assert caught.value.error_code == ErrorCode.RUN_NOT_FOUND
+        assert rig.sends() == 0
+        next_run = await rig.controller.start(start_request_id="after-abort")
+        await rig.controller.cancel(next_run)
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_042c_double_retry_starts_one_transcription(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id, failed = await rig.captured_failure()
+        rig.stt.replay_release.clear()
+        await rig.controller.recover(
+            run_id, RecoveryAction.RETRY_STT, expected_version=failed.version
+        )
+        try:
+            await asyncio.wait_for(rig.stt.replay_entered.wait(), 1)
+            with pytest.raises(WisprError) as caught:
+                await rig.controller.recover(
+                    run_id, RecoveryAction.RETRY_STT, expected_version=failed.version
+                )
+            assert caught.value.error_code == ErrorCode.STALE_VERSION
+            assert len(rig.stt.transcribed) == 1
+        finally:
+            rig.stt.replay_release.set()
+        await rig.controller.settled(run_id)
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_042d_corrupt_wav_does_not_break_recovery_publish(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id, failed = await rig.captured_failure()
+        assert failed.audio_path is not None
+        Path(failed.audio_path).write_bytes(b"corrupt WAV")
+        rig.controller._publish_recovery(failed)
+        assert "retry_stt" not in rig.actions(run_id)
+        await rejects(rig, failed, ErrorCode.VALIDATION, "no audio")
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_042e_cancel_before_retry_task_skips_transcription(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id, failed = await rig.captured_failure()
+        await rig.controller.recover(
+            run_id, RecoveryAction.RETRY_STT, expected_version=failed.version
+        )
+        await rig.controller.cancel(run_id)
+        assert (await rig.controller.settled(run_id)).status == RunStatus.CANCELLED
+        assert rig.stt.transcribed == []
+        assert rig.sends() == 0
+        next_run = await rig.controller.start(start_request_id="after-cancel")
+        await rig.controller.cancel(next_run)
 
 
 @pytest.mark.asyncio
