@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit, urlunsplit
+
 import pytest
 from fakes.webview import FakeWebview, Window
 
@@ -83,7 +85,7 @@ def test_T_UI_004_navigation_is_restricted_to_bundled_file(event_name: str) -> N
     settings.url = allowed.replace("/index.html", "/%69ndex.html")
     event.emit()
     assert _loads(settings) == [allowed, allowed, allowed]
-    settings.url = allowed.replace("file:///", "file://remote-host/")
+    settings.url = urlunsplit(urlsplit(allowed)._replace(netloc="remote-host"))
     event.emit()
     assert _loads(settings) == [allowed, allowed, allowed, allowed]
     settings.url = "about:blank"

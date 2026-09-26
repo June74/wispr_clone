@@ -270,11 +270,13 @@ class App:
         self._instance: SingleInstance | None = None
         self._started = False
         self._closed = False
+        self._stopping = False
         self._win32: Win32Api | None = None
         self._uia: UiaApi | None = None
         self._destination: DestinationSnapshot | None = None
         self._last_hwnd: int | None = None
         self._windows: list[Any] = []
+        self._webview_module: Any = None
         self._hud: Any = None
         self._settings: Settings | None = None
         self._api: Api | None = None
@@ -308,6 +310,8 @@ class App:
         self.startup_log.append("directories")
         self._db = self.factories.open_database(self.data_dir / "wispr_clone.db")
         await self._db.open()
+        if self._stopping:
+            return
         self.startup_log.append("database")
         win32, uia = self.factories.win32(), self.factories.uia()
         self._win32, self._uia = win32, uia
@@ -319,8 +323,13 @@ class App:
             on_run_evicted=self._on_evicted,
         )
         await self._history.recover_on_startup()
+        if self._stopping:
+            return
         self.startup_log.append("history_recovery")
-        for record in await self._history.list_runs():
+        records = await self._history.list_runs()
+        if self._stopping:
+            return
+        for record in records:
             if record.status in {RunStatus.RECORDING, RunStatus.PROCESSING}:
                 failed = RunState(record.status, record.version)
                 next_state = transition(failed, RunEvent.FAIL)
@@ -330,10 +339,14 @@ class App:
                     status=next_state.status,
                     error_code="storage_error",
                 )
+                if self._stopping:
+                    return
         self.startup_log.append("interrupted_runs")
         registry = default_registry()
         store = SettingsStore(self._db, registry)
         self._settings = await store.load()
+        if self._stopping:
+            return
         self.startup_log.append("settings")
         self._stt = self.factories.stt_engine(self._settings)
         lease = DeviceLease()
@@ -488,6 +501,8 @@ class App:
             await self._stt.start()
         except Exception:
             pass
+        if self._stopping:
+            return
         self.startup_log.append("stt")
         self._start_hotkey()
         self._start_timers()
@@ -587,7 +602,7 @@ class App:
             asyncio.create_task(
                 self._periodic("tracker", config.TRACKER_S, self._track_destination)
             ),
-            asyncio.create_task(self._retention_loop()),
+            asyncio.create_task(self._retention_loop(initial_delay=0.05)),
         ]
 
     async def _periodic(
@@ -630,13 +645,20 @@ class App:
         except Exception:
             return
 
-    async def _retention_loop(self) -> None:
+    async def _retention_loop(self, *, initial_delay: float = 0.0) -> None:
+        if initial_delay:
+            await asyncio.sleep(initial_delay)
         while True:
             delay = 60.0
-            if self._history:
-                expiry = self._history.next_expiry_at()
-                if expiry is not None:
-                    delay = max(0.0, expiry - self.factories.clock())
+            try:
+                if self._history:
+                    expiry = self._history.next_expiry_at()
+                    if expiry is not None:
+                        delay = max(0.0, expiry - self.factories.clock())
+            except Exception:
+                self.timer_errors["retention"] = (
+                    self.timer_errors.get("retention", 0) + 1
+                )
             await asyncio.sleep(delay)
             try:
                 if self._history:
@@ -655,7 +677,9 @@ class App:
     def _create_windows(self) -> None:
         if self.factories.webview is None or self._windows:
             return
-        webview = self.factories.webview()
+        if self._webview_module is None:
+            self._webview_module = self.factories.webview()
+        webview = self._webview_module
         hud_url = (Path(__file__).resolve().parents[2] / "web" / "hud.html").as_uri()
         self._hud = open_hud(webview, hud_url=hud_url)
         self._events.target = WebviewEventSink(
@@ -674,6 +698,7 @@ class App:
         self.startup_log.append("windows")
 
     async def shutdown(self) -> None:
+        self._stopping = True
         if self._closed:
             return
         self._closed = True
@@ -760,17 +785,22 @@ class App:
         self._worker_ready.wait()
         if self._worker_error is not None:
             return 1
+        exit_code = 0
         if self.factories.webview is not None:
-            self._create_windows()
             self._gui_thread_id = threading.get_ident()
             try:
-                start_webview(self.factories.webview(), debug=self.debug)
+                self._create_windows()
+                if self._webview_module is None:
+                    raise RuntimeError("webview unavailable")
+                start_webview(self._webview_module, debug=self.debug)
+            except Exception:
+                exit_code = 1
             finally:
                 self._schedule_shutdown()
         else:
             self._worker_done.wait()
         self._worker_done.wait()
-        return 0
+        return exit_code
 
     def _worker_main(self) -> None:
         loop = asyncio.new_event_loop()
