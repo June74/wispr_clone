@@ -18,6 +18,18 @@ def _normalized_url(url: str | None) -> tuple[str, str, str, str, str] | None:
     return (parts.scheme.casefold(), parts.netloc.casefold(), path, "", "")
 
 
+def _lock_navigation(window: object, allowed: str) -> None:
+    """Keep a native window on its single bundled page."""
+
+    def check_navigation(*_args: object, **_kwargs: object) -> None:
+        current = window.get_current_url()  # type: ignore[attr-defined]
+        if _normalized_url(current) != _normalized_url(allowed):
+            window.load_url(allowed)  # type: ignore[attr-defined]
+
+    window.events.before_load += check_navigation  # type: ignore[attr-defined]
+    window.events.loaded += check_navigation  # type: ignore[attr-defined]
+
+
 def open_settings(webview: object, api_bridge: object, *, debug: bool) -> object:
     """Create the sole bridged window and constrain it to the bundled page."""
     allowed = _settings_url()
@@ -30,13 +42,7 @@ def open_settings(webview: object, api_bridge: object, *, debug: bool) -> object
         min_size=(1100, 700),
     )
 
-    def lock_navigation(*_args: object, **_kwargs: object) -> None:
-        current = window.get_current_url()
-        if _normalized_url(current) != _normalized_url(allowed):
-            window.load_url(allowed)
-
-    window.events.before_load += lock_navigation
-    window.events.loaded += lock_navigation
+    _lock_navigation(window, allowed)
     return window
 
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol, cast
 
+from wispr_clone.ui.windows import _lock_navigation
+
 
 class HudWindow(Protocol):
     def show(self) -> None: ...
@@ -27,6 +29,7 @@ def open_hud(webview: object, *, hud_url: str) -> HudWindow:
         height=56,
         hidden=True,
     )
+    _lock_navigation(window, hud_url)
     screens = getattr(webview, "screens", ())
     if screens:
         primary = next((screen for screen in screens if screen.is_primary), screens[0])
