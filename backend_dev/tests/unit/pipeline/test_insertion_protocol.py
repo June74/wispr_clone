@@ -16,15 +16,16 @@ from fakes.clock import FakeClock
 from fakes.events import FakeEventSink
 from fakes.ids import FakeIdFactory
 from fakes.insertion import FakeUiaApi, FakeWin32Api
+
+from wispr_clone.contracts.common import ErrorCode, WisprError
+from wispr_clone.contracts.run import AttemptOutcome
+from wispr_clone.history.repo import HistoryRepo
+from wispr_clone.insertion.destination import DestinationSnapshot, capture
 from wispr_clone.pipeline.insertion_protocol import (
     InsertionProtocol,
     ProtocolOutcome,
     WaitingRun,
 )
-
-from wispr_clone.contracts.run import AttemptOutcome
-from wispr_clone.history.repo import HistoryRepo
-from wispr_clone.insertion.destination import DestinationSnapshot, capture
 from wispr_clone.storage import Connection, Database, Migration
 
 
@@ -515,4 +516,155 @@ async def test_T_PRO_019_idle_resets_after_claim(tmp_path: Path) -> None:
         assert attempts[0].outcome == AttemptOutcome.FAILED
         assert s.win.foreground == 20
         assert s.uia.tabs[20] == (20, 1)
+        assert s.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_PRO_020_expiry_resolves_then_enforces_retention_without_delete_run(
+    tmp_path: Path,
+) -> None:
+    from wispr_clone.config import RUN_RETENTION_SECONDS
+
+    async with scenario(tmp_path) as s:
+        original_get = s.history.get
+        original_enforce = s.history.enforce_retention
+        resolved_before_sweep: list[AttemptOutcome] = []
+
+        async def expire_then_get(run_id: str) -> Any:
+            s.clock.advance(RUN_RETENTION_SECONDS)
+            return await original_get(run_id)
+
+        async def inspect_then_enforce() -> tuple[str, ...]:
+            attempts = await s.history.attempts(s.run_id)
+            resolved_before_sweep.extend(attempt.outcome for attempt in attempts)
+            return await original_enforce()
+
+        s.history.get = expire_then_get  # type: ignore[method-assign]
+        s.history.enforce_retention = inspect_then_enforce  # type: ignore[method-assign]
+        s.history.delete_run = AsyncMock(
+            side_effect=AssertionError("delete_run called")
+        )  # type: ignore[method-assign]
+
+        result = await s.attempt()
+
+        assert (result.outcome, result.reason) == (ProtocolOutcome.ABANDONED, "expired")
+        assert result.attempt_id is not None
+        assert resolved_before_sweep == [AttemptOutcome.CANCELLED]
+        with pytest.raises(WisprError) as missing:
+            await original_get(s.run_id)
+        assert missing.value.error_code == ErrorCode.RUN_NOT_FOUND
+        assert await s.history.attempts(s.run_id) == ()
+        assert s.history.delete_run.await_count == 0
+        assert s.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_PRO_021_history_read_error_resolves_failed(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as s:
+        s.history.get = AsyncMock(  # type: ignore[method-assign]
+            side_effect=WisprError(ErrorCode.STORAGE_ERROR, "history", "private")
+        )
+        result = await s.attempt()
+        assert (result.outcome, result.reason) == (
+            ProtocolOutcome.FAILED,
+            "history error",
+        )
+        assert result.attempt_id is not None
+        assert (await s.history.attempts(s.run_id))[0].outcome == AttemptOutcome.FAILED
+        assert s.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_PRO_022_confirmation_error_is_uncertain_not_in_flight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with scenario(tmp_path) as s:
+
+        def fail_confirmation(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("PRIVATE TRANSCRIPT PRIVATE TITLE")
+
+        monkeypatch.setattr(
+            "wispr_clone.pipeline.insertion_protocol.confirm", fail_confirmation
+        )
+        result = await s.attempt()
+        assert (result.outcome, result.reason) == (
+            ProtocolOutcome.UNCERTAIN,
+            "not confirmed",
+        )
+        assert (await s.history.attempts(s.run_id))[
+            0
+        ].outcome == AttemptOutcome.UNCERTAIN
+        assert s.sends() == 1
+
+
+@pytest.mark.asyncio
+async def test_T_PRO_023_final_verify_offload_error_resolves_claim(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as s:
+        calls = 0
+
+        async def fail_final_offload(call: Callable[[], Any]) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("offload failed")
+            return call()
+
+        s.protocol._offload = fail_final_offload  # type: ignore[method-assign]
+        result = await s.attempt()
+        assert (result.outcome, result.reason) == (
+            ProtocolOutcome.FAILED,
+            "unverifiable",
+        )
+        assert (await s.history.attempts(s.run_id))[0].outcome == AttemptOutcome.FAILED
+        assert s.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_PRO_024_final_idle_offload_error_resolves_and_restores(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as s:
+        s.win.foreground = 20
+        s.win.idle_values = [1500] * 8
+        original_claim = s.history.claim_attempt
+
+        async def claim_then_fail_idle(*args: Any, **kwargs: Any) -> Any:
+            claim = await original_claim(*args, **kwargs)
+            s.win.idle_ms = lambda: (_ for _ in ()).throw(RuntimeError("idle failed"))  # type: ignore[method-assign]
+            return claim
+
+        s.history.claim_attempt = claim_then_fail_idle  # type: ignore[method-assign]
+        result = await s.protocol.deliver_next(
+            [s.waiting()], is_cancelled=lambda _: False
+        )
+        assert result is not None
+        assert (result[1].outcome, result[1].reason) == (
+            ProtocolOutcome.FAILED,
+            "input during jump",
+        )
+        assert (await s.history.attempts(s.run_id))[0].outcome == AttemptOutcome.FAILED
+        assert s.win.foreground == 20
+        assert s.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_PRO_025_final_cancel_check_error_resolves_claim(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as s:
+        checks = 0
+
+        def cancellation_state() -> bool:
+            nonlocal checks
+            checks += 1
+            if checks == 2:
+                raise RuntimeError("cancellation state unavailable")
+            return False
+
+        await s.attempt(cancelled=cancellation_state)
+        assert (await s.history.attempts(s.run_id))[
+            0
+        ].outcome != AttemptOutcome.IN_FLIGHT
         assert s.sends() == 0

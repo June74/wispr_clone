@@ -217,3 +217,12 @@ tests in `tests/unit/pipeline/`.
    The protocol never calls `delete_run` itself.
 5. At the final recheck, any other failure reading the run (not RUN_EXPIRED/RUN_NOT_FOUND) →
    resolve the attempt `failed`, and return FAILED "history error" (not "window changed").
+6. After Sol's verification: no exception may leave a claimed attempt `in_flight` or escape
+   `attempt`/`deliver_next` after the claim. The only exception is a failure of
+   `resolve_attempt` itself (step 6).
+   - Before dispatch (nothing was sent):
+     - the final verify raises → resolve `failed`, FAILED "unverifiable";
+     - the idle recheck raises → resolve `failed`, FAILED "input during jump";
+     - `is_cancelled` raises → resolve `cancelled`, CANCELLED "cancelled".
+   - After dispatch: `confirm` raises → resolve `uncertain`, UNCERTAIN "not confirmed".
+   - Exception messages are never propagated or logged (privacy).

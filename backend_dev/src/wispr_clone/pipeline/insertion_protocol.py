@@ -162,16 +162,17 @@ class InsertionProtocol:
             # History protects in-flight rows from its ordinary retention sweep.
             # The protocol must still enforce the dispatch-time expiry boundary.
             if is_expired(run.created_at, self._clock()):
-                await self._history.delete_run(run_id)
+                await self._resolve(attempt_id, AttemptOutcome.CANCELLED)
+                await self._history.enforce_retention()
                 return ProtocolResult(ProtocolOutcome.ABANDONED, attempt_id, "expired")
         except WisprError as error:
             if error.error_code in (ErrorCode.RUN_EXPIRED, ErrorCode.RUN_NOT_FOUND):
                 return ProtocolResult(ProtocolOutcome.ABANDONED, attempt_id, "expired")
             await self._resolve(attempt_id, AttemptOutcome.FAILED)
-            return ProtocolResult(ProtocolOutcome.FAILED, attempt_id, "window changed")
+            return ProtocolResult(ProtocolOutcome.FAILED, attempt_id, "history error")
         except Exception:
             await self._resolve(attempt_id, AttemptOutcome.FAILED)
-            return ProtocolResult(ProtocolOutcome.FAILED, attempt_id, "window changed")
+            return ProtocolResult(ProtocolOutcome.FAILED, attempt_id, "history error")
 
         check = await self._offload(lambda: verify(snapshot, self._win32, self._uia))
         if check.status != "same":
