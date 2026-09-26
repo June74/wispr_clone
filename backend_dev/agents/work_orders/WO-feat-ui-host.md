@@ -141,3 +141,7 @@ calls.
 2. The event-sink clock injection is named `clock` (a callable returning seconds), as Sol's tests use.
 3. CODEMAP §7 wording ("all gates unverified" while the G3 row records a passed focus test)
    is a documentation inconsistency. Out of scope here; it is fixed in M5 docs.
+4. **After Sol's verification (T-UI-004 HUD cases):** `open_hud` attaches the same navigation
+   lock as the settings window (`before_load` + `loaded`, allowed = the HUD page URL only,
+   external/other-local/about:blank → `load_url(allowed)`). Share one helper between the two
+   windows.

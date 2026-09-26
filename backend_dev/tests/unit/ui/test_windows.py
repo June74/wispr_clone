@@ -34,6 +34,25 @@ def test_T_UI_003_hud_has_no_bridge_and_cannot_activate() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize("event_name", ["before_load", "loaded"])
+@pytest.mark.parametrize(
+    "destination", ["https://example.invalid/", "file:///other/hud.html", "about:blank"]
+)
+def test_T_UI_004_hud_navigation_is_restricted_to_its_bundled_file(
+    event_name: str, destination: str
+) -> None:
+    webview = FakeWebview()
+    allowed = "file:///bundled/hud.html"
+    open_hud(webview, hud_url=allowed)
+    hud = webview.windows[0]
+    hud.url = destination
+
+    getattr(hud.events, event_name).emit()
+
+    assert _loads(hud) == [allowed]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("event_name", ["before_load", "loaded"])
 def test_T_UI_004_navigation_is_restricted_to_bundled_file(event_name: str) -> None:
     webview = FakeWebview()
     bridge = object()
@@ -56,6 +75,20 @@ def test_T_UI_004_navigation_is_restricted_to_bundled_file(event_name: str) -> N
     settings.url = allowed + "?state=1#view"
     event.emit()
     assert _loads(settings) == [allowed, allowed]
+
+    settings.url = allowed.upper()
+    event.emit()
+    assert _loads(settings) == [allowed, allowed]
+
+    settings.url = allowed.replace("/index.html", "/%69ndex.html")
+    event.emit()
+    assert _loads(settings) == [allowed, allowed, allowed]
+    settings.url = allowed.replace("file:///", "file://remote-host/")
+    event.emit()
+    assert _loads(settings) == [allowed, allowed, allowed, allowed]
+    settings.url = "about:blank"
+    event.emit()
+    assert _loads(settings) == [allowed] * 5
 
 
 @pytest.mark.unit

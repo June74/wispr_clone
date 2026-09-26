@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 from fakes.webview import FakeWebview, Window
@@ -28,13 +29,15 @@ def test_T_UI_002_event_is_one_json_string_literal_without_eval() -> None:
     sink = WebviewEventSink(settings, hud, clock=lambda: 0.0)
     event: RunStateEvent = {
         "name": "run:state",
-        "run_id": 'quote" </script> \\ line\u2028separator',
+        "run_id": 'quote" </script> \\ line\u2028separator\u2029paragraph',
         "version": 1,
         "status": "recording",
     }
     sink.publish(event)
     serialized = json.dumps(event, ensure_ascii=True)
     expected = "window.wisprEvent(" + json.dumps(serialized) + ")"
+    assert "\u2028" not in expected
+    assert "\u2029" not in expected
     for window in (settings, hud):
         assert _scripts(window) == [expected]
         literal = _scripts(window)[0][len("window.wisprEvent(") : -1]
@@ -50,8 +53,38 @@ def test_T_UI_003_hud_receives_only_state_and_level() -> None:
     level: AudioLevelEvent = {"name": "audio:level", "run_id": "r", "bands": [0.2]}
     sink.publish(level)
     sink.publish({"name": "history:changed", "run_ids": ["r"], "reason": "added"})
-    assert len(_scripts(settings)) == 3
+    sink.publish(
+        {
+            "name": "run:recovery",
+            "run_id": "r",
+            "version": 1,
+            "status": "awaiting_cleanup_choice",
+            "actions": ["use_original"],
+        }
+    )
+    sink.publish({"name": "models:status", "models": []})
+    assert len(_scripts(settings)) == 5
     assert len(_scripts(hud)) == 2
+
+
+@pytest.mark.unit
+def test_T_UI_002_delivery_failure_does_not_log_event_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings, _ = _windows()
+    settings.raise_on_run_js = True
+    sink = WebviewEventSink(settings)
+    with caplog.at_level(logging.DEBUG):
+        sink.publish(
+            {
+                "name": "run:state",
+                "run_id": "private transcript marker",
+                "version": 1,
+                "status": "recording",
+            }
+        )
+    assert sink.delivery_errors == 1
+    assert "private transcript marker" not in caplog.text
 
 
 @pytest.mark.unit
