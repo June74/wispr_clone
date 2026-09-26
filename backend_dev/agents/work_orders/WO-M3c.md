@@ -123,3 +123,12 @@ event.
    - dictionary **entries** are re-read from DictionaryRepo (for the glossary);
    - **instructions** always come from the run's stored `record.config`, never the live
      settings (rule 1).
+2. **After Sol's verification (T-RUN-017a-c):**
+   - a. Cleanup-on: the transcript fields and `cleanup_status=pending` go in the SAME
+     `update_run` (rule 3.1). No intermediate record ever shows the text with cleanup `off`.
+   - b. Cleanup failure or rejection: the cleanup fields and `status=awaiting_cleanup_choice` go
+     in ONE `update_run` (rule 3.5). Compute the CLEANUP_FAILED transition first, then write once.
+   - c. A recovery task that fails for any reason: one `update_run` with FAIL → `error`,
+     `error_code` (same `_error_code` rule as M3a 2b), and, if `cleanup_status` is `pending`,
+     also `cleanup_status=failed` and `cleanup_reason` = that code. The exception is still
+     re-raised once through `settled`.

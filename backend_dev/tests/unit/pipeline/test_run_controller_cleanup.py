@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import gc
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fakes.audio import FakeCapture
 from fakes.cleanup import FakeCleanupEngine
@@ -17,6 +20,7 @@ from fakes.insertion import FakeUiaApi, FakeWin32Api
 from fakes.stt import FakeSttEngine
 
 from wispr_clone.audio.wav_writer import WavWriter
+from wispr_clone.cleanup.lmstudio_cleanup import LmStudioCleanup
 from wispr_clone.contracts.common import ErrorCode, ThirdPartyError, WisprError
 from wispr_clone.contracts.run import CleanupStatus, RecoveryAction, RunStatus
 from wispr_clone.dictionary.apply import DictionaryEntry
@@ -417,3 +421,242 @@ async def test_T_RUN_016_cleanup_privacy(
                 private not in record.cleanup_reason
                 for private in (RAW, ADJUSTED, "do OpenWhispr")
             )
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_017a_pending_is_atomic_with_transcript(tmp_path: Path) -> None:
+    cleanup = FakeCleanupEngine(CLEANED)
+    cleanup.release.clear()
+    async with scenario(tmp_path, cleanup=cleanup) as rig:
+        observed: list[RunRecord] = []
+        update = rig.history.update_run
+
+        async def observing_update(
+            run_id: str, *, expected_version: int, **fields: object
+        ) -> RunRecord:
+            record = await update(run_id, expected_version=expected_version, **fields)
+            observed.append(record)
+            return record
+
+        rig.history.update_run = observing_update  # type: ignore[method-assign]
+        run_id = await rig.controller.start(start_request_id="start-1")
+        await rig.controller.stop(run_id)
+        await cleanup.entered.wait()
+        cleanup.release.set()
+        await rig.controller.settled(run_id)
+        assert all(
+            record.cleanup_status != CleanupStatus.OFF
+            for record in observed
+            if record.original_text == RAW
+            and record.adjusted_text == ADJUSTED
+            and record.status == RunStatus.PROCESSING
+        )
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_017b_failure_status_is_atomic_with_reason(tmp_path: Path) -> None:
+    async with scenario(tmp_path, cleanup=FakeCleanupEngine(timeout())) as rig:
+        observed: list[RunRecord] = []
+        update = rig.history.update_run
+
+        async def observing_update(
+            run_id: str, *, expected_version: int, **fields: object
+        ) -> RunRecord:
+            record = await update(run_id, expected_version=expected_version, **fields)
+            observed.append(record)
+            return record
+
+        rig.history.update_run = observing_update  # type: ignore[method-assign]
+        await rig.finish()
+        assert all(
+            record.status == RunStatus.AWAITING_CLEANUP_CHOICE
+            for record in observed
+            if record.cleanup_status == CleanupStatus.FAILED
+        )
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_017c_recovery_task_failure_is_consistent_and_consumed(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    async with scenario(tmp_path, cleanup=FakeCleanupEngine(timeout())) as rig:
+        run_id, failed = await rig.finish()
+
+        async def broken_entries() -> list[DictionaryEntry]:
+            raise RuntimeError("dictionary unavailable")
+
+        rig.controller._services.dictionary.entries = broken_entries  # type: ignore[method-assign]
+        with caplog.at_level(logging.ERROR):
+            await rig.controller.recover(
+                run_id, RecoveryAction.RETRY_CLEANUP, expected_version=failed.version
+            )
+            with pytest.raises(RuntimeError, match="dictionary unavailable"):
+                await rig.controller.settled(run_id)
+            gc.collect()
+            await asyncio.sleep(0)
+            assert "Task exception was never retrieved" not in caplog.text
+        record = await rig.history.get(run_id)
+        assert record.status == RunStatus.ERROR
+        assert record.error_code == ErrorCode.STORAGE_ERROR.value
+        assert record.cleanup_status != CleanupStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_017d_concurrent_recover_starts_one_task_and_inserts_once(
+    tmp_path: Path,
+) -> None:
+    cleanup = FakeCleanupEngine(timeout(), CLEANED)
+    async with scenario(tmp_path, cleanup=cleanup) as rig:
+        run_id, failed = await rig.finish()
+        rig.inserted[0] = CLEANED
+        cleanup.entered.clear()
+        cleanup.release.clear()
+        results = await asyncio.gather(
+            rig.controller.recover(
+                run_id, RecoveryAction.RETRY_CLEANUP, expected_version=failed.version
+            ),
+            rig.controller.recover(
+                run_id, RecoveryAction.RETRY_CLEANUP, expected_version=failed.version
+            ),
+            return_exceptions=True,
+        )
+        assert sum(result is None for result in results) == 1
+        errors = [result for result in results if isinstance(result, WisprError)]
+        assert len(errors) == 1 and errors[0].error_code == ErrorCode.STALE_VERSION
+        await cleanup.entered.wait()
+        processing = await rig.history.get(run_id)
+        with pytest.raises(WisprError) as raised:
+            await rig.controller.recover(
+                run_id,
+                RecoveryAction.RETRY_CLEANUP,
+                expected_version=processing.version,
+            )
+        assert raised.value.error_code == ErrorCode.VALIDATION
+        cleanup.release.set()
+        record = await rig.controller.settled(run_id)
+        assert record.status == RunStatus.DONE
+        assert len(cleanup.requests) == 2
+        assert rig.sends() == 1 and len(await rig.history.attempts(run_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_017e_recover_while_run_task_alive_is_rejected(
+    tmp_path: Path,
+) -> None:
+    cleanup = FakeCleanupEngine(timeout(), CLEANED)
+    cleanup.release.clear()
+    async with scenario(tmp_path, cleanup=cleanup) as rig:
+        run_id = await rig.controller.start(start_request_id="start-1")
+        await rig.controller.stop(run_id)
+        await cleanup.entered.wait()
+        pending = await rig.history.get(run_id)
+        with pytest.raises(WisprError) as raised:
+            await rig.controller.recover(
+                run_id, RecoveryAction.RETRY_CLEANUP, expected_version=pending.version
+            )
+        assert raised.value.error_code == ErrorCode.VALIDATION
+        cleanup.release.set()
+        choice = await rig.controller.settled(run_id)
+        assert choice.status == RunStatus.AWAITING_CLEANUP_CHOICE
+        assert len(cleanup.requests) == 1 and rig.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_017f_cancel_during_retry_cleanup_discards_result(
+    tmp_path: Path,
+) -> None:
+    cleanup = FakeCleanupEngine(timeout(), CLEANED)
+    async with scenario(tmp_path, cleanup=cleanup) as rig:
+        run_id, failed = await rig.finish()
+        cleanup.entered.clear()
+        cleanup.release.clear()
+        await rig.controller.recover(
+            run_id, RecoveryAction.RETRY_CLEANUP, expected_version=failed.version
+        )
+        await cleanup.entered.wait()
+        await rig.controller.cancel(run_id)
+        cleanup.release.set()
+        record = await rig.controller.settled(run_id)
+        assert record.status == RunStatus.CANCELLED
+        assert record.cleaned_text is None
+        assert rig.sends() == 0 and await rig.history.attempts(run_id) == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("loaded", "result", "expected_status"),
+    [
+        (True, "  do not OpenWhispr. \n", RunStatus.DONE),
+        (True, "do OpenWhispr", RunStatus.AWAITING_CLEANUP_CHOICE),
+        (False, None, RunStatus.AWAITING_CLEANUP_CHOICE),
+    ],
+)
+async def test_T_RUN_017g_real_cleanup_and_guard_boundary(
+    tmp_path: Path, loaded: bool, result: str | None, expected_status: RunStatus
+) -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path == "/api/v0/models":
+            state = "loaded" if loaded else "not-loaded"
+            return httpx.Response(
+                200,
+                json={"data": [{"id": "meta-llama-3.1-8b-instruct", "state": state}]},
+            )
+        assert request.url.path == "/v1/chat/completions"
+        return httpx.Response(200, json={"choices": [{"message": {"content": result}}]})
+
+    engine = LmStudioCleanup(transport=httpx.MockTransport(handler))
+    try:
+        async with scenario(tmp_path, cleanup=engine) as rig:  # type: ignore[arg-type]
+            rig.inserted[0] = CLEANED
+            run_id, record = await rig.finish()
+            assert record.status == expected_status
+            if expected_status == RunStatus.DONE:
+                assert record.cleaned_text == CLEANED
+                assert rig.sends() == 1
+                assert rig.uia.texts[(1, 2)] == "before" + CLEANED
+            else:
+                assert record.cleaned_text is None
+                assert rig.sends() == 0 and await rig.history.attempts(run_id) == ()
+                assert record.cleanup_reason == (
+                    "negation" if loaded else "cleanup_unavailable"
+                )
+            assert paths == (
+                ["/api/v0/models", "/v1/chat/completions"]
+                if loaded
+                else ["/api/v0/models"]
+            )
+    finally:
+        await engine.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "cancellable"),
+    [
+        (RunStatus.RECORDING, True),
+        (RunStatus.PROCESSING, True),
+        (RunStatus.AWAITING_CLEANUP_CHOICE, True),
+        (RunStatus.AWAITING_DESTINATION, True),
+        (RunStatus.HELD, False),
+        (RunStatus.ERROR, False),
+        (RunStatus.UNCERTAIN, False),
+    ],
+)
+async def test_T_RUN_017h_cancel_without_task_by_nonterminal_status(
+    tmp_path: Path, status: RunStatus, cancellable: bool
+) -> None:
+    async with scenario(tmp_path, cleanup=FakeCleanupEngine(timeout())) as rig:
+        run_id, choice = await rig.finish()
+        if status != choice.status:
+            choice = await rig.history.update_run(
+                run_id, expected_version=choice.version, status=status
+            )
+        events_before = len(rig.events.by_name("run:state"))
+        await rig.controller.cancel(run_id)
+        after = await rig.history.get(run_id)
+        assert after.status == (RunStatus.CANCELLED if cancellable else status)
+        assert after.version == choice.version + int(cancellable)
+        assert len(rig.events.by_name("run:state")) == events_before + int(cancellable)
