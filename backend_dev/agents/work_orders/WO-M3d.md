@@ -209,3 +209,8 @@ class WaitingRun:
    - Explicit Insert is supposed to wait for an in-progress tick, then see its attempt and
      reject "already inserted".
    - Add T-RUN-030f (Sol) for exactly the interleaving above.
+8. Under decision 7, `recover(INSERT)` and cancel's status write wait for an in-progress tick.
+   Tests that block a tick and then `await` recover/cancel inline deadlock by construction.
+   T-RUN-030a and 030c must start recover/cancel as tasks, release the tick, then await the
+   tasks. `cancel` still sets its flag and removes the waiting entry synchronously before its
+   first await, so the tick's pre-dispatch check sees it.

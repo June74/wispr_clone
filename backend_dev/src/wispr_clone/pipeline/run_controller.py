@@ -199,18 +199,18 @@ class RunController:
         self._waiting = [entry for entry in self._waiting if entry.run_id != run_id]
         task = self._tasks.get(run_id)
         if task is None or task.done():
-            try:
-                record = await self._services.history.get(run_id)
-            except WisprError:
-                self._cancel_flags.pop(run_id, None)
-                return
-            state = RunState(record.status, record.version)
-            try:
-                cancelled = transition(state, RunEvent.CANCEL)
-            except Exception:
-                self._cancel_flags.pop(run_id, None)
-                return
             async with self._insertion_gate:
+                try:
+                    record = await self._services.history.get(run_id)
+                except WisprError:
+                    self._cancel_flags.pop(run_id, None)
+                    return
+                state = RunState(record.status, record.version)
+                try:
+                    cancelled = transition(state, RunEvent.CANCEL)
+                except Exception:
+                    self._cancel_flags.pop(run_id, None)
+                    return
                 updated = await self._services.history.update_run(
                     run_id,
                     expected_version=record.version,
@@ -323,11 +323,6 @@ class RunController:
     ) -> None:
         # Re-read under the gate: a preceding insertion may have completed.
         record = await self._services.history.get(run_id)
-        if record.version != expected_version:
-            raise WisprError(ErrorCode.STALE_VERSION, "run", "version")
-        state = RunState(record.status, record.version)
-        if RecoveryAction.INSERT not in allowed_recovery_actions(state):
-            raise WisprError(ErrorCode.VALIDATION, "run", "action")
         attempts = await self._services.history.attempts(run_id)
         outcomes = {attempt.outcome.value for attempt in attempts}
         if "inserted" in outcomes:
@@ -336,6 +331,11 @@ class RunController:
             raise WisprError(ErrorCode.DUPLICATE_REQUEST, "run", "in flight")
         if "uncertain" in outcomes and not acknowledge_uncertain:
             raise WisprError(ErrorCode.VALIDATION, "run", "acknowledge")
+        if record.version != expected_version:
+            raise WisprError(ErrorCode.STALE_VERSION, "run", "version")
+        state = RunState(record.status, record.version)
+        if RecoveryAction.INSERT not in allowed_recovery_actions(state):
+            raise WisprError(ErrorCode.VALIDATION, "run", "action")
         stored_snapshot = (
             DestinationSnapshot.from_json(record.destination)
             if record.destination is not None
@@ -421,11 +421,11 @@ class RunController:
     async def delivery_tick(self) -> None:
         if not self._waiting:
             return
-        chosen = min(self._waiting, key=lambda item: item.awaiting_since)
         try:
             async with self._insertion_gate:
-                if chosen not in self._waiting:
+                if not self._waiting:
                     return
+                chosen = min(self._waiting, key=lambda item: item.awaiting_since)
                 record = await self._services.history.get(chosen.run_id)
                 if record.status.value != "awaiting_destination":
                     self._waiting = [
@@ -433,32 +433,31 @@ class RunController:
                     ]
                     return
                 waiting = tuple(self._waiting)
-            # The protocol may wait on window checks. Keep the controller gate free
-            # so explicit recovery or cancel can withdraw this run; the callback
-            # below then suppresses dispatch when that happens.
-            delivered = await self._services.insertion.deliver_next(
-                waiting,
-                is_cancelled=lambda rid: (
-                    self._cancel_flags.get(rid, False)
-                    or not any(entry.run_id == rid for entry in self._waiting)
-                ),
-            )
-            if delivered is None:
-                return
-            run_id, result = delivered
-            async with self._insertion_gate:
-                if not any(entry.run_id == run_id for entry in self._waiting):
+                delivered = await self._services.insertion.deliver_next(
+                    waiting,
+                    is_cancelled=lambda rid: (
+                        self._cancel_flags.get(rid, False)
+                        or not any(entry.run_id == rid for entry in self._waiting)
+                    ),
+                )
+                if delivered is None:
                     return
-            if result.outcome == ProtocolOutcome.AWAITING:
-                return
-            if result.outcome in {ProtocolOutcome.ABANDONED, ProtocolOutcome.DUPLICATE}:
+                run_id, result = delivered
+                if result.outcome == ProtocolOutcome.AWAITING:
+                    return
+                if result.outcome in {
+                    ProtocolOutcome.ABANDONED,
+                    ProtocolOutcome.DUPLICATE,
+                }:
+                    self._waiting = [
+                        entry for entry in self._waiting if entry.run_id != run_id
+                    ]
+                    return
+                record = await self._services.history.get(run_id)
+                await self._apply_events(record, events_for(result), awaiting=True)
                 self._waiting = [
                     entry for entry in self._waiting if entry.run_id != run_id
                 ]
-                return
-            record = await self._services.history.get(run_id)
-            await self._apply_events(record, events_for(result), awaiting=True)
-            self._waiting = [entry for entry in self._waiting if entry.run_id != run_id]
         except WisprError as error:
             if error.error_code in {ErrorCode.RUN_EXPIRED, ErrorCode.RUN_NOT_FOUND}:
                 self._waiting = [e for e in self._waiting if e.run_id != chosen.run_id]

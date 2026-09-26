@@ -502,12 +502,19 @@ async def test_T_RUN_030a_tick_must_not_paste_after_explicit_recovery_starts(
         tick = asyncio.create_task(rig.controller.delivery_tick())
         try:
             await asyncio.wait_for(entered.wait(), 1)
-            await rig.controller.recover(
-                run_id, RecoveryAction.INSERT, expected_version=waiting.version
+            recovery = asyncio.create_task(
+                rig.controller.recover(
+                    run_id, RecoveryAction.INSERT, expected_version=waiting.version
+                )
             )
+            await asyncio.sleep(0)
         finally:
             release.set()
-        await tick
+        await asyncio.wait_for(tick, 1)
+        with pytest.raises(WisprError) as caught:
+            await asyncio.wait_for(recovery, 1)
+        assert caught.value.error_code == ErrorCode.VALIDATION
+        assert caught.value.why == "already inserted"
         assert rig.sends() == 1
         assert len(await rig.history.attempts(run_id)) == 1
 
@@ -573,13 +580,15 @@ async def test_T_RUN_030c_cancelled_waiting_run_is_not_dispatched_by_running_tic
         tick = asyncio.create_task(rig.controller.delivery_tick())
         try:
             await asyncio.wait_for(entered.wait(), 1)
-            await rig.controller.cancel(run_id)
+            cancellation = asyncio.create_task(rig.controller.cancel(run_id))
+            await asyncio.sleep(0)
         finally:
             release.set()
-        await tick
+        await asyncio.wait_for(tick, 1)
+        await asyncio.wait_for(cancellation, 1)
         assert (await rig.history.get(run_id)).status == RunStatus.CANCELLED
         assert rig.sends() == 0
-        assert await rig.history.attempts(run_id) == []
+        assert await rig.history.attempts(run_id) == ()
 
 
 @pytest.mark.asyncio
@@ -620,26 +629,72 @@ async def test_T_RUN_030e_expired_waiting_run_is_removed_by_tick(
 
 
 @pytest.mark.asyncio
-async def test_T_RUN_030f_in_flight_attempt_blocks_explicit_recovery(
+async def test_T_RUN_030f_tick_dispatch_blocks_stale_explicit_recovery(
     tmp_path: Path,
 ) -> None:
     async with scenario(tmp_path) as rig:
-        rig.win.windows.remove(10)
-        run_id, held = await rig.finish()
-        await rig.history.claim_attempt(
-            run_id,
-            attempt_id="unfinished",
-            request_id="unfinished",
-            kind="explicit",
-        )
-        rig.win.windows.add(10)
-        with pytest.raises(WisprError) as caught:
-            await rig.controller.recover(
-                run_id, RecoveryAction.INSERT, expected_version=held.version
+        run_id, waiting = await rig.finish(away=True)
+        rig.win.foreground = 10
+        protocol = rig.controller._services.insertion
+        original_offload = protocol._offload
+        original_attempts = rig.history.attempts
+        tick_checked = asyncio.Event()
+        release_tick = asyncio.Event()
+        dispatch_started = asyncio.Event()
+        release_dispatch = asyncio.Event()
+        empty_attempts_read = asyncio.Event()
+
+        async def pause_tick_offload(operation: Callable[[], Any]) -> Any:
+            code = getattr(operation, "__code__", None)
+            if code is not None and "dispatch" in code.co_names:
+                dispatch_started.set()
+                await release_dispatch.wait()
+            elif not tick_checked.is_set():
+                tick_checked.set()
+                await release_tick.wait()
+            return await original_offload(operation)
+
+        async def pause_after_attempts_read(target_run_id: str) -> Any:
+            attempts = await original_attempts(target_run_id)
+            if target_run_id == run_id and not attempts:
+                empty_attempts_read.set()
+                await dispatch_started.wait()
+            return attempts
+
+        protocol._offload = pause_tick_offload
+        rig.history.attempts = pause_after_attempts_read  # type: ignore[method-assign]
+        tick = asyncio.create_task(rig.controller.delivery_tick())
+        recovery: asyncio.Task[None] | None = None
+        try:
+            await asyncio.wait_for(tick_checked.wait(), 1)
+            recovery = asyncio.create_task(
+                rig.controller.recover(
+                    run_id, RecoveryAction.INSERT, expected_version=waiting.version
+                )
             )
-        assert caught.value.error_code == ErrorCode.DUPLICATE_REQUEST
-        assert rig.sends() == 0
-        assert (await rig.history.get(run_id)).version == held.version
+            # With the full gate, recovery waits here; with the split gate it
+            # reads no attempts before the tick can claim and dispatch.
+            try:
+                await asyncio.wait_for(empty_attempts_read.wait(), 0.1)
+            except TimeoutError:
+                pass
+        finally:
+            release_tick.set()
+        try:
+            await asyncio.wait_for(dispatch_started.wait(), 1)
+        finally:
+            release_dispatch.set()
+        await asyncio.wait_for(tick, 1)
+        assert recovery is not None
+        result = (
+            await asyncio.wait_for(asyncio.gather(recovery, return_exceptions=True), 1)
+        )[0]
+        assert rig.sends() == 1
+        assert isinstance(result, WisprError)
+        assert (result.error_code, result.why) in {
+            (ErrorCode.VALIDATION, "already inserted"),
+            (ErrorCode.DUPLICATE_REQUEST, "in flight"),
+        }
 
 
 @pytest.mark.asyncio
