@@ -241,3 +241,43 @@ fails; fragments without the key behave exactly as before.
 10. `confirm` compares exactly: removing the one new occurrence of the text from the after-text
     must give the before-text exactly (no `.strip()`); any other change → `uncertain`. A false
     `uncertain` is safe (the user is offered copy/retry); a false `inserted` is not.
+
+## Coordinator decisions after the real-machine smoke (binding)
+
+The coordinator ran every read-only `RealWin32`/`RealUia` method on the real Windows desktop.
+The fakes hid these defects:
+
+11. `GetWindowThreadProcessId` lives in `win32process`, not `win32gui`. `window_process` and
+    `keyboard_layout` must call `win32process.GetWindowThreadProcessId`.
+12. `RealUia` must not find elements again by walking the whole desktop from `GetRootControl()`.
+    On the real machine, that walk did not find the focused element: `element_control_type` was
+    None, `element_text` was None and `is_on_screen` was False. Reading the same control object
+    directly worked (`DocumentControl`, `IsOffscreen` False, `GetValuePattern`/`GetTextPattern`
+    present). Rule:
+    - `RealUia` keeps a small cache (at most 32 entries, oldest dropped) from runtime id to the
+      control object returned by `focused_element` and `selected_tab`. Lookups use the cache.
+    - A cache miss falls back to a bounded walk of the foreground window only
+      (`ControlFromHandle(GetForegroundWindow())`, `maxDepth` 12, at most 2000 controls), never
+      the desktop root.
+13. Reading any UIA property can raise `COMError`. `getattr` defaults do not catch it. The real
+    smoke hit this: `selected_tab` raised COMError -2147220991. Every per-control property read
+    (`ControlTypeName`, `IsSelected`, `IsOffscreen`, `GetRuntimeId`, patterns) is wrapped, and an
+    exception means "no value" for that control. The walk continues. `select_tab` and
+    `focus_element` still return False on error.
+    - `IsSelected` is read through `GetSelectionItemPattern().IsSelected`. (Check the uiautomation
+      2.0.29 source for whether a bare `IsSelected` attribute exists on `TabItemControl`.)
+14. New real read-only adapter tests, `tests/adapter/insertion/test_t_ins_a01_real_readonly.py`:
+    - Markers: `pytest.mark.adapter("pywin32")` / `adapter("uiautomation")` and
+      `pytest.mark.windows`.
+    - Skipped off Windows, and when there is no interactive desktop.
+    - They send no input, never touch the clipboard, and never assert window titles, text or
+      contents. They assert only types and shapes.
+    - Test IDs:
+      - T-INS-A01: on the foreground window, `window_process` returns `(int > 0, str)`; this also
+        exercises the win32process path.
+      - T-INS-A02: `keyboard_layout` returns an int LANGID.
+      - T-INS-A03: `selected_tab(foreground)` returns a tuple of ints or None and never raises.
+      - T-INS-A04: after `focused_element()` returns a rid, `element_control_type(rid)` is a
+        non-empty str, and `is_on_screen(rid)` is a bool. This catches decision 12.
+      - T-INS-A05: `element_text(rid)` returns str or None and never raises.
+    - If `focused_element()` returns None, skip with a reason.
