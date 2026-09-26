@@ -67,8 +67,9 @@ def test_T_INS_009_confirmation_requires_exactly_one_new_occurrence() -> None:
         ("before", "before", "uncertain"),
         ("before", "before sample sample", "uncertain"),
         ("before", "changed sample", "uncertain"),
-        ("before", "before sample", "inserted"),
-        ("before sample", "before sample sample", "inserted"),
+        ("before", "before sample", "uncertain"),
+        ("before sample", "before sample sample", "uncertain"),
+        ("before ", "before sample", "inserted"),
         ("before sample", "before sample sample sample", "uncertain"),
     ):
         uia.texts[rid] = after
