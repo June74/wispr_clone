@@ -10,8 +10,9 @@ from wispr_clone.stt.base import SttEngine, SttSession, TextCallback
 
 
 class FakeSttSession:
-    def __init__(self, final_text: str) -> None:
+    def __init__(self, final_text: str, on_text: TextCallback | None = None) -> None:
         self.final_text = final_text
+        self.on_text = on_text
         self.pushed: list[array.array[float]] = []
         self.finished = False
         self.cancelled = False
@@ -19,14 +20,25 @@ class FakeSttSession:
     def push_audio(self, samples: array.array[float]) -> None:
         if samples.typecode != "f":
             raise TypeError("STT requires an array with typecode f")
+        if self.finished or self.cancelled:
+            raise WisprError(ErrorCode.STT_STREAM_CLOSED, "stt", "closed")
         self.pushed.append(array.array("f", samples))
 
     async def finish(self) -> str:
+        if self.cancelled or self.finished:
+            raise WisprError(ErrorCode.STT_STREAM_CLOSED, "stt", "closed")
         self.finished = True
         return self.final_text
 
     def cancel(self) -> None:
+        if self.finished or self.cancelled:
+            return
         self.cancelled = True
+
+    def emit_text(self, committed: str, tentative: str = "") -> None:
+        """Deliver a scripted callback while the session is active."""
+        if self.on_text is not None and not (self.finished or self.cancelled):
+            self.on_text(committed, tentative)
 
 
 class FakeSttEngine:
@@ -46,12 +58,11 @@ class FakeSttEngine:
         self.started = True
 
     def start_session(self, on_text: TextCallback | None = None) -> FakeSttSession:
-        del on_text
         if self.sessions and not (
             self.sessions[-1].finished or self.sessions[-1].cancelled
         ):
             raise WisprError(ErrorCode.STT_UNAVAILABLE, "stt", "session active")
-        session = FakeSttSession(self.final_text)
+        session = FakeSttSession(self.final_text, on_text)
         self.sessions.append(session)
         return session
 
