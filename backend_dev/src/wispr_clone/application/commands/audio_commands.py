@@ -62,7 +62,21 @@ class AudioCommands:
 
     async def _start(self, payload: Mapping[str, object]) -> Mapping[str, object]:
         if self._task is not None and not self._task.done():
-            raise WisprError(ErrorCode.DEVICE_LEASE_CONFLICT, "audio", "test active")
+            previous_task = self._task
+            if self._capture_stopped(self._capture):
+                try:
+                    await asyncio.wait_for(asyncio.shield(previous_task), timeout=1.0)
+                except TimeoutError:
+                    raise WisprError(
+                        ErrorCode.DEVICE_LEASE_CONFLICT, "audio", "test active"
+                    ) from None
+                self._clear_finished()
+            else:
+                raise WisprError(
+                    ErrorCode.DEVICE_LEASE_CONFLICT, "audio", "test active"
+                )
+        else:
+            self._clear_finished()
         device_id = payload.get("device_id")
         if device_id is not None and type(device_id) is not int:
             raise WisprError(ErrorCode.VALIDATION, "audio", "device_id")
@@ -129,3 +143,17 @@ class AudioCommands:
         if self._task is not None and self._task.done():
             self._task = None
             self._capture = None
+
+    @staticmethod
+    def _capture_stopped(capture: CaptureLike | None) -> bool:
+        if capture is None:
+            return True
+        stopped = getattr(capture, "stopped", None)
+        if isinstance(stopped, bool):
+            return stopped
+        event = getattr(capture, "_stopped", None)
+        cancelled = getattr(capture, "cancelled", False)
+        if not cancelled:
+            cancel_event = getattr(capture, "_cancelled", None)
+            cancelled = cancel_event is not None and cancel_event.is_set()
+        return bool((event is not None and event.is_set()) or cancelled)
