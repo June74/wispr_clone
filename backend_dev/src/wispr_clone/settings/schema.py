@@ -8,6 +8,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from wispr_clone import config
 from wispr_clone.contracts.common import ErrorCode, WisprError
+from wispr_clone.contracts.shortcuts import (
+    format_binding,
+    parse_binding,
+    validate_bindings,
+)
 
 SETTINGS_SCHEMA_VERSION: int = 1
 
@@ -113,6 +118,33 @@ def parse_settings(
             "settings.schema",
             ", ".join(fields) if fields else "settings",
         ) from None
+
+    try:
+        dictation_binding = parse_binding(settings.dictation_shortcut)
+    except WisprError:
+        raise WisprError(
+            ErrorCode.VALIDATION, "settings.schema", "dictation_shortcut"
+        ) from None
+    try:
+        cancel_binding = parse_binding(settings.cancel_shortcut)
+    except WisprError:
+        raise WisprError(
+            ErrorCode.VALIDATION, "settings.schema", "cancel_shortcut"
+        ) from None
+    try:
+        validate_bindings(dictation_binding, cancel_binding)
+    except WisprError:
+        raise WisprError(
+            ErrorCode.VALIDATION,
+            "settings.schema",
+            "dictation_shortcut, cancel_shortcut",
+        ) from None
+    settings = settings.model_copy(
+        update={
+            "dictation_shortcut": format_binding(dictation_binding),
+            "cancel_shortcut": format_binding(cancel_binding),
+        }
+    )
 
     if catalog.role_of(settings.stt_model_id) != "stt":
         raise WisprError(
