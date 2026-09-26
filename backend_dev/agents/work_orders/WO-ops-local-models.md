@@ -157,3 +157,6 @@ with its reason. No transcript text.
    reported as status `"error"` with detail `"redirect"`, `ok=False`, and no second request.
 4. HTTP ≥ 400 or an unreadable/non-JSON body → status `"error"` (detail `"http <code>"` or
    `"bad response"`), `ok=False`. `"not_running"` stays reserved for connection refused / timeout.
+5. **User decision 2026-09-25:** skip the Voxtral-loading tier G probes (P-TCPP-002/003,
+   T-STT-A01) for now. They stay in the suite (they skip off Windows / without the model) and are
+   run before a release per dev_pipeline §4.3.

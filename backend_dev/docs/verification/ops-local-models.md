@@ -40,5 +40,5 @@ Exit code 0, `"ready": true`.
 
 | Test | Why |
 |---|---|
-| P-TCPP-002, P-TCPP-003, T-STT-A01 | They load Voxtral on the GPU (+≈2.1 GB per the G2 record). Only ≈2.4 GB was free with the user's desktop apps and LM Studio (shared with Cognee) running; loading would leave ≈0.3 GB and risk slowing LM Studio/Cognee or the desktop. Deferred until more VRAM is free or the user asks to run them (agents/HARDWARE.md resource rules). |
+| P-TCPP-002, P-TCPP-003, T-STT-A01 | They load Voxtral on the GPU (+≈2.1 GB per the G2 record). Only ≈2.4 GB was free with the user's desktop apps and LM Studio (shared with Cognee) running; loading would leave ≈0.3 GB and risk slowing LM Studio/Cognee or the desktop. User decision 2026-09-25: skipped for now; run before a release (dev_pipeline §4.3). |
 | P-TCPP-004 | Needs a public-domain speech fixture; LibriVox is MP3 and no approved package decodes MP3 (WO deferral). |
