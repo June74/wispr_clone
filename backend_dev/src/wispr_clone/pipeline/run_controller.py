@@ -279,10 +279,25 @@ class RunController:
                 await self._cleanup_and_select(record, retry=True)
         except asyncio.CancelledError:
             raise
-        except BaseException:
+        except BaseException as error:
             record = await self._services.history.get(run_id)
-            if not is_terminal(RunState(record.status, record.version)):
-                await self._transition(run_id, RunEvent.FAIL)
+            state = RunState(record.status, record.version)
+            if not is_terminal(state):
+                failed = transition(state, RunEvent.FAIL)
+                error_code = _error_code(error).value
+                changes: dict[str, object] = {
+                    "status": failed.status,
+                    "error_code": error_code,
+                }
+                if record.cleanup_status == CleanupStatus.PENDING:
+                    changes.update(
+                        cleanup_status=CleanupStatus.FAILED,
+                        cleanup_reason=error_code,
+                    )
+                updated = await self._services.history.update_run(
+                    run_id, expected_version=record.version, **changes
+                )
+                self._publish_state(updated)
             raise
         finally:
             self._cancel_flags.pop(run_id, None)
@@ -334,12 +349,16 @@ class RunController:
                 await self._transition(run_id, RunEvent.CANCEL)
                 return
             adjusted = apply_dictionary(text, entries)
+            cleanup_enabled = record.config.get("cleanup_enabled") is True
             record = await self._services.history.update_run(
                 run_id,
                 expected_version=record.version,
                 original_text=text,
                 adjusted_text=adjusted,
                 audio_duration=wav.frames_written / 16000,
+                **(
+                    {"cleanup_status": CleanupStatus.PENDING} if cleanup_enabled else {}
+                ),
             )
             if self._cancel_flags.get(run_id, False):
                 await self._transition(run_id, RunEvent.CANCEL)
@@ -422,14 +441,15 @@ class RunController:
                 return False
             await self._insert_selected(record, adjusted)
             return True
-        record = await self._services.history.update_run(
-            run_id,
-            expected_version=record.version,
-            cleanup_status=CleanupStatus.PENDING,
-            cleanup_reason=None,
-            cleaned_text=None,
-            output_selection=None,
-        )
+        if retry or record.cleanup_status != CleanupStatus.PENDING:
+            record = await self._services.history.update_run(
+                run_id,
+                expected_version=record.version,
+                cleanup_status=CleanupStatus.PENDING,
+                cleanup_reason=None,
+                cleaned_text=None,
+                output_selection=None,
+            )
         entries = await self._services.dictionary.entries()
         if self._cancel_flags.get(run_id, False):
             await self._transition(run_id, RunEvent.CANCEL)
@@ -488,14 +508,6 @@ class RunController:
         self, record: RunRecord, status: CleanupStatus, reason: str
     ) -> bool:
         run_id = record.id
-        record = await self._services.history.update_run(
-            run_id,
-            expected_version=record.version,
-            cleanup_status=status,
-            cleanup_reason=reason,
-            cleaned_text=None,
-            output_selection=None,
-        )
         if self._cancel_flags.get(run_id, False):
             await self._transition(run_id, RunEvent.CANCEL)
             return False
@@ -503,7 +515,13 @@ class RunController:
             RunState(record.status, record.version), RunEvent.CLEANUP_FAILED
         )
         updated = await self._services.history.update_run(
-            run_id, expected_version=record.version, status=failed.status
+            run_id,
+            expected_version=record.version,
+            status=failed.status,
+            cleanup_status=status,
+            cleanup_reason=reason,
+            cleaned_text=None,
+            output_selection=None,
         )
         self._publish_state(updated)
         self._services.events.publish(

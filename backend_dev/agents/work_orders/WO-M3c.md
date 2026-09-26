@@ -132,3 +132,15 @@ event.
      `error_code` (same `_error_code` rule as M3a 2b), and, if `cleanup_status` is `pending`,
      also `cleanup_status=failed` and `cleanup_reason` = that code. The exception is still
      re-raised once through `settled`.
+3. **Coordinator review (resurrection bug):**
+   - History `recover_on_startup` turns EVERY run with `cleanup_status=pending` into
+     `failed` + `awaiting_cleanup_choice`, whatever its status. A run cancelled during cleanup
+     (T-RUN-004) keeps `pending`, so after a restart it would come back as a choice, and
+     `use_original` could then insert it. Two layers:
+   - a. (controller) Every CANCEL or FAIL the controller persists while the record's
+     `cleanup_status` is `pending` sets `cleanup_status=failed` in the same `update_run`, with
+     `cleanup_reason` = `"cancelled"` for CANCEL, or the error code for FAIL.
+   - b. (history, defense in depth) `recover_on_startup` converts pending cleanup only for runs
+     whose status is `processing`. Writable for Luna: `src/wispr_clone/history/repo.py`, this
+     query only. Sol: `tests/unit/history/` (a T-HIS-011b test), plus a controller test
+     T-RUN-017d: cancel during cleanup, then `recover_on_startup` → the run stays `cancelled`.
