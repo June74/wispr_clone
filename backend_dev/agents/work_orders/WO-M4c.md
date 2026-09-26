@@ -130,3 +130,10 @@ class AudioCommands:
    - `active_run_id` is None and the lease is free;
    - a replay of its start request → RUN_DELETED.
    It is never orphaned.
+4. **Found by windows-latest CI (T-APP-026):** after an auto-stop or pump end, the lease is
+   released before the command's own "test running" state is cleared. A new `mic_test_start` in
+   that gap got DEVICE_LEASE_CONFLICT with the mic free.
+   - Binding: `mic_test_start` treats a previous test whose capture has stopped (auto-stop, stop
+     requested, or pump ended) as finishing. It awaits that test's task (bounded, 1 s), clears
+     the state, and proceeds.
+   - Only a test that is still actively capturing makes a second start conflict.
