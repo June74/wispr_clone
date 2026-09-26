@@ -85,3 +85,14 @@ controller first, or use a holder. Use the real deferred delivery.
    - **Carried to M4 (binding):** the `history_delete` / `history_delete_all` commands must call
      `RunController.abort(run_id)` for each deleted run, so an in-progress recording stops and
      its mic lease is released.
+2. **After Sol's verification (T-RUN-032, 032a, 032b, 032e), binding:**
+   - a. `start` generates `run_id` and registers it as starting BEFORE awaiting `create_run`.
+     After every await in `start`, an aborted run makes `start` release everything it acquired
+     and raise WisprError(RUN_NOT_FOUND, "run", "aborted"). It never returns a deleted run.
+   - b. `abort` of a starting run frees the recording-slot reservation immediately, so a new
+     `start` can proceed at once.
+   - c. Every run:state / run:recovery publish goes through one helper that drops the event
+     when the run is aborted. This covers writes that return after the abort.
+   - d. The id leaves `_aborted` when the run's task (or start) finishes, or immediately for a
+     run with no task (for example a waiting run). The set therefore holds only in-progress
+     aborts.

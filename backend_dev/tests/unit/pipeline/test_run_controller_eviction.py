@@ -21,7 +21,7 @@ from fakes.stt import FakeSttEngine, FakeSttSession
 from wispr_clone.audio.wav_writer import WavWriter
 from wispr_clone.config import RUN_RETENTION_SECONDS
 from wispr_clone.contracts.common import ErrorCode, WisprError
-from wispr_clone.contracts.run import RunStatus
+from wispr_clone.contracts.run import RecoveryAction, RunStatus
 from wispr_clone.dictionary.apply import DictionaryEntry
 from wispr_clone.dictionary.repo import DictionaryRepo
 from wispr_clone.history.repo import HistoryRepo
@@ -339,3 +339,278 @@ async def test_T_RUN_031b_abort_unknown_and_finished_is_noop(tmp_path: Path) -> 
         rig.controller.abort(run_id)
         assert await rig.history.get(run_id) == finished
         assert rig.events.events == events_before
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_032_abort_before_create_returns_stops_start(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        create = rig.history.create_run
+        created = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delayed_create(**kwargs: Any) -> Any:
+            record = await create(**kwargs)
+            created.set()
+            await release.wait()
+            return record
+
+        rig.history.create_run = delayed_create  # type: ignore[method-assign]
+        starting = asyncio.create_task(rig.controller.start(start_request_id="first"))
+        try:
+            await asyncio.wait_for(created.wait(), 1)
+            await rig.history.delete_run("id-0")
+            rig.controller.abort("id-0")
+        finally:
+            release.set()
+        try:
+            await asyncio.wait_for(starting, 1)
+        except WisprError as error:
+            assert error.error_code == ErrorCode.RUN_NOT_FOUND
+        else:
+            await rig.controller.cancel("id-0")
+            pytest.fail("start returned a run that had already been evicted")
+        assert rig.controller.active_run_id is None
+        assert rig.controller._slot_reserved is False
+        assert rig.captures == []
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_032a_abort_during_dictionary_read_frees_reserved_slot(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        entries = rig.dictionary.entries
+        reading = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delayed_entries() -> Any:
+            reading.set()
+            await release.wait()
+            return await entries()
+
+        rig.dictionary.entries = delayed_entries  # type: ignore[method-assign]
+        starting = asyncio.create_task(rig.controller.start(start_request_id="first"))
+        try:
+            await asyncio.wait_for(reading.wait(), 1)
+            await rig.history.delete_run("id-0")
+            rig.controller.abort("id-0")
+            slot_freed = not rig.controller._slot_reserved
+        finally:
+            release.set()
+        with pytest.raises(WisprError):
+            await asyncio.wait_for(starting, 1)
+        assert slot_freed
+        assert rig.controller.active_run_id is None
+        second = await rig.controller.start(start_request_id="second")
+        await rig.controller.cancel(second)
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_032b_abort_during_cleanup_failure_write_emits_no_event(
+    tmp_path: Path,
+) -> None:
+    cleanup = FakeCleanupEngine(RuntimeError("cleanup failed"))
+    async with scenario(tmp_path, cleanup=cleanup) as rig:
+        rig.config["cleanup_enabled"] = True
+        update = rig.history.update_run
+        written = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delayed_update(*args: Any, **kwargs: Any) -> Any:
+            record = await update(*args, **kwargs)
+            if record.status == RunStatus.AWAITING_CLEANUP_CHOICE:
+                written.set()
+                await release.wait()
+            return record
+
+        rig.history.update_run = delayed_update  # type: ignore[method-assign]
+        run_id = await rig.controller.start(start_request_id="first")
+        await rig.controller.stop(run_id)
+        try:
+            await asyncio.wait_for(written.wait(), 1)
+            await rig.history.delete_run(run_id)
+            rig.controller.abort(run_id)
+            event_count = len(rig.states(run_id))
+            recovery_count = len(rig.events.by_name("run:recovery"))
+        finally:
+            release.set()
+        await asyncio.wait_for(rig.controller._tasks[run_id], 1)
+        assert len(rig.states(run_id)) == event_count
+        assert len(rig.events.by_name("run:recovery")) == recovery_count
+        assert rig.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_032c_abort_during_tick_does_not_wait_for_insertion_gate(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id = await rig.controller.start(start_request_id="first")
+        rig.win.foreground = 20
+        await rig.controller.stop(run_id)
+        assert (
+            await rig.controller.settled(run_id)
+        ).status == RunStatus.AWAITING_DESTINATION
+        rig.win.foreground = 10
+        protocol = rig.controller._services.insertion
+        deliver = protocol.deliver_next
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delayed_delivery(*args: Any, **kwargs: Any) -> Any:
+            entered.set()
+            await release.wait()
+            return await deliver(*args, **kwargs)
+
+        protocol.deliver_next = delayed_delivery  # type: ignore[method-assign]
+        tick = asyncio.create_task(rig.controller.delivery_tick())
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            await rig.history.delete_run(run_id)
+            rig.controller.abort(run_id)
+            assert rig.controller.waiting_run_ids == ()
+            assert rig.controller._insertion_gate.locked()
+        finally:
+            release.set()
+        await asyncio.wait_for(tick, 1)
+        assert rig.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_032d_abort_racing_cancel_emits_no_run_event(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id = await rig.controller.start(start_request_id="first")
+        rig.win.foreground = 20
+        await rig.controller.stop(run_id)
+        await rig.controller.settled(run_id)
+        await rig.controller._insertion_gate.acquire()
+        cancelling = asyncio.create_task(rig.controller.cancel(run_id))
+        try:
+            await asyncio.sleep(0)
+            await rig.history.delete_run(run_id)
+            rig.controller.abort(run_id)
+            states = len(rig.states(run_id))
+        finally:
+            rig.controller._insertion_gate.release()
+        await asyncio.wait_for(cancelling, 1)
+        assert len(rig.states(run_id)) == states
+        assert rig.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_032e_aborted_ids_are_reclaimed_after_evicted_tasks_finish(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        for index in range(3):
+            run_id = await rig.controller.start(start_request_id=f"run-{index}")
+            rig.clock.advance(RUN_RETENTION_SECONDS)
+            assert await rig.history.enforce_retention() == (run_id,)
+            await asyncio.sleep(0)
+            await asyncio.wait_for(rig.controller._tasks[run_id], 1)
+        assert len(rig.controller._aborted) == 0
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_032f_retry_cleanup_rereads_dictionary(tmp_path: Path) -> None:
+    cleanup = FakeCleanupEngine(RuntimeError("unavailable"), "open whisper.")
+    async with scenario(tmp_path, cleanup=cleanup) as rig:
+        rig.config["cleanup_enabled"] = True
+        run_id = await rig.controller.start(start_request_id="first")
+        await rig.controller.stop(run_id)
+        failed = await rig.controller.settled(run_id)
+        assert failed.status == RunStatus.AWAITING_CLEANUP_CHOICE
+        await rig.dictionary.add(DictionaryEntry("OpenWhispr", ("open whisper",)))
+        await rig.controller.recover(
+            run_id, RecoveryAction.RETRY_CLEANUP, expected_version=failed.version
+        )
+        await rig.controller.settled(run_id)
+        assert cleanup.requests[0].glossary == ()
+        assert cleanup.requests[1].glossary == ("OpenWhispr",)
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_032g_abort_pending_recovery_discards_cleanup_result(
+    tmp_path: Path,
+) -> None:
+    cleanup = FakeCleanupEngine(RuntimeError("unavailable"), "open whisper.")
+    async with scenario(tmp_path, cleanup=cleanup) as rig:
+        rig.config["cleanup_enabled"] = True
+        run_id = await rig.controller.start(start_request_id="first")
+        await rig.controller.stop(run_id)
+        failed = await rig.controller.settled(run_id)
+        cleanup.entered.clear()
+        cleanup.release.clear()
+        await rig.controller.recover(
+            run_id, RecoveryAction.RETRY_CLEANUP, expected_version=failed.version
+        )
+        await asyncio.wait_for(cleanup.entered.wait(), 1)
+        await rig.history.delete_run(run_id)
+        rig.controller.abort(run_id)
+        state_count = len(rig.states(run_id))
+        cleanup.release.set()
+        await asyncio.wait_for(rig.controller._tasks[run_id], 1)
+        assert len(rig.states(run_id)) == state_count
+        assert rig.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_032h_abort_while_capture_drains_after_stop(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id = await rig.controller.start(start_request_id="first")
+        capture = rig.captures[0]
+        draining = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delayed_chunks() -> AsyncIterator[Any]:
+            draining.set()
+            await release.wait()
+            if False:
+                yield None
+
+        capture.chunks = delayed_chunks  # type: ignore[method-assign]
+        await rig.controller.stop(run_id)
+        try:
+            await asyncio.wait_for(draining.wait(), 1)
+            await rig.history.delete_run(run_id)
+            rig.controller.abort(run_id)
+            state_count = len(rig.states(run_id))
+        finally:
+            release.set()
+        await asyncio.wait_for(rig.controller._tasks[run_id], 1)
+        assert len(rig.states(run_id)) == state_count
+        assert rig.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_T_RUN_032i_abort_while_attempt_waits_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        protocol = rig.controller._services.insertion
+        attempt = protocol.attempt
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def delayed_attempt(*args: Any, **kwargs: Any) -> Any:
+            entered.set()
+            await release.wait()
+            return await attempt(*args, **kwargs)
+
+        protocol.attempt = delayed_attempt  # type: ignore[method-assign]
+        run_id = await rig.controller.start(start_request_id="first")
+        await rig.controller.stop(run_id)
+        try:
+            await asyncio.wait_for(entered.wait(), 1)
+            await rig.history.delete_run(run_id)
+            rig.controller.abort(run_id)
+            state_count = len(rig.states(run_id))
+        finally:
+            release.set()
+        await asyncio.wait_for(rig.controller._tasks[run_id], 1)
+        assert len(rig.states(run_id)) == state_count
+        assert rig.sends() == 0
