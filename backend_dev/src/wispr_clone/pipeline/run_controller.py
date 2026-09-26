@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import array
 import asyncio
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -52,7 +52,7 @@ class RunServices:
     stt: SttEngine
     insertion: InsertionProtocol
     events: EventSink
-    capture_destination: Callable[[], asyncio.Future[DestinationSnapshot] | Any]
+    capture_destination: Callable[[], Awaitable[DestinationSnapshot]]
     new_capture: Callable[[], CaptureLike]
     new_wav: Callable[[Path], WavLike]
     new_id: Callable[[], str]
@@ -84,45 +84,77 @@ class RunController:
     def __init__(self, services: RunServices) -> None:
         self._services = services
         self._active_run_id: str | None = None
+        self._slot_reserved = False
         self._captures: dict[str, CaptureLike] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._snapshots: dict[str, DestinationSnapshot | None] = {}
+        self._task_errors_pending: set[str] = set()
 
     @property
     def active_run_id(self) -> str | None:
         return self._active_run_id
 
     async def start(self, *, start_request_id: str) -> str:
-        if self._active_run_id is not None:
+        if self._slot_reserved:
             raise WisprError(ErrorCode.DEVICE_LEASE_CONFLICT, "run", "busy")
+        self._slot_reserved = True
         try:
-            snapshot = await self._services.capture_destination()
-        except WisprError as error:
-            if error.error_code != ErrorCode.DESTINATION_UNVERIFIABLE:
+            try:
+                snapshot = await self._services.capture_destination()
+            except WisprError as error:
+                if error.error_code != ErrorCode.DESTINATION_UNVERIFIABLE:
+                    raise
+                snapshot = None
+            run_id = self._services.new_id()
+            path = self._services.audio_dir / f"{run_id}.wav"
+            record = await self._services.history.create_run(
+                run_id=run_id,
+                start_request_id=start_request_id,
+                config=self._services.config_snapshot(),
+                destination=snapshot.to_json() if snapshot is not None else None,
+                audio_path=str(path),
+            )
+            self._publish_state(record)
+            capture: CaptureLike | None = None
+            capture_started = False
+            session: SttSession | None = None
+            try:
+                capture = self._services.new_capture()
+                capture.start()
+                capture_started = True
+                session = self._services.stt.start_session()
+                wav = self._services.new_wav(path)
+            except Exception as error:
+                if capture is not None and capture_started:
+                    capture.cancel()
+                if session is not None:
+                    session.cancel()
+                error_code = getattr(error, "error_code", ErrorCode.STORAGE_ERROR)
+                if not isinstance(error_code, ErrorCode):
+                    error_code = ErrorCode.STORAGE_ERROR
+                failed = transition(
+                    RunState(record.status, record.version), RunEvent.FAIL
+                )
+                updated = await self._services.history.update_run(
+                    run_id,
+                    expected_version=record.version,
+                    status=failed.status,
+                    error_code=error_code.value,
+                )
+                self._publish_state(updated)
                 raise
-            snapshot = None
-        run_id = self._services.new_id()
-        path = self._services.audio_dir / f"{run_id}.wav"
-        record = await self._services.history.create_run(
-            run_id=run_id,
-            start_request_id=start_request_id,
-            config=self._services.config_snapshot(),
-            destination=snapshot.to_json() if snapshot is not None else None,
-            audio_path=str(path),
-        )
-        self._publish_state(record)
-        capture = self._services.new_capture()
-        capture.start()
-        session = self._services.stt.start_session()
-        wav = self._services.new_wav(path)
-        self._active_run_id = run_id
-        self._captures[run_id] = capture
-        self._snapshots[run_id] = snapshot
-        # Keep a strong reference until settled so asyncio cannot collect this task.
-        self._tasks[run_id] = asyncio.create_task(
-            self._process(run_id, capture, session, wav)
-        )
-        return run_id
+            assert capture is not None and session is not None
+            self._active_run_id = run_id
+            self._captures[run_id] = capture
+            self._snapshots[run_id] = snapshot
+            task = asyncio.create_task(self._process(run_id, capture, session, wav))
+            self._tasks[run_id] = task
+            self._task_errors_pending.add(run_id)
+            return run_id
+        except BaseException:
+            self._slot_reserved = False
+            self._active_run_id = None
+            raise
 
     async def stop(self, run_id: str) -> None:
         capture = self._captures.get(run_id)
@@ -131,49 +163,60 @@ class RunController:
         capture.stop()
         if self._active_run_id == run_id:
             self._active_run_id = None
+            self._slot_reserved = False
 
     async def settled(self, run_id: str) -> RunRecord:
         task = self._tasks.get(run_id)
-        if task is not None:
+        if task is not None and run_id in self._task_errors_pending:
+            self._task_errors_pending.discard(run_id)
             await task
         return await self._services.history.get(run_id)
 
     async def _process(
         self, run_id: str, capture: CaptureLike, session: SttSession, wav: WavLike
     ) -> None:
-        async for chunk in capture.chunks():
-            session.push_audio(array.array("f", chunk.samples))
-            wav.write(chunk.samples)
-            self._services.events.publish(
-                {"name": "audio:level", "run_id": run_id, "bands": chunk.bands}
+        try:
+            async for chunk in capture.chunks():
+                session.push_audio(array.array("f", chunk.samples))
+                wav.write(chunk.samples)
+                self._services.events.publish(
+                    {"name": "audio:level", "run_id": run_id, "bands": chunk.bands}
+                )
+            wav.close()
+            record = await self._transition(run_id, RunEvent.STOP)
+            text = await session.finish()
+            adjusted = apply_dictionary(text, await self._services.dictionary.entries())
+            record = await self._services.history.update_run(
+                run_id,
+                expected_version=record.version,
+                original_text=text,
+                adjusted_text=adjusted,
+                output_selection="adjusted",
+                cleanup_status=CleanupStatus.OFF,
+                audio_duration=wav.frames_written / 16000,
             )
-        wav.close()
-        record = await self._transition(run_id, RunEvent.STOP)
-        text = await session.finish()
-        adjusted = apply_dictionary(text, await self._services.dictionary.entries())
-        record = await self._services.history.update_run(
-            run_id,
-            expected_version=record.version,
-            original_text=text,
-            adjusted_text=adjusted,
-            output_selection="adjusted",
-            cleanup_status=CleanupStatus.OFF,
-            audio_duration=wav.frames_written / 16000,
-        )
-        snapshot = self._snapshots[run_id]
-        if snapshot is None:
-            held = ProtocolResult(ProtocolOutcome.HELD, None, "destination unavailable")
-            await self._apply_result(record, held)
-            return
-        result = await self._services.insertion.attempt(
-            run_id,
-            adjusted,
-            snapshot,
-            request_id=self._services.new_id(),
-            kind="automatic",
-            is_cancelled=lambda: False,
-        )
-        await self._apply_result(record, result)
+            snapshot = self._snapshots[run_id]
+            if snapshot is None:
+                held = ProtocolResult(
+                    ProtocolOutcome.HELD, None, "destination unavailable"
+                )
+                await self._apply_result(record, held)
+                return
+            result = await self._services.insertion.attempt(
+                run_id,
+                adjusted,
+                snapshot,
+                request_id=self._services.new_id(),
+                kind="automatic",
+                is_cancelled=lambda: False,
+            )
+            await self._apply_result(record, result)
+        finally:
+            self._captures.pop(run_id, None)
+            self._snapshots.pop(run_id, None)
+            if self._active_run_id == run_id:
+                self._active_run_id = None
+                self._slot_reserved = False
 
     async def _transition(self, run_id: str, event: RunEvent) -> RunRecord:
         record = await self._services.history.get(run_id)

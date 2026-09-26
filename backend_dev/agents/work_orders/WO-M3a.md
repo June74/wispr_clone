@@ -184,3 +184,14 @@ def events_for(result: ProtocolResult) -> tuple[RunEvent, ...]: ...   # pure map
    - e. When a run's task ends, drop its capture and snapshot entries. `settled` still works for
      a finished run: it returns `history.get(run_id)`, and re-raises the task's exception only
      the first time.
+3. **Coordinator review of the fix (binding):**
+   - The real `VoxtralTranscribeCpp` allows ONE active session: `start_session` raises
+     STT_UNAVAILABLE while one is active. The fake must match (Sol: `FakeSttEngine` raises
+     `WisprError(STT_UNAVAILABLE)` when a session is active and not yet finished or cancelled).
+   - When the background task fails for any reason (an exception in the pump, STT, dictionary or
+     storage, before insertion), in its `finally`:
+     - `session.cancel()` (idempotent), `capture.cancel()`, `wav.close()`;
+     - if the run is not terminal, transition FAIL and persist `error_code` (same rule as 2b),
+       best effort: a failure to persist is swallowed.
+     The exception is still re-raised once from `settled`. After a pump failure, a new `start`
+     must succeed with the single-session fake.
