@@ -180,7 +180,6 @@ async def test_retention_eviction_aborts_and_invalidates_start_request(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from wispr_clone.app import App
-
     from wispr_clone.pipeline.run_controller import RunController
 
     boundaries = Boundaries()

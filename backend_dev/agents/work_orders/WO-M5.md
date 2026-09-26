@@ -187,3 +187,24 @@ def acquire_single_instance(name: str = "WisprClone") -> SingleInstance | None: 
      - on_stop → if `controller.active_run_id` → `api.call("run_stop", {run_id: that})`, else no-op;
      - on_cancel → `api.call("run_cancel", {})`, which uses cancel_current.
      Each is scheduled as a task on the worker loop, with its result/exception retrieved.
+2. **Cleanup engine per run (gap found by Luna):** `RunServices.cleanup` is a single fixed engine,
+   so changing `cleanup_model_id` would never take effect.
+   - Add a new LAST field `cleanup_for: Callable[[str], CleanupEngine | None] | None = None` to
+     `RunServices`.
+   - When it is set, the controller picks the engine per run from the run's stored
+     `record.config["cleanup_model_id"]` (the snapshot at start), both for the normal path and
+     for retry_cleanup.
+   - When it is None, the old `cleanup` field is used, so M3c tests are unchanged.
+   - The app wires `cleanup_for` and passes `config_snapshot()` including `cleanup_model_id`.
+   - Writable for Luna: `src/wispr_clone/pipeline/run_controller.py` (this change only).
+   - Sol adds T-RUN-018: two runs with different snapshotted cleanup_model_id use different
+     engines; a settings change mid-run does not switch the current run's engine.
+3. **No direct third-party imports in app.py** (the attribution map found `transcribe_cpp`):
+   - The app uses the adapters' own lazy loading: `VoxtralTranscribeCpp(config.stt_model_path())`
+     with no `module=`, `AudioCapture(...)` / `list_input_devices()` with their default module,
+     and `PynputListener(service)`.
+   - pywebview is the only library the app imports itself, because the ui modules take it as a
+     parameter by design. Add `tests/_attribution/impact/pywebview.toml` (dependency
+     "pywebview", kind "library", modules ["app"], features ["settings window", "HUD"],
+     error_codes ["storage_error"], action "Check the pywebview pin in uv.lock and the
+     WebView2 runtime"). Writable for Luna: that one file.
