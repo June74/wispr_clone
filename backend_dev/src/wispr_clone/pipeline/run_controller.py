@@ -112,6 +112,7 @@ class RunController:
         self._insertion_gate = asyncio.Lock()
         self._inserting_run_ids: set[str] = set()
         self._retry_transcribing: set[str] = set()
+        self._retry_reserving: str | None = None
 
     @property
     def active_run_id(self) -> str | None:
@@ -253,9 +254,10 @@ class RunController:
             except Exception:
                 pass
         self._starting.discard(run_id)
-        if self._active_run_id == run_id or (
-            was_starting and self._active_run_id is None
-        ):
+        owns_releasing_slot = self._active_run_id == run_id and (
+            run_id not in self._retry_transcribing
+        )
+        if owns_releasing_slot or (was_starting and self._active_run_id is None):
             self._active_run_id = None
             self._slot_reserved = False
         if (task is None or task.done()) and not was_starting:
@@ -360,14 +362,43 @@ class RunController:
         acknowledge_uncertain: bool = False,
         destination: DestinationSnapshot | None = None,
     ) -> None:
+        retry_slot_reserved = False
+        if action == RecoveryAction.RETRY_STT:
+            if self._slot_reserved and self._active_run_id != run_id:
+                raise WisprError(ErrorCode.DEVICE_LEASE_CONFLICT, "run", "busy")
+            if not self._slot_reserved:
+                self._slot_reserved = True
+                self._retry_reserving = run_id
+                retry_slot_reserved = True
+        try:
+            await self._recover_impl(
+                run_id,
+                action,
+                expected_version=expected_version,
+                acknowledge_uncertain=acknowledge_uncertain,
+                destination=destination,
+            )
+        except BaseException:
+            if retry_slot_reserved:
+                self._slot_reserved = False
+                self._retry_reserving = None
+            raise
+
+    async def _recover_impl(
+        self,
+        run_id: str,
+        action: RecoveryAction,
+        *,
+        expected_version: int,
+        acknowledge_uncertain: bool,
+        destination: DestinationSnapshot | None,
+    ) -> None:
         record = await self._services.history.get(run_id)
         if record.version != expected_version:
             raise WisprError(ErrorCode.STALE_VERSION, "run", "version")
         state = RunState(record.status, record.version)
         effective_actions = self._effective_recovery_actions(record, state)
         if action == RecoveryAction.RETRY_STT and action not in effective_actions:
-            if self._slot_reserved:
-                raise WisprError(ErrorCode.DEVICE_LEASE_CONFLICT, "run", "busy")
             raise WisprError(ErrorCode.VALIDATION, "run", "no audio")
         if action not in effective_actions:
             raise WisprError(ErrorCode.VALIDATION, "run", "action")
@@ -392,8 +423,6 @@ class RunController:
                     self._inserting_run_ids.discard(run_id)
             return
         if action == RecoveryAction.RETRY_STT:
-            if self._slot_reserved:
-                raise WisprError(ErrorCode.DEVICE_LEASE_CONFLICT, "run", "busy")
             next_state = transition(state, RunEvent.RETRY_STT)
             record = await self._services.history.update_run(
                 run_id,
@@ -402,8 +431,8 @@ class RunController:
                 error_code=None,
             )
             self._cancel_flags[run_id] = False
-            self._slot_reserved = True
             self._active_run_id = run_id
+            self._retry_reserving = None
             self._publish_updated(record)
             task = asyncio.create_task(self._retry_stt_task(run_id, record))
             self._tasks[run_id] = task
@@ -451,6 +480,12 @@ class RunController:
                 return
             assert record.audio_path is not None
             self._retry_transcribing.add(run_id)
+            if self._is_aborted(run_id) or self._cancel_flags.get(run_id, False):
+                self._release_slot(run_id)
+                self._retry_transcribing.discard(run_id)
+                transcription_active = False
+                await self._transition(run_id, RunEvent.CANCEL)
+                return
             try:
                 text = await self._services.stt.transcribe_file(Path(record.audio_path))
             finally:
