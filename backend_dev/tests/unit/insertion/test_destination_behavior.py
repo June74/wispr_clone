@@ -71,9 +71,8 @@ def test_T_INS_002_verify_detects_tab_field_and_visibility() -> None:
 
 
 def test_T_INS_007_capture_roundtrip_and_rejects_malformed_snapshot() -> None:
-    from wispr_clone.insertion.destination import DestinationSnapshot, capture
-
     from wispr_clone.contracts.common import ErrorCode, WisprError
+    from wispr_clone.insertion.destination import DestinationSnapshot, capture
 
     win, uia = FakeWin32Api(), FakeUiaApi()
     snapshot = capture(win, uia)

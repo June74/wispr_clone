@@ -19,8 +19,10 @@ def test_T_INS_004_every_transcript_clipboard_write_requests_exclusions() -> Non
     snapshot = replace(_snapshot(), langid=0x0412)
     dispatch("synthetic transcript", snapshot, win, uia)
     writes = [call for call in win.calls if call[0] == "set_clipboard"]
-    assert writes
-    assert all(call[2]["exclusion_formats"] is True for call in writes)
+    assert writes == [
+        ("set_clipboard", ("synthetic transcript",), {"exclusion_formats": True}),
+        ("set_clipboard", ("old",), {"exclusion_formats": False}),
+    ]
     assert win.clipboard == "old"
 
 

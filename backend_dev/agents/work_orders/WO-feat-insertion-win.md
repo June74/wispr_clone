@@ -227,3 +227,14 @@ fails; fragments without the key behave exactly as before.
 5. **The user's own clipboard is restored as it was:** `set_clipboard(old_text,
    exclusion_formats=False)`. Only transcript text carries the exclusion formats (T-INS-004).
 6. Sol fixes the ruff import-order finding in its own test file.
+
+## Coordinator decisions after verification
+
+7. `capture(win32, uia, *, exclude_pids: frozenset[int] = frozenset())`: foreground handle 0, a
+   window that vanishes during capture, or a window whose pid is in `exclude_pids` (the app's own
+   process: settings window, HUD) → `WisprError(ErrorCode.DESTINATION_UNVERIFIABLE, "insertion",
+   "no window" | "own window")`. The app passes its own pid (CODEMAP §4 step 1: a UI button must use
+   the destination captured before the settings window took focus).
+8. Any exception from the UIA or Win32 boundary inside `verify` → `Verification("unverifiable",
+   "uia error" | "win32 error")`; `verify` never raises.
+9. Review items 3-5 confirmed by Sol's tests.

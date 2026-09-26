@@ -1,6 +1,7 @@
 """Isolated Windows desktop dependency checks; no input is sent."""
 
 import ctypes
+import os
 import sys
 
 import pytest
@@ -30,8 +31,49 @@ def test_P_WIN32_001_exclusion_formats_register() -> None:
 
 
 def test_P_WIN32_002_synthetic_clipboard_round_trip() -> None:
+    if os.environ.get("CI") != "true":
+        pytest.skip("clipboard round trip runs on hosted CI only")
     _desktop()
-    pytest.skip("work order forbids touching the real clipboard")
+    import win32clipboard
+    import win32con
+
+    try:
+        win32clipboard.OpenClipboard()
+    except Exception as error:
+        pytest.skip(f"clipboard unavailable: {type(error).__name__}")
+    try:
+        previous = (
+            win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT)
+            else None
+        )
+    finally:
+        win32clipboard.CloseClipboard()
+
+    try:
+        win32clipboard.OpenClipboard()
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(
+                win32con.CF_UNICODETEXT, "synthetic P-WIN32-002"
+            )
+        finally:
+            win32clipboard.CloseClipboard()
+        win32clipboard.OpenClipboard()
+        try:
+            assert win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT) == (
+                "synthetic P-WIN32-002"
+            )
+        finally:
+            win32clipboard.CloseClipboard()
+    finally:
+        win32clipboard.OpenClipboard()
+        try:
+            win32clipboard.EmptyClipboard()
+            if previous is not None:
+                win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, previous)
+        finally:
+            win32clipboard.CloseClipboard()
 
 
 def test_P_WIN32_003_sendinput_and_idle_symbols_exist() -> None:
