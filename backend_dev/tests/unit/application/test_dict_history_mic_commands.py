@@ -17,11 +17,11 @@ from fakes.clock import FakeClock
 from fakes.events import FakeEventSink
 from fakes.insertion import FakeUiaApi, FakeWin32Api
 from fakes.stt import FakeSttEngine
+
+from wispr_clone.application.api import Api
 from wispr_clone.application.commands.audio_commands import AudioCommands
 from wispr_clone.application.commands.dictionary_commands import DictionaryCommands
 from wispr_clone.application.commands.history_commands import HistoryCommands
-
-from wispr_clone.application.api import Api
 from wispr_clone.application.commands.run_commands import RunCommands
 from wispr_clone.audio.capture import CaptureChunk
 from wispr_clone.audio.device_lease import DeviceLease
