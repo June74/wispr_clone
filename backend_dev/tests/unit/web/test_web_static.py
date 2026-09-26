@@ -120,3 +120,60 @@ def test_t_web_008_error_messages_mirror_backend() -> None:
     ):
         actual[match.group(1)] = match.group(3)
     assert actual == expected
+
+
+def test_dictionary_ids_are_escaped_in_html_attributes() -> None:
+    """Dictionary IDs cross the bridge and must not break quoted data attributes."""
+    source = (WEB / "app.js").read_text(encoding="utf-8")
+    for name in ("edit", "delete"):
+        assert f'data-{name}-term="${{esc(entry.id)}}"' in source
+        assert f'data-{name}-term="${{entry.id}}"' not in source
+
+
+def test_inserted_toast_is_gated_by_done_event_in_app_wiring() -> None:
+    source = (WEB / "app.js").read_text(encoding="utf-8")
+    assert "shouldToastInserted(state.lastEvent)" in source
+    assert re.search(
+        r"state\.lastEvent\s*=\s*event\.name\s*===\s*'run:state'\s*\?\s*event\s*:\s*null",
+        source,
+    )
+    assert source.count("'Dictation inserted'") == 1
+    assert not re.search(r"toast\([^\n]*inserted[^\n]*run:recovery", source)
+
+
+def test_recovery_and_cancel_use_their_distinct_commands() -> None:
+    source = (WEB / "app.js").read_text(encoding="utf-8")
+    assert re.search(
+        r"bridge\.call\('run_cancel',\s*\{\s*run_id:\s*run\(\)\?\.run_id\s*\}\)",
+        source,
+    )
+    assert re.search(
+        r"bridge\.call\('run_recover',\s*\{\s*run_id:\s*active\.run_id,\s*"
+        r"expected_version:\s*active\.version,\s*action:\s*recover\.dataset\.recover\s*\}\)",
+        source,
+    )
+
+
+def test_hud_receives_events_without_a_command_bridge() -> None:
+    source = (WEB / "hud.js").read_text(encoding="utf-8")
+    assert "window.wisprEvent =" in source
+    assert "['run:state', 'audio:level'].includes(event.name)" in source
+    assert "pywebview" not in source
+    assert "wisprReconnect" not in source
+    assert "createBridge" not in source
+
+
+def test_previous_session_rejection_refreshes_the_app_store() -> None:
+    """A new token alone cannot replace runs/settings from the fresh snapshot."""
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    bridge = (WEB / "lib" / "bridge.js").read_text(encoding="utf-8")
+    assert "previous_session_token" in bridge
+    assert "previous_session_token" in app
+    assert "createStore(result.data)" in app
+
+
+def test_runtime_does_not_log_private_text() -> None:
+    for path in WEB.rglob("*.js"):
+        if "tests" in path.parts:
+            continue
+        assert not re.search(r"\bconsole\s*\.", path.read_text(encoding="utf-8")), path

@@ -184,3 +184,11 @@ backend_dev/web/
      reference does; otherwise `ZERO_WAVE`.
    - Sol adds T-WEB-009b: `smoothLevel` rise and fall constants, the snap to exactly 0, and
      `smoothBands` convergence, all from the reference formulas.
+8. **After Sol's verification (binding):**
+   - a. The "Dictation inserted" toast fires only when `applyEvent` accepted the run:state `done`
+     event (its version is newer than the stored one). A stale or duplicate `done` never toasts.
+   - b. After a `previous_session_token` refresh, the bridge's fresh `state_get` snapshot is
+     installed into the app store (for example through an `onSnapshot` callback registered by
+     app.js). The rejected command is still never replayed.
+   - c. Every value in an attribute is escaped with `esc()`, including numeric ids
+     (`data-edit-term`, `data-delete-term`), so each sink is safe on its own.
