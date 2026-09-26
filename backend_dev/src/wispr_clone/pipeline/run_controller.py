@@ -126,6 +126,11 @@ class RunController:
         if self._slot_reserved:
             raise WisprError(ErrorCode.DEVICE_LEASE_CONFLICT, "run", "busy")
         self._slot_reserved = True
+        run_id = self._services.new_id()
+        self._starting.add(run_id)
+        capture: CaptureLike | None = None
+        session: SttSession | None = None
+        wav: WavLike | None = None
         try:
             try:
                 snapshot = await self._services.capture_destination()
@@ -133,7 +138,7 @@ class RunController:
                 if error.error_code != ErrorCode.DESTINATION_UNVERIFIABLE:
                     raise
                 snapshot = None
-            run_id = self._services.new_id()
+            self._raise_if_aborted(run_id)
             path = self._services.audio_dir / f"{run_id}.wav"
             record = await self._services.history.create_run(
                 run_id=run_id,
@@ -142,27 +147,28 @@ class RunController:
                 destination=snapshot.to_json() if snapshot is not None else None,
                 audio_path=str(path),
             )
-            self._starting.add(run_id)
+            self._raise_if_aborted(run_id)
             entries = await self._services.dictionary.entries()
-            if self._is_aborted(run_id):
-                await self._services.history.get(run_id)
-                raise WisprError(ErrorCode.RUN_NOT_FOUND, "run", "aborted")
+            self._raise_if_aborted(run_id)
             self._dictionary_snapshots[run_id] = tuple(entries)
             self._publish_state(record)
-            capture: CaptureLike | None = None
             capture_started = False
-            session: SttSession | None = None
             try:
                 capture = self._services.new_capture()
                 capture.start()
                 capture_started = True
                 session = self._services.stt.start_session()
                 wav = self._services.new_wav(path)
+                self._raise_if_aborted(run_id)
             except Exception as error:
                 if capture is not None and capture_started:
                     capture.cancel()
                 if session is not None:
                     session.cancel()
+                if self._is_aborted(run_id):
+                    raise WisprError(
+                        ErrorCode.RUN_NOT_FOUND, "run", "aborted"
+                    ) from None
                 error_code = _error_code(error)
                 failed = transition(
                     RunState(record.status, record.version), RunEvent.FAIL
@@ -190,15 +196,35 @@ class RunController:
             self._task_errors_pending.add(run_id)
             return run_id
         except BaseException:
-            if "run_id" in locals():
-                self._starting.discard(run_id)
-            self._slot_reserved = False
-            self._active_run_id = None
+            if capture is not None:
+                try:
+                    capture.cancel()
+                except Exception:
+                    pass
+            if session is not None:
+                try:
+                    session.cancel()
+                except Exception:
+                    pass
+            if wav is not None:
+                try:
+                    wav.close()
+                except Exception:
+                    pass
+            self._starting.discard(run_id)
+            if self._active_run_id == run_id or self._active_run_id is None:
+                self._slot_reserved = False
+                self._active_run_id = None
+            was_aborted = self._is_aborted(run_id)
+            self._aborted.discard(run_id)
+            if was_aborted:
+                raise WisprError(ErrorCode.RUN_NOT_FOUND, "run", "aborted") from None
             raise
 
     def abort(self, run_id: str) -> None:
         """Stop work for a run whose history record was evicted or expired."""
         task = self._tasks.get(run_id)
+        was_starting = run_id in self._starting
         waiting = any(entry.run_id == run_id for entry in self._waiting)
         if (
             (task is None or task.done())
@@ -225,9 +251,17 @@ class RunController:
             except Exception:
                 pass
         self._starting.discard(run_id)
-        if self._active_run_id == run_id:
+        if self._active_run_id == run_id or (
+            was_starting and self._active_run_id is None
+        ):
             self._active_run_id = None
             self._slot_reserved = False
+        if (task is None or task.done()) and not was_starting:
+            self._aborted.discard(run_id)
+
+    def _raise_if_aborted(self, run_id: str) -> None:
+        if self._is_aborted(run_id):
+            raise WisprError(ErrorCode.RUN_NOT_FOUND, "run", "aborted")
 
     def _is_aborted(self, run_id: str) -> bool:
         return run_id in self._aborted
@@ -706,6 +740,7 @@ class RunController:
                 self._cancel_flags.pop(run_id, None)
             self._sessions.pop(run_id, None)
             self._wavs.pop(run_id, None)
+            self._aborted.discard(run_id)
             if self._active_run_id == run_id:
                 self._active_run_id = None
                 self._slot_reserved = False
@@ -943,6 +978,8 @@ class RunController:
                 )
 
     def _publish_recovery(self, record: RunRecord) -> None:
+        if self._is_aborted(record.id):
+            return
         state = RunState(record.status, record.version)
         self._services.events.publish(
             {
@@ -968,6 +1005,8 @@ class RunController:
             self._publish_recovery(record)
 
     def _publish_state(self, record: RunRecord) -> None:
+        if self._is_aborted(record.id):
+            return
         self._services.events.publish(
             {
                 "name": "run:state",
