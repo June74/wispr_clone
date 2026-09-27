@@ -238,23 +238,19 @@
         <h2 class="group-label">How you record</h2>
         <div class="card group">
           <div class="row">
-            <div class="row-text"><div class="row-title plain">Recording mode</div><div class="row-desc" id="mode-desc">Hotkeys are managed by the desktop app.</div></div>
+            <div class="row-text"><div class="row-title plain">Recording mode</div><div class="row-desc" id="mode-desc">Toggle: press once to start, again to stop. Hold: talk while held.</div></div>
             <div class="row-control">
               <div class="segmented" role="radiogroup" id="mode-seg">
-                <button role="radio" aria-checked="true" data-mode="toggle">Press to toggle</button>
+                <button role="radio" aria-checked="false" data-mode="toggle">Press to toggle</button>
                 <button role="radio" aria-checked="false" data-mode="hold">Hold to talk</button>
               </div>
             </div>
           </div>
           <div class="row" id="shortcut-row">
-            <div class="row-text"><div class="row-title plain">Dictation shortcut</div><div class="row-desc" id="shortcut-desc">Managed by the desktop app.</div></div>
+            <div class="row-text"><div class="row-title plain">Dictation shortcut</div><div class="row-desc" id="shortcut-desc" aria-live="polite">Managed by the desktop app.</div></div>
             <div class="row-control">
-              <label class="field select"><select aria-label="Dictation shortcut" id="shortcut-select">
-                <option value="ctrl+shift+Space">Ctrl + Shift + Space</option>
-                <option value="alt+Space">Alt + Space</option>
-                <option value="ctrl+alt+KeyD">Ctrl + Alt + D</option>
-                <option value="F9">F9</option>
-              </select><svg class="i"><use href="#i-chevron"/></svg></label>
+              <kbd id="shortcut-current"></kbd>
+              <button class="btn btn-secondary" id="shortcut-change" type="button">Change</button>
             </div>
           </div>
           <div class="row">

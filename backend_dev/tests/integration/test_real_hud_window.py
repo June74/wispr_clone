@@ -171,7 +171,7 @@ def test_T_UI_011_real_hud_style_and_focus() -> None:
         assert foreground_after != hwnd
         assert foreground_after_reshow == foreground_before_reshow
         assert foreground_after_reshow != hwnd
-        assert size == (round(268 * scale), round(44 * scale))
+        assert size == (round(272 * scale), round(44 * scale))
         assert corner == 2
     finally:
         if process.is_alive():

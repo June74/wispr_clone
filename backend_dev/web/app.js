@@ -4,6 +4,7 @@ import { hudState, shouldToastInserted, recoveryButtons } from './lib/view.js';
 import { messageFor } from './lib/messages.js';
 import { createWaveform } from './waveform.js';
 import { normalizeSecret } from './lib/secrets.js';
+import { toBinding, formatBinding } from './lib/shortcuts.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -112,7 +113,8 @@ function renderSettings() {
   const localWarning = $('#local-only-warning'); if (localWarning) localWarning.hidden = !localOnly;
   const keyConfigured = state.secrets?.openrouter_api_key?.configured;
   const keyStatus = $('#openrouter-key-status'); if (keyStatus) keyStatus.textContent = keyConfigured ? 'Key saved' : 'No key saved';
-  $('#mode-seg [data-mode]')?.setAttribute('aria-checked', 'true');
+  $$('#mode-seg [data-mode]').forEach((button) => button.setAttribute('aria-checked', String(button.dataset.mode === settings.recording_mode)));
+  const shortcut = $('#shortcut-current'); if (shortcut) shortcut.textContent = formatBinding(settings.dictation_shortcut ?? 'ctrl+shift+space');
 }
 function render() { renderRun(); renderModels(); renderHistory(); renderDictionary(); renderSettings(); }
 async function refreshLists() {
@@ -153,6 +155,40 @@ $('#history-search')?.addEventListener('input', () => { const query = $('#histor
 $('#history-filter')?.addEventListener('click', (event) => { const button = event.target.closest('[data-filter]'); if (!button) return; historyFilter = button.dataset.filter; $$('#history-filter [data-filter]').forEach((el) => el.setAttribute('aria-checked', String(el === button))); renderHistory(); });
 $('#dict-search')?.addEventListener('input', renderDictionary);
 $('#theme-seg')?.addEventListener('click', async (event) => { const button = event.target.closest('[data-theme-set]'); if (!button) return; const result = await bridge.call('settings_update', { patch: { theme: button.dataset.themeSet } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
+$('#mode-seg')?.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-mode]'); if (!button) return;
+  const result = await bridge.call('settings_update', { patch: { recording_mode: button.dataset.mode } });
+  if (failed(result)) return; state.settings = result.data; renderSettings();
+});
+$('#shortcut-change')?.addEventListener('click', () => {
+  const button = $('#shortcut-change'); const description = $('#shortcut-desc');
+  button.textContent = 'Press keys… (Esc to cancel)'; button.classList.add('is-capturing');
+  description.textContent = 'Press the shortcut you want to use.';
+  const endCapture = (message = '') => {
+    window.removeEventListener('keydown', onKeyDown, true);
+    window.removeEventListener('blur', onBlur);
+    button.textContent = 'Change'; button.classList.remove('is-capturing');
+    description.textContent = message || 'Managed by the desktop app.';
+  };
+  const onBlur = () => endCapture();
+  const onKeyDown = async (event) => {
+    event.preventDefault();
+    const modifiers = [event.ctrlKey && 'ctrl', event.altKey && 'alt', event.shiftKey && 'shift', event.metaKey && 'win'].filter(Boolean);
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) {
+      description.textContent = modifiers.length ? `Pressed: ${modifiers.map((part) => part[0].toUpperCase() + part.slice(1)).join(' + ')}` : 'Press the shortcut you want to use.';
+      return;
+    }
+    if (event.key === 'Escape' && modifiers.length === 0) { endCapture(); return; }
+    const dictation_shortcut = toBinding(event);
+    if (!dictation_shortcut) { endCapture('That key is not supported.'); return; }
+    endCapture('Saving shortcut…');
+    const result = await bridge.call('settings_update', { patch: { dictation_shortcut } });
+    if (!result?.ok) { description.textContent = messageFor(result?.error); return; }
+    state.settings = result.data; renderSettings(); description.textContent = 'Shortcut saved.';
+  };
+  window.addEventListener('keydown', onKeyDown, true);
+  window.addEventListener('blur', onBlur);
+});
 $('#cleanup-switch')?.addEventListener('click', async () => { const enabled = $('#cleanup-switch').getAttribute('aria-checked') !== 'true'; const result = await bridge.call('settings_update', { patch: { cleanup_enabled: enabled } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#save-instructions')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { cleanup_instructions: $('#instructions').value } }); if (failed(result)) return; state.settings = result.data; $('#save-instructions').disabled = true; $('#save-note').textContent = 'Saved'; });
 $('#local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
