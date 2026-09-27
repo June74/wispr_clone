@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import logging
 import os
 import secrets
 import sys
@@ -53,9 +54,12 @@ from wispr_clone.storage.db import Database
 from wispr_clone.stt.base import SttEngine
 from wispr_clone.ui.bridge import Bridge
 from wispr_clone.ui.events import WebviewEventSink
+from wispr_clone.ui.native_hud import NativeHud
 from wispr_clone.ui.overlay import open_hud
 from wispr_clone.ui.windows import open_settings
 from wispr_clone.ui.windows import start as start_webview
+
+logger = logging.getLogger(__name__)
 
 
 class CaptureLike(Protocol):
@@ -763,7 +767,19 @@ class App:
             self._webview_module = self.factories.webview()
         webview = self._webview_module
         hud_url = (Path(__file__).resolve().parents[2] / "web" / "hud.html").as_uri()
-        self._hud = open_hud(webview, hud_url=hud_url)
+        if sys.platform == "win32":
+            try:
+                native_hud = NativeHud()
+                if native_hud.available:
+                    self._hud = native_hud
+                else:
+                    logger.warning("NATIVE_HUD_UNAVAILABLE_FALLBACK")
+                    self._hud = open_hud(webview, hud_url=hud_url)
+            except Exception:
+                logger.warning("NATIVE_HUD_CREATE_FAILED_FALLBACK")
+                self._hud = open_hud(webview, hud_url=hud_url)
+        else:
+            self._hud = open_hud(webview, hud_url=hud_url)
         self._events.target = WebviewEventSink(
             None, self._hud, clock=self.factories.monotonic
         )
@@ -846,6 +862,11 @@ class App:
                 await self._stt.close()
             except Exception:
                 pass
+        if self._hud is not None and callable(getattr(self._hud, "destroy", None)):
+            try:
+                self._hud.destroy()
+            except Exception:
+                logger.warning("NATIVE_HUD_DESTROY_FAILED")
         self.shutdown_log.append("models")
         if not self._insertion_thread_error:
             try:
