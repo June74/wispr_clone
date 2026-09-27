@@ -6,6 +6,7 @@ import asyncio
 import os
 from dataclasses import replace
 from pathlib import Path
+from typing import Callable, Mapping
 
 import pytest
 from fakes.stt import FakeSttEngine
@@ -376,8 +377,9 @@ def test_T_APP_044_native_hud_factory_and_fallback(
 
     native_hud = FakeNativeHud()
 
-    def make_native_hud() -> FakeNativeHud:
+    def make_native_hud(*, on_cancel: Callable[[], None]) -> FakeNativeHud:
         nonlocal calls
+        assert callable(on_cancel)
         calls += 1
         return native_hud
 
@@ -401,6 +403,70 @@ def test_T_APP_044_native_hud_factory_and_fallback(
         if not app._worker_done.is_set():
             app._schedule_shutdown()
             app._worker_done.wait(timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_T_APP_045_native_cancel_schedules_active_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from wispr_clone.app import App
+
+    boundaries = Boundaries()
+    callbacks: list[Callable[[], None]] = []
+
+    class FakeNativeHud:
+        available = True
+
+        def show(self) -> None:
+            pass
+
+        def hide(self) -> None:
+            pass
+
+        def publish_event(self, _event: object) -> None:
+            pass
+
+        def destroy(self) -> None:
+            pass
+
+    def make_native_hud(*, on_cancel: Callable[[], None]) -> FakeNativeHud:
+        callbacks.append(on_cancel)
+        return FakeNativeHud()
+
+    app = App(
+        replace(boundaries.factories(gui=True), native_hud=make_native_hud),
+        data_dir=tmp_path,
+    )
+    app._loop = asyncio.get_running_loop()
+    try:
+        await app.startup()
+        assert len(callbacks) == 1
+        started = await _command(app, "run_start", request_id="native-cancel")
+        assert started.ok
+        assert started.data is not None
+        run_id = str(started.data["run_id"])
+        assert app._controller is not None
+        assert app._controller.active_run_id == run_id
+        original_call = app.api.call
+        cancel_payloads: list[dict[str, object]] = []
+
+        async def record_call(name: str, payload: Mapping[str, object]) -> object:
+            if name == "run_cancel":
+                cancel_payloads.append(dict(payload))
+            return await original_call(name, payload)
+
+        monkeypatch.setattr(app.api, "call", record_call)
+        await asyncio.to_thread(callbacks[0])
+        for _ in range(100):
+            if app._controller.active_run_id is None:
+                break
+            await asyncio.sleep(0.01)
+        assert app._controller.active_run_id is None
+        assert len(cancel_payloads) == 1
+        assert cancel_payloads[0]["run_id"] == run_id
+        assert boundaries.captures[0].cancelled
+    finally:
+        await app.shutdown()
 
 
 def test_T_APP_016_migration_failure_never_starts_services(tmp_path: Path) -> None:

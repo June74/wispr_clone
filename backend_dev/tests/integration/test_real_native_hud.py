@@ -44,8 +44,16 @@ def test_T_UI_015_real_native_hud(caplog: pytest.LogCaptureFixture) -> None:
     user32.GetWindowRect.restype = ctypes.c_bool
     user32.GetDpiForWindow.argtypes = (ctypes.c_void_p,)
     user32.GetDpiForWindow.restype = ctypes.c_uint
+    user32.PostMessageW.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_uint,
+        ctypes.c_size_t,
+        ctypes.c_ssize_t,
+    )
+    user32.PostMessageW.restype = ctypes.c_bool
 
-    hud = NativeHud()
+    cancelled: list[None] = []
+    hud = NativeHud(on_cancel=lambda: cancelled.append(None))
     try:
         before = user32.GetForegroundWindow()
         hud.show()
@@ -63,8 +71,9 @@ def test_T_UI_015_real_native_hud(caplog: pytest.LogCaptureFixture) -> None:
             time.sleep(0.02)
         assert hud.frames_drawn >= 1
         style = user32.GetWindowLongPtrW(hwnd, -20)
-        for flag in (0x80000, 0x80, 0x20, 0x08000000, 0x8):
+        for flag in (0x80000, 0x80, 0x08000000, 0x8):
             assert style & flag == flag
+        assert not style & 0x20  # WS_EX_TRANSPARENT
         rect = _Rect()
         assert user32.GetWindowRect(hwnd, ctypes.byref(rect))
         scale = user32.GetDpiForWindow(hwnd) / 96
@@ -73,6 +82,27 @@ def test_T_UI_015_real_native_hud(caplog: pytest.LogCaptureFixture) -> None:
             expected.window_width,
             expected.window_height,
         )
+        cancel = expected.cancel_rect
+        x = round((cancel.left + cancel.right) / 2)
+        y = round((cancel.top + cancel.bottom) / 2)
+        lparam = (y << 16) | x
+        assert user32.PostMessageW(hwnd, 0x0200, 0, lparam)  # WM_MOUSEMOVE
+        time.sleep(0.05)
+        assert user32.GetForegroundWindow() == before
+        elsewhere = (round(expected.dot_center[1]) << 16) | round(
+            expected.dot_center[0]
+        )
+        assert user32.PostMessageW(hwnd, 0x0201, 1, elsewhere)
+        assert user32.PostMessageW(hwnd, 0x0202, 0, elsewhere)
+        time.sleep(0.05)
+        assert cancelled == []
+        assert user32.PostMessageW(hwnd, 0x0201, 1, lparam)  # WM_LBUTTONDOWN
+        assert user32.PostMessageW(hwnd, 0x0202, 0, lparam)  # WM_LBUTTONUP
+        deadline = time.monotonic() + 2
+        while len(cancelled) < 1 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert len(cancelled) == 1
+        assert user32.GetForegroundWindow() == before
         hud.publish_event(
             {"name": "run:state", "run_id": "r", "version": 1, "status": "recording"}
         )
@@ -82,11 +112,9 @@ def test_T_UI_015_real_native_hud(caplog: pytest.LogCaptureFixture) -> None:
         while (
             hud.frames_drawn <= recording_start_frames and time.monotonic() < deadline
         ):
-            hud.publish_event(
-                {"name": "audio:level", "run_id": "r", "bands": [0.5] * 12}
-            )
             time.sleep(0.05)
         assert hud.frames_drawn > recording_start_frames
+        assert user32.GetForegroundWindow() == before
         hud.hide()
         time.sleep(0.05)
         assert not user32.IsWindowVisible(hwnd)

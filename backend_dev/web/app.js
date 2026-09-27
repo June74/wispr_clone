@@ -95,12 +95,10 @@ function renderRun() {
     $('#dictate-cancel').insertAdjacentHTML('beforebegin', controls);
     state.lastRecovery = null;
   }
-  const pill = $('#pill'); if (pill) { pill.classList.toggle('is-open', recording || pending); $('#pill-label').textContent = recording ? 'Listening' : pending ? 'Working' : 'Ready'; $('#pill-dot').className = `status-dot ${style.color === 'green' ? 'success live' : style.color === 'red' ? 'danger' : style.color === 'yellow' ? 'warning' : ''}`; }
   const level = state.latestLevel; waveform?.update(level?.bands ?? [], recording && level?.run_id === active?.run_id);
   const meter = $('#level-segments');
   if (meter) { const count = Math.round(36 * Math.max(0, Math.min(1, Math.max(...(level?.run_id === null ? level.bands ?? [] : [0]))))); meter.innerHTML = '<i></i>'.repeat(36); $$('i', meter).forEach((segment, index) => { if (index < count) segment.className = index >= 29 ? 'warm' : 'on'; }); if (level?.run_id === null) $('#level-state').textContent = 'Receiving microphone levels'; }
 
-  $$('.meter i', $('#pill-meter') ?? document).forEach((bar, index) => { const value = level?.bands?.[Math.floor(index * 12 / 14)] ?? 0; bar.style.height = `${Math.max(15, Number(value) * 100)}%`; });
 }
 function renderSettings() {
   applyTheme();
@@ -142,7 +140,6 @@ $('#rec-btn')?.addEventListener('click', async () => {
   if (failed(result)) return; if (result?.data?.run_id) currentRun = result.data.run_id; render();
 });
 $('#dictate-cancel')?.addEventListener('click', async () => { const result = await bridge.call('run_cancel', { run_id: run()?.run_id }); if (!failed(result)) render(); });
-$('#pill-cancel')?.addEventListener('click', () => $('#dictate-cancel')?.click());
 document.addEventListener('click', async (event) => {
   const recover = event.target.closest('[data-recover]');
   if (recover) { if (recover.dataset.recover === 'cancel') { await $('#dictate-cancel').click(); return; } const active = run(); const result = await bridge.call('run_recover', { run_id: active.run_id, expected_version: active.version, action: recover.dataset.recover }); if (!failed(result)) { recover.remove(); render(); } return; }
