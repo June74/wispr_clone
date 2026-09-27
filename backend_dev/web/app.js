@@ -10,7 +10,7 @@ let state = createStore();
 let currentRun = null;
 let historyFilter = 'all';
 let editingTermId = null;
-const bridge = createBridge(window, { onSnapshot(snapshot) { state = createStore(snapshot); currentRun = snapshot.active_run_id; render(); } });
+const bridge = createBridge(window, { onSnapshot(snapshot) { state = { ...createStore(snapshot), secrets: snapshot.secrets }; currentRun = snapshot.active_run_id; render(); } });
 const icon = (name) => `<svg class="i"><use href="#i-${name}"/></svg>`;
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 const waveform = $('#wave') ? createWaveform($('#wave'), () => getComputedStyle($('#dictate')).getPropertyValue('--wave-color').trim()) : null;
@@ -63,8 +63,9 @@ function renderModels() {
     const model = state.models.find((item) => item.role === role);
     const badge = $('[data-status]', card);
     const select = $('[data-select]', card);
-    if (select) { select.replaceChildren(); const option = document.createElement('option'); option.value = model?.model_id ?? ''; option.textContent = model?.model_id ?? 'Unavailable'; select.append(option); select.disabled = true; }
+    if (select) { select.replaceChildren(); const option = document.createElement('option'); option.value = model?.model_id ?? ''; option.textContent = role === 'stt' ? 'Whisper Large v3 Turbo (DeepInfra)' : model?.model_id ?? 'Unavailable'; select.append(option); select.disabled = true; }
     const modelId = $('[data-model-id]', card); if (modelId) modelId.textContent = model?.model_id ?? '';
+    const where = $('[data-where]', card); if (where && role === 'stt') where.textContent = 'Leaves this device';
     if (badge && model) { badge.className = `badge ${model.ready ? 'success' : 'danger'}`; badge.textContent = model.ready ? 'Ready' : messageFor(model.error_code); }
   });
   const dot = $('.nav-item[data-page="models"] .status-dot');
@@ -104,7 +105,12 @@ function renderSettings() {
   const settings = state.settings;
   $('#cleanup-switch')?.setAttribute('aria-checked', String(Boolean(settings.cleanup_enabled)));
   if ($('#instructions')) $('#instructions').value = settings.cleanup_instructions ?? '';
-  $('#local-switch')?.setAttribute('aria-checked', String(Boolean(settings.local_only)));
+  const localOnly = Boolean(settings.local_only);
+  $('#local-switch')?.setAttribute('aria-checked', String(localOnly));
+  $('#privacy-local-switch')?.setAttribute('aria-checked', String(localOnly));
+  const localWarning = $('#local-only-warning'); if (localWarning) localWarning.hidden = !localOnly;
+  const keyConfigured = state.secrets?.openrouter_api_key?.configured;
+  const keyStatus = $('#openrouter-key-status'); if (keyStatus) keyStatus.textContent = keyConfigured ? 'Key saved' : 'No key saved';
   $('#mode-seg [data-mode]')?.setAttribute('aria-checked', 'true');
 }
 function render() { renderRun(); renderModels(); renderHistory(); renderDictionary(); renderSettings(); }
@@ -149,6 +155,9 @@ $('#theme-seg')?.addEventListener('click', async (event) => { const button = eve
 $('#cleanup-switch')?.addEventListener('click', async () => { const enabled = $('#cleanup-switch').getAttribute('aria-checked') !== 'true'; const result = await bridge.call('settings_update', { patch: { cleanup_enabled: enabled } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#save-instructions')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { cleanup_instructions: $('#instructions').value } }); if (failed(result)) return; state.settings = result.data; $('#save-instructions').disabled = true; $('#save-note').textContent = 'Saved'; });
 $('#local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
+$('#privacy-local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#privacy-local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
+$('#save-openrouter-key')?.addEventListener('click', async () => { const input = $('#openrouter-key'); const value = input.value; input.value = ''; const result = await bridge.call('secret_set', { name: 'openrouter_api_key', value }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
+$('#clear-openrouter-key')?.addEventListener('click', async () => { $('#openrouter-key').value = ''; const result = await bridge.call('secret_clear', { name: 'openrouter_api_key' }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
 $('#mic-test')?.addEventListener('click', async () => { const result = $('#mic-test').dataset.running === 'true' ? await bridge.call('mic_test_stop') : await bridge.call('mic_test_start', { device_id: Number($('#mic-select').value) || null }); if (failed(result)) return; const running = result.data.stopped === false || result.data.started === true; $('#mic-test').dataset.running = String(running); $('#mic-test').innerHTML = `${icon(running ? 'stop' : 'mic')}${running ? 'Stop test' : 'Test microphone'}`; });
 $('#delete-all')?.addEventListener('click', () => $('#delete-modal').classList.add('is-open'));
 $('#confirm-delete')?.addEventListener('click', async () => { const result = await bridge.call('history_delete_all'); if (failed(result)) return; $('#delete-modal').classList.remove('is-open'); await refreshLists(); });
@@ -178,6 +187,6 @@ window.addEventListener('storage', applyTheme);
   if (!bridge.available()) { render(); $('#title-status').innerHTML = '<span class="status-dot warning"></span>Not connected'; $('#rec-btn').disabled = true; return; }
   const result = await bridge.reconnect();
   if (failed(result)) return;
-  state = createStore(result.data); currentRun = result.data.active_run_id; $('#title-status').innerHTML = '<span class="status-dot success"></span>Connected'; render();
+  state = { ...createStore(result.data), secrets: result.data.secrets }; currentRun = result.data.active_run_id; $('#title-status').innerHTML = '<span class="status-dot success"></span>Connected'; render();
   await refreshLists();
 })();

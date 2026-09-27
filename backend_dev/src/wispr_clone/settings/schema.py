@@ -14,7 +14,7 @@ from wispr_clone.contracts.shortcuts import (
     validate_bindings,
 )
 
-SETTINGS_SCHEMA_VERSION: int = 1
+SETTINGS_SCHEMA_VERSION: int = 2
 
 
 class ModelCatalog(Protocol):
@@ -37,11 +37,11 @@ class Settings(BaseModel):
     )
     cancel_shortcut: str = Field(default="escape", min_length=1, max_length=64)
     microphone_id: str | None = Field(default=None, min_length=1, max_length=256)
-    stt_model_id: str = "voxtral-mini-4b-realtime-2602"
+    stt_model_id: str = "openai/whisper-large-v3-turbo"
     cleanup_model_id: str = "meta-llama-3.1-8b-instruct"
     cleanup_enabled: bool = True
     cleanup_instructions: str = Field(default="", max_length=2000)
-    local_only: bool = True
+    local_only: bool = False
     theme: Literal["system", "light", "dark"] = "light"
     idle_jump_seconds: float = Field(default=config.IDLE_JUMP_SECONDS, ge=0.5, le=10.0)
     return_settle_seconds: float = Field(
@@ -53,7 +53,17 @@ class Settings(BaseModel):
 
 
 UpgradeStep = Callable[[dict[str, object]], dict[str, object]]
-UPGRADE_STEPS: Mapping[int, UpgradeStep] = {}
+
+
+def _upgrade_v1(data: dict[str, object]) -> dict[str, object]:
+    data["schema_version"] = 2
+    if data.get("stt_model_id") == "voxtral-mini-4b-realtime-2602":
+        data["stt_model_id"] = "openai/whisper-large-v3-turbo"
+    data["local_only"] = False
+    return data
+
+
+UPGRADE_STEPS: Mapping[int, UpgradeStep] = {1: _upgrade_v1}
 
 
 def default_settings() -> Settings:

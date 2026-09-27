@@ -24,6 +24,8 @@ class ErrorCode(StrEnum):
     AUDIO_QUEUE_OVERFLOW = "audio_queue_overflow"
     NO_SPEECH_DETECTED = "no_speech_detected"
     STT_UNAVAILABLE = "stt_unavailable"
+    API_KEY_MISSING = "api_key_missing"
+    API_KEY_INVALID = "api_key_invalid"
     MODEL_LOAD_FAILED = "model_load_failed"
     STT_TIMEOUT = "stt_timeout"
     STT_STREAM_CLOSED = "stt_stream_closed"

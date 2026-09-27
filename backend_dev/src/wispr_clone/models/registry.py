@@ -95,16 +95,16 @@ def is_loopback_endpoint(url: str) -> bool:
 
 
 def default_registry() -> ModelRegistry:
-    """Build the two selected local models in stable UI order."""
+    """Build the selected speech and cleanup models in stable UI order."""
     return ModelRegistry(
         (
             ModelInfo(
-                "voxtral-mini-4b-realtime-2602",
+                config.OPENROUTER_MODEL_ID,
                 "stt",
-                "Voxtral Mini 4B Realtime",
-                True,
-                "transcribe-cpp",
-                None,
+                "Whisper Large v3 Turbo (DeepInfra)",
+                False,
+                "openrouter",
+                config.OPENROUTER_ENDPOINT,
             ),
             ModelInfo(
                 config.LM_STUDIO_MODEL_ID,

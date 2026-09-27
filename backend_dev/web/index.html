@@ -270,8 +270,8 @@
 
         <div class="card group">
           <div class="row">
-            <div class="row-text"><div class="row-title plain">Keep processing local</div><div class="row-desc">Prefer on-device models for speech and cleanup.</div></div>
-            <div class="row-control"><button class="switch" role="switch" aria-checked="true" aria-label="Keep processing local" id="local-switch"></button></div>
+            <div class="row-text"><div class="row-title plain">Keep processing local</div><div class="row-desc">Block cloud models. Dictation needs cloud speech recognition.</div></div>
+            <div class="row-control"><button class="switch" role="switch" aria-checked="false" aria-label="Keep processing local" id="local-switch"></button></div>
           </div>
         </div>
 
@@ -289,6 +289,13 @@
             <button class="btn btn-secondary" data-test><svg class="i"><use href="#i-wave"/></svg>Test model</button>
           </div>
           <div class="model-meta"><span data-where>On-device</span><span>·</span><span data-model-id></span></div>
+          <div class="field-label">OpenRouter API key</div>
+          <div class="model-pick">
+            <label class="field"><input id="openrouter-key" type="password" autocomplete="off" aria-label="OpenRouter API key"></label>
+            <button class="btn btn-secondary" id="save-openrouter-key">Save</button>
+            <button class="btn btn-secondary" id="clear-openrouter-key">Clear</button>
+          </div>
+          <div class="model-meta"><span id="openrouter-key-status">No key saved</span></div>
         </div>
         <div class="card model-card" data-model="cleanup">
           <div class="model-head">
@@ -366,11 +373,11 @@
 
       <!-- ============ SETTINGS: PRIVACY ============ -->
       <section class="page" id="page-privacy" data-title="Data · Privacy & data">
-        <div class="page-head"><div><h1>Privacy &amp; data</h1><p>Everything stays on this computer unless you connect a remote model.</p></div></div>
+        <div class="page-head"><div><h1>Privacy &amp; data</h1><p>Your audio is sent to OpenRouter and transcribed by DeepInfra (Whisper Large v3 Turbo). Transcripts stay on this PC.</p></div></div>
 
         <div class="callout info inline-style-5">
           <svg class="i"><use href="#i-info"/></svg>
-          <div><strong>Audio is never saved</strong>Recordings are discarded as soon as they're transcribed. Only text is kept.</div>
+          <div><strong>Audio leaves this device</strong>Audio is sent to OpenRouter for transcription. Recordings remain available locally for retry.</div>
         </div>
 
         <div class="card group">
@@ -384,9 +391,10 @@
           </div>
           <div class="row">
             <div class="row-text"><div class="row-title">Local-only mode</div><div class="row-desc">Block every network request, including remote cleanup models.</div></div>
-            <div class="row-control"><button class="switch" role="switch" aria-checked="true" aria-label="Local-only mode"></button></div>
+            <div class="row-control"><button class="switch" role="switch" aria-checked="false" aria-label="Local-only mode" id="privacy-local-switch"></button></div>
           </div>
         </div>
+        <div class="callout warning" id="local-only-warning" hidden><svg class="i"><use href="#i-alert"/></svg><div>Dictation needs cloud speech-to-text; it is disabled while local-only is on.</div></div>
 
         <div class="section">
           <h3 class="section-title inline-style-3">Danger zone</h3>

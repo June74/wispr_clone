@@ -11,7 +11,11 @@ import pytest
 
 from wispr_clone.contracts.common import ErrorCode, WisprError
 from wispr_clone.models.registry import ModelInfo, ModelRegistry, default_registry
-from wispr_clone.settings.schema import default_settings, settings_to_data
+from wispr_clone.settings.schema import (
+    UPGRADE_STEPS,
+    default_settings,
+    settings_to_data,
+)
 from wispr_clone.storage import Database, Migration
 
 
@@ -27,6 +31,7 @@ def _catalog_with_cloud() -> ModelRegistry:
             ModelInfo(
                 "cloud-cleanup", "cleanup", "Synthetic cloud model", False, "test", None
             ),
+            ModelInfo("local-stt", "stt", "Synthetic local STT", True, "test", None),
         )
     )
 
@@ -67,8 +72,8 @@ async def test_T_SET_010_defaults_update_and_restart(tmp_path: Path) -> None:
     [
         ("{broken", "invalid json"),
         ('["not an object"]', "invalid json"),
-        ('{"schema_version":1,"theme":"violet"}', "invalid settings"),
-        ('{"schema_version":1,"cleanup_model_id":"cloud-cleanup"}', "invalid settings"),
+        ('{"schema_version":2,"theme":"violet"}', "invalid settings"),
+        ('{"schema_version":2,"cleanup_model_id":"cloud-cleanup"}', "invalid settings"),
     ],
     ids=["malformed-json", "json-array", "bad-field", "cloud-default-registry"],
 )
@@ -116,7 +121,10 @@ async def test_T_SET_011_known_cloud_row_and_backup_limit(tmp_path: Path) -> Non
 
     path = tmp_path / "backup_limit.db"
     async with Database(path) as db:
-        cloud_raw = '{"schema_version":1,"cleanup_model_id":"cloud-cleanup"}'
+        cloud_raw = (
+            '{"schema_version":2,"stt_model_id":"local-stt",'
+            '"local_only":true,"cleanup_model_id":"cloud-cleanup"}'
+        )
         await db.write(
             lambda conn: conn.execute(
                 "INSERT INTO settings (id, data) VALUES (1, ?)", (cloud_raw,)
@@ -168,11 +176,15 @@ async def test_T_SET_012_patch_rollback_and_concurrent_merge(tmp_path: Path) -> 
             ({"cleanup_enabled": "false"}, ErrorCode.VALIDATION, "cleanup_enabled"),
             ({"not_a_setting": True}, ErrorCode.VALIDATION, "not_a_setting"),
             (
-                {"cleanup_model_id": "cloud-cleanup"},
+                {
+                    "stt_model_id": "local-stt",
+                    "local_only": True,
+                    "cleanup_model_id": "cloud-cleanup",
+                },
                 ErrorCode.CLOUD_MODEL_FORBIDDEN,
                 "cleanup_model_id",
             ),
-            ({"schema_version": 1}, ErrorCode.VALIDATION, "schema_version"),
+            ({"schema_version": 3}, ErrorCode.VALIDATION, "schema_version"),
         ]
         for patch, code, why in invalid:
             with pytest.raises(WisprError) as caught:
@@ -234,10 +246,12 @@ async def test_T_SET_013_upgrade_is_rewritten(tmp_path: Path) -> None:
         def upgrade(data: dict[str, object]) -> dict[str, object]:
             return {**data, "schema_version": 1, "recording_mode": "hold"}
 
-        store = SettingsStore(db, default_registry(), upgrade_steps={0: upgrade})
+        store = SettingsStore(
+            db, default_registry(), upgrade_steps={0: upgrade, 1: UPGRADE_STEPS[1]}
+        )
         loaded = await store.load()
         assert (loaded.schema_version, loaded.theme, loaded.recording_mode) == (
-            1,
+            2,
             "dark",
             "hold",
         )
@@ -267,7 +281,7 @@ async def test_T_SET_012_update_rejects_damaged_stored_row_without_changing_cach
             expected_row = (
                 "{broken"
                 if damage == "invalid-json"
-                else '{"schema_version":1,"cleanup_enabled":"false"}'
+                else '{"schema_version":2,"cleanup_enabled":"false"}'
             )
             await db.write(
                 lambda conn: conn.execute(

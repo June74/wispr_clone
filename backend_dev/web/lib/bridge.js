@@ -1,4 +1,4 @@
-const MUTATING = new Set(['run_start', 'run_stop', 'run_cancel', 'run_recover', 'settings_update', 'models_select', 'dict_add', 'dict_update', 'dict_delete', 'dict_import', 'history_delete', 'history_delete_all', 'history_copy', 'mic_test_start', 'mic_test_stop']);
+const MUTATING = new Set(['run_start', 'run_stop', 'run_cancel', 'run_recover', 'settings_update', 'secret_set', 'secret_clear', 'models_select', 'dict_add', 'dict_update', 'dict_delete', 'dict_import', 'history_delete', 'history_delete_all', 'history_copy', 'mic_test_start', 'mic_test_stop']);
 export function createBridge(windowLike, options = {}) {
   const hostCall = typeof windowLike === 'function' ? windowLike : async (name, payload) => windowLike?.pywebview?.api?.call(name, payload);
   const clock = options.now ?? Date.now;

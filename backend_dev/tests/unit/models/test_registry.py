@@ -25,12 +25,12 @@ def test_T_REG_001_defaults_order_filters_and_lookups() -> None:
         stt.runtime,
         stt.endpoint,
     ) == (
-        "voxtral-mini-4b-realtime-2602",
+        "openai/whisper-large-v3-turbo",
         "stt",
-        "Voxtral Mini 4B Realtime",
-        True,
-        "transcribe-cpp",
-        None,
+        "Whisper Large v3 Turbo (DeepInfra)",
+        False,
+        "openrouter",
+        "https://openrouter.ai/api/v1",
     )
     assert (
         cleanup.model_id,
@@ -53,7 +53,7 @@ def test_T_REG_001_defaults_order_filters_and_lookups() -> None:
     for item in (stt, cleanup):
         assert models.get(item.model_id) == item
         assert models.role_of(item.model_id) == item.role
-        assert models.is_local(item.model_id) is True
+        assert models.is_local(item.model_id) is item.local
     assert models.get("missing") is None
     assert models.role_of("missing") is None
     assert models.is_local("missing") is False
