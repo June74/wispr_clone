@@ -41,6 +41,11 @@ class WebviewEventSink(EventSink):
                     continue
                 self._last_audio[key] = now
             try:
+                publish = getattr(window, "publish_event", None)
+                if callable(publish):
+                    if name in {"run:state", "audio:level"}:
+                        publish(dict(event))
+                    continue
                 window.run_js(script)  # type: ignore[attr-defined]
             except Exception:
                 self.delivery_errors += 1

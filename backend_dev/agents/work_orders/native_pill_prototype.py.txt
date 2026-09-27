@@ -1,0 +1,120 @@
+"""Prototype: per-pixel-alpha native pill HUD (UpdateLayeredWindow + GDI+). Captures only the on-top red backdrop."""
+import ctypes, math, sys, threading, time
+from ctypes import wintypes
+from pathlib import Path
+import webview
+
+WEB = Path(sys.argv[1]) / "web"
+W, H, R, M = 272, 44, 22, 14          # pill size, radius, shadow margin (logical px)
+u = ctypes.WinDLL("user32", use_last_error=True); g = ctypes.WinDLL("gdi32"); k = ctypes.WinDLL("kernel32")
+WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+u.DefWindowProcW.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM); u.DefWindowProcW.restype = ctypes.c_ssize_t
+class WNDCLASSW(ctypes.Structure):
+    _fields_ = [("style", wintypes.UINT), ("lpfnWndProc", WNDPROC), ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int),
+                ("hInstance", wintypes.HINSTANCE), ("hIcon", wintypes.HICON), ("hCursor", wintypes.HANDLE), ("hbrBackground", wintypes.HBRUSH),
+                ("lpszMenuName", wintypes.LPCWSTR), ("lpszClassName", wintypes.LPCWSTR)]
+class BLEND(ctypes.Structure):
+    _fields_ = [("op", ctypes.c_ubyte), ("flags", ctypes.c_ubyte), ("alpha", ctypes.c_ubyte), ("fmt", ctypes.c_ubyte)]
+u.CreateWindowExW.restype = wintypes.HWND
+u.CreateWindowExW.argtypes = (wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID)
+u.UpdateLayeredWindow.argtypes = (wintypes.HWND, wintypes.HDC, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(wintypes.SIZE), wintypes.HDC, ctypes.POINTER(wintypes.POINT), wintypes.COLORREF, ctypes.POINTER(BLEND), wintypes.DWORD)
+u.GetDC.restype = wintypes.HDC; u.GetDC.argtypes = (wintypes.HWND,)
+g.CreateCompatibleDC.restype = wintypes.HDC; g.CreateCompatibleDC.argtypes = (wintypes.HDC,)
+g.SelectObject.restype = wintypes.HGDIOBJ; g.SelectObject.argtypes = (wintypes.HDC, wintypes.HGDIOBJ)
+g.DeleteObject.argtypes = (wintypes.HGDIOBJ,); g.DeleteDC.argtypes = (wintypes.HDC,)
+u.ReleaseDC.argtypes = (wintypes.HWND, wintypes.HDC)
+u.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
+u.GetForegroundWindow.restype = wintypes.HWND
+state = {}
+
+def render(scale, label, dot_rgb, phase):
+    import clr  # noqa: F401  (pythonnet already loaded by pywebview)
+    from System.Drawing import Bitmap, Color, Graphics, SolidBrush, Pen, RectangleF, Font, FontStyle, GraphicsUnit, StringFormat
+    from System.Drawing.Drawing2D import GraphicsPath, SmoothingMode
+    from System.Drawing.Imaging import PixelFormat
+    from System.Drawing.Text import PrivateFontCollection, TextRenderingHint
+    s = scale; bw, bh = int((W + 2 * M) * s), int((H + 2 * M) * s)
+    bmp = Bitmap(bw, bh, PixelFormat.Format32bppPArgb)
+    gr = Graphics.FromImage(bmp); gr.SmoothingMode = SmoothingMode.AntiAlias; gr.Clear(Color.Transparent)
+    def pill(x, y, w, h, r):
+        p = GraphicsPath(); d = 2 * r
+        p.AddArc(x, y, d, d, 90, 180); p.AddArc(x + w - d, y, d, d, 270, 180); p.CloseFigure(); return p
+    # soft shadow: stacked expanding pills, offset down
+    for i in range(10, 0, -1):
+        grow = i * 1.1 * s
+        a = int(10 * (1 - i / 11))
+        gr.FillPath(SolidBrush(Color.FromArgb(a + 4, 0, 0, 0)), pill(M * s - grow, M * s - grow + 5 * s, W * s + 2 * grow, H * s + 2 * grow, R * s + grow))
+    gr.FillPath(SolidBrush(Color.FromArgb(242, 27, 22, 29)), pill(M * s, M * s, W * s, H * s, R * s))
+    gr.DrawPath(Pen(Color.FromArgb(22, 255, 255, 255), 1 * s), pill(M * s + .5 * s, M * s + .5 * s, W * s - s, H * s - s, R * s - .5 * s))
+    # dot
+    cx = (M + 16) * s; cy = (M + H / 2) * s; r = 4 * s
+    gr.FillEllipse(SolidBrush(Color.FromArgb(255, *dot_rgb)), cx - 0 , cy - r, 2 * r, 2 * r)
+    # label
+    if "font" not in state:
+        pfc = PrivateFontCollection(); pfc.AddFontFile(str(Path(__file__).parent / "geist_local.ttf")); state["pfc"] = pfc
+        state["font"] = next(f for f in pfc.Families if f.Name == "Geist Medium")
+    font = Font(state["font"], 12 * s, FontStyle.Regular, GraphicsUnit.Pixel)
+    gr.TextRenderingHint = TextRenderingHint.AntiAliasGridFit
+    tx = cx + 2 * r + 12 * s
+    size = gr.MeasureString(label, font)
+    gr.DrawString(label, font, SolidBrush(Color.White), tx, cy - size.Height / 2)
+    # waveform: 29 bars in 88x28, right padding 6
+    wx = (M + W - 6 - 88) * s; n = 29
+    for i in range(n):
+        x = wx + (i + 0.5) * 88 * s / n
+        hgt = (2 + 20 * abs(math.sin(phase + i * 0.45)) * (0.4 + 0.6 * math.sin(i / 28 * math.pi))) * s
+        gr.FillRectangle(SolidBrush(Color.FromArgb(int(255 * (0.35 + 0.65 * math.sin(i / 28 * math.pi))), 255, 255, 255)), x - 1.5 * s / 2 * 2 / 2, cy - hgt / 2, 1.5 * s, hgt)
+    gr.Dispose()
+    return bmp
+
+def push(hwnd, bmp, x, y):
+    from System.Drawing import Color
+    screen = u.GetDC(None); mem = g.CreateCompatibleDC(screen)
+    hbm = bmp.GetHbitmap(Color.FromArgb(0)); old = g.SelectObject(mem, ctypes.c_void_p(hbm.ToInt64()))
+    size = wintypes.SIZE(bmp.Width, bmp.Height); src = wintypes.POINT(0, 0); pos = wintypes.POINT(x, y)
+    blend = BLEND(0, 0, 255, 1)
+    ok = u.UpdateLayeredWindow(hwnd, screen, ctypes.byref(pos), ctypes.byref(size), mem, ctypes.byref(src), 0, ctypes.byref(blend), 2)
+    g.SelectObject(mem, old); g.DeleteObject(ctypes.c_void_p(hbm.ToInt64())); g.DeleteDC(mem); u.ReleaseDC(None, screen)
+    return ok
+
+def hud_thread(ready):
+    proc = WNDPROC(lambda h, m, w, l: u.DefWindowProcW(h, m, w, l)); state["proc"] = proc
+    wc = WNDCLASSW(); wc.lpfnWndProc = proc; wc.hInstance = k.GetModuleHandleW(None); wc.lpszClassName = "WisprProtoPill"
+    u.RegisterClassW(ctypes.byref(wc))
+    ex = 0x80000 | 0x80 | 0x20 | 0x08000000 | 0x8   # LAYERED|TOOLWINDOW|TRANSPARENT|NOACTIVATE|TOPMOST
+    hwnd = u.CreateWindowExW(ex, "WisprProtoPill", "Wispr Proto Pill", 0x80000000, 0, 0, 1, 1, None, None, wc.hInstance, None)
+    state["hwnd"] = hwnd; ready.set()
+    msg = wintypes.MSG()
+    while u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+        u.TranslateMessage(ctypes.byref(msg)); u.DispatchMessageW(ctypes.byref(msg))
+
+backdrop = webview.create_window("backdrop", html="<body style='margin:0;background:#ff2020'></body>",
+    x=0, y=0, width=460, height=180, frameless=True, focus=False, on_top=True, min_size=(1, 1))
+
+def main():
+    from System import Action
+    from System.Drawing import Bitmap, Graphics, Size
+    from System.Drawing.Imaging import ImageFormat
+    ready = threading.Event(); threading.Thread(target=hud_thread, args=(ready,), daemon=True).start(); ready.wait(5)
+    hwnd = state["hwnd"]; scale = u.GetDpiForWindow(hwnd) / 96
+    time.sleep(1.5); before = u.GetForegroundWindow()
+    t0 = time.perf_counter()
+    oks = []
+    for f in range(20):
+        oks.append(push(hwnd, render(scale, "Waiting for destination", (212, 169, 84), f * 0.3), int(40 * scale), int(40 * scale)))
+    print("ulw", set(oks), ctypes.get_last_error(), flush=True)
+    per_frame = (time.perf_counter() - t0) / 20 * 1000
+    u.SetWindowPos.argtypes = (wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT)
+    u.SetWindowPos(hwnd, wintypes.HWND(-1), 0, 0, 0, 0, 0x1 | 0x2 | 0x10 | 0x40)
+    print("visible", u.IsWindowVisible(hwnd), flush=True)
+    time.sleep(0.8)
+    print("fg_is_pill", u.GetForegroundWindow() == hwnd, "fg_unchanged", u.GetForegroundWindow() == before, "ms/frame %.1f" % per_frame, "scale", scale, flush=True)
+    f = backdrop.native; box = {}
+    f.Invoke(Action(lambda: box.update(b=[f.Left, f.Top, f.Width, f.Height])))
+    l, t, bw, bh = box["b"]
+    bmp = Bitmap(bw, bh); Graphics.FromImage(bmp).CopyFromScreen(l, t, 0, 0, Size(bw, bh))
+    bmp.Save(str(Path(__file__).parent / "hud_diag" / "native_pill.png"), ImageFormat.Png)
+    print("px corner/edge/center", [tuple((c.R, c.G, c.B)) for c in [bmp.GetPixel(int(56 * scale), int(56 * scale)), bmp.GetPixel(int(54 * scale + 1), int(76 * scale)), bmp.GetPixel(int(200 * scale), int(76 * scale))]], flush=True)
+    u.ShowWindow(hwnd, 0); backdrop.destroy()
+
+webview.start(main)
