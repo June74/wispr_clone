@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import importlib
+import logging
 import sys
 from dataclasses import dataclass
 from typing import Any, Protocol, Sequence
@@ -14,6 +15,47 @@ EXCLUSION_FORMATS = (
     "CanUploadToCloudClipboard",
 )
 KOREAN_LANGID = 0x0412
+_LOGGER = logging.getLogger(__name__)
+
+
+ULONG_PTR = ctypes.c_size_t
+
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.c_int32),
+        ("dy", ctypes.c_int32),
+        ("mouseData", ctypes.c_uint32),
+        ("dwFlags", ctypes.c_uint32),
+        ("time", ctypes.c_uint32),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", ctypes.c_uint16),
+        ("wScan", ctypes.c_uint16),
+        ("dwFlags", ctypes.c_uint32),
+        ("time", ctypes.c_uint32),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", ctypes.c_uint32),
+        ("wParamL", ctypes.c_uint16),
+        ("wParamH", ctypes.c_uint16),
+    ]
+
+
+class INPUT_UNION(ctypes.Union):
+    _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT)]
+
+
+class INPUT(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_uint32), ("union", INPUT_UNION)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,29 +146,22 @@ class RealWin32:
         )
 
     def send_inputs(self, inputs: Sequence[KeyEvent]) -> int:
-        class KEYBDINPUT(ctypes.Structure):
-            _fields_ = [
-                ("wVk", ctypes.c_ushort),
-                ("wScan", ctypes.c_ushort),
-                ("dwFlags", ctypes.c_ulong),
-                ("time", ctypes.c_ulong),
-                ("dwExtraInfo", ctypes.c_void_p),
-            ]
-
-        class INPUT_UNION(ctypes.Union):
-            _fields_ = [("ki", KEYBDINPUT)]
-
-        class INPUT(ctypes.Structure):
-            _fields_ = [("type", ctypes.c_ulong), ("union", INPUT_UNION)]
-
         values = (INPUT * len(inputs))()
         for index, event in enumerate(inputs):
             values[index].type = 1
-            values[index].union.ki = KEYBDINPUT(
-                event.vk, event.scan, event.flags, 0, None
+            values[index].union.ki = KEYBDINPUT(event.vk, event.scan, event.flags, 0, 0)
+        win_dll: Any = getattr(ctypes, "WinDLL")
+        user32: Any = win_dll("user32", use_last_error=True)
+        send_input = user32.SendInput
+        send_input.argtypes = (ctypes.c_uint, ctypes.POINTER(INPUT), ctypes.c_int)
+        send_input.restype = ctypes.c_uint
+        accepted = int(send_input(len(inputs), values, ctypes.sizeof(INPUT)))
+        if accepted == 0:
+            _LOGGER.warning(
+                "SendInput accepted 0 events; GetLastError=%d",
+                getattr(ctypes, "get_last_error")(),
             )
-        windll: Any = getattr(ctypes, "windll")
-        return int(windll.user32.SendInput(len(inputs), values, ctypes.sizeof(INPUT)))
+        return accepted
 
     def clipboard_text(self) -> str | None:
         clipboard = importlib.import_module("win32clipboard")
