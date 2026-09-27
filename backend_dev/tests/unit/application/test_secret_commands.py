@@ -134,3 +134,58 @@ def test_T_APP_031_real_factory_never_uses_volatile_key_store_outside_self_test(
     factory = real_factories()
     assert factory.secret_store is not None
     assert not isinstance(factory.secret_store(), MemorySecretStore)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_T_APP_032_secret_set_normalizes_pasted_key_boundaries() -> None:
+    from wispr_clone.settings.secret_store import MemorySecretStore
+
+    secrets = MemorySecretStore()
+    settings = SettingsStub()
+    stt = SttStub(secrets)
+    service = ModelService(
+        default_registry(),
+        settings,
+        stt_for=lambda _model_id: stt,
+        cleanup_for=lambda _model_id: CleanupStub(),
+        events=EventsStub(),
+    )
+    commands = SettingsCommands(
+        settings,
+        HistoryStub(),
+        ControllerStub(),
+        session_token=lambda: "session-test",
+        readiness=service.status,
+        secret_store=secrets,
+        model_service=service,
+    )
+    api = Api(commands.specs(), session_token="session-test", clock=lambda: 100.0)
+    payload = {"session_token": "session-test", "deadline": 105.0, "name": NAME}
+
+    for boundary in (
+        " ",
+        "\n",
+        "\r\n",
+        "\u00a0",
+        "\u200b",
+        "\u200c",
+        "\u200d",
+        "\u2060",
+        "\ufeff",
+    ):
+        result = await api.call(
+            "secret_set", {**payload, "value": boundary + FAKE_KEY + boundary}
+        )
+        assert result.ok is True, repr(boundary)
+        assert result.data == {"configured": True}
+        assert secrets.get(NAME) == FAKE_KEY
+
+    invalid_values = [
+        FAKE_KEY + character + FAKE_KEY
+        for character in (" ", "\u200b", "\u200c", "\u200d", "\u2060", "\ufeff")
+    ] + [" \r\n\u00a0", "\u200b\ufeff"]
+    for invalid in invalid_values:
+        result = await api.call("secret_set", {**payload, "value": invalid})
+        assert (result.ok, result.error) == (False, ErrorCode.VALIDATION)
+        assert secrets.get(NAME) == FAKE_KEY
