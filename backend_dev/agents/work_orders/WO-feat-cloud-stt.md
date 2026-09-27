@@ -212,3 +212,18 @@ class MemorySecretStore:         # tests and self-test; non-Windows fallback for
    - c. `SettingsCommands(..., secret_store: SecretStore, model_service: ModelService | None =
      None)`: the keyword names Sol's tests use. `model_service.poll()` is awaited after
      secret_set/secret_clear when present.
+2. **After Sol's security verification (binding):**
+   - a. **No retained exception context:** in the HTTP send, catch the httpx exception, record
+     only its code, leave the `except` block, then raise the ThirdPartyError. The raised error
+     then has `__context__ is None` and `__cause__ is None`, so no httpx Request object (which
+     carries the Authorization header) is reachable. Apply the same pattern to every raise in
+     openrouter_whisper.py and secret_store.py that happens inside an `except`.
+   - b. **Non-Windows real factory:** use an `UnavailableSecretStore` (`get` → None; `set` /
+     `clear` → WisprError(STORAGE_ERROR, "secrets", "unsupported platform")), never the volatile
+     MemorySecretStore. MemorySecretStore is for tests and the self-test only.
+   - c. **Privacy switch:** the Privacy & data local-only switch reflects `settings.local_only`
+     from state_get and settings events. Toggling it sends settings_update. Turning it on shows
+     the existing yellow warning text, "Dictation needs cloud speech-to-text; it is disabled
+     while local-only is on." Source file: web/index.html and web/app.js.
+   - d. **CODEMAP §2** (and any other "in-process Voxtral / no cloud needed" statement) is
+     rewritten for cloud STT via OpenRouter → DeepInfra.

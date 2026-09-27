@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 
 import pytest
 
@@ -118,3 +120,17 @@ async def test_T_APP_030_secret_commands_and_readiness() -> None:
     assert cleared.data == {"configured": False}
     final = await api.call("state_get", {})
     assert final.data["secrets"] == {NAME: {"configured": False}}
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(os.name == "nt", reason="non-Windows development boundary")
+def test_T_APP_031_real_factory_never_uses_volatile_key_store_outside_self_test(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from wispr_clone.app import real_factories
+    from wispr_clone.settings.secret_store import MemorySecretStore
+
+    monkeypatch.setattr(sys, "argv", ["wispr-clone"])
+    factory = real_factories()
+    assert factory.secret_store is not None
+    assert not isinstance(factory.secret_store(), MemorySecretStore)
