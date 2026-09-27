@@ -83,3 +83,37 @@ Writable: Luna: src/wispr_clone/ui/hud_model.py (new), src/wispr_clone/ui/wavefo
 | T-UI-014 | NativeHud on non-Windows: construction raises or returns unavailable cleanly. With fake seams: publish_event and show/hide are marshalled and never raise. events.py prefers publish_event and throttles audio to 30 Hz |
 | T-UI-015 (real, WISPR_REAL_GUI=1, win32) | Real NativeHud: after show, visible; ex-style has LAYERED, TOOLWINDOW, TRANSPARENT, NOACTIVATE and TOPMOST; window size = layout(scale); GetForegroundWindow is unchanged by show, hide and show; publish_event(recording and audio levels) doesn't raise; destroy ends the thread within 2 s. No screen capture |
 | T-APP-041/043 | Still pass. On Windows, app startup uses NativeHud (assert through a factory seam) |
+
+## Revision 2 (real-PC findings)
+
+- Every frame failed with `ModuleNotFoundError: No module named 'System.Drawing'`. In the
+  prototype, pywebview had already referenced the assembly.
+  - Fix: before the first draw, `_draw` does `import clr; clr.AddReference("System.Drawing")`
+    once (lazily, on the HUD thread).
+  - Add `NativeHud.frames_drawn: int`, counting successful UpdateLayeredWindow pushes.
+- T-UI-015 missed this because it checks no pixels. It must also assert:
+  - `frames_drawn >= 1` after show;
+  - that frames keep increasing while recording with audio levels;
+  - that no NATIVE_HUD_*_FAILED warning is logged in the child process.
+- T-APP-043 expected a pywebview "Wispr Clone HUD" window. On Windows the HUD is native now, so
+  expect only the settings pywebview window, plus a live native HUD (a FindWindowW class
+  "WisprCloneNativeHud" check).
+- T-UI-015 timing: destroy took 2.016 s once in the real suite. Keep the 2 s bound and investigate
+  if it recurs.
+
+## Revision 3: window class shared across instances (real bug)
+
+Repro on the real PC: in one process, a second `NativeHud` draws 0 frames and times out on
+destroy (2.00 s).
+- Cause: RegisterClassW("WisprCloneNativeHud") binds the FIRST instance's wndproc. The later
+  RegisterClassW fails with 1410, which is ignored, so every later window routes messages into a
+  dead instance.
+- This affects the app too, because `_create_windows` can run again.
+- Fix: register the class once per process, with ONE module-level WNDPROC kept alive for the
+  process lifetime. It dispatches by hwnd through a lock-protected registry
+  `{hwnd: NativeHud}`.
+- Map the hwnd at CreateWindowExW; set a pending instance before the call so that
+  WM_NCCREATE/WM_CREATE resolve. Unmap on WM_DESTROY.
+- Keep the class name "WisprCloneNativeHud".
+- T-UI-015b (real): two sequential NativeHud instances in one process each draw >= 1 frame and
+  destroy in < 2 s. Also two concurrent instances each draw, and both destroy.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import sys
 import time
@@ -36,7 +37,15 @@ def test_T_APP_043_real_gui_starts_and_closes(tmp_path: Path) -> None:
 
     import webview
 
+    # Keep Win32 prototypes private from pywebview's own user32 bindings.
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.FindWindowW.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p)
+    user32.FindWindowW.restype = ctypes.c_void_p
+    user32.IsWindow.argtypes = (ctypes.c_void_p,)
+    user32.IsWindow.restype = ctypes.c_bool
+
     observed: list[set[str]] = []
+    native_hud_found: list[bool] = []
     errors: list[BaseException] = []
 
     class HookedWebview:
@@ -48,6 +57,8 @@ def test_T_APP_043_real_gui_starts_and_closes(tmp_path: Path) -> None:
                 time.sleep(2)
                 try:
                     observed.append({window.title for window in webview.windows})
+                    hwnd = user32.FindWindowW("WisprCloneNativeHud", "Wispr Clone HUD")
+                    native_hud_found.append(bool(hwnd and user32.IsWindow(hwnd)))
                 except BaseException as error:
                     errors.append(error)
                 finally:
@@ -64,5 +75,6 @@ def test_T_APP_043_real_gui_starts_and_closes(tmp_path: Path) -> None:
 
     assert app.run() == 0
     assert errors == []
-    assert observed == [{"Wispr Clone", "Wispr Clone HUD"}]
+    assert observed == [{"Wispr Clone"}]
+    assert native_hud_found == [True]
     assert not (Path.cwd() / "@AutomationLog.txt").exists()

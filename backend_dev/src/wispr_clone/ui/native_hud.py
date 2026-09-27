@@ -36,6 +36,18 @@ _WS_EX_TOOLWINDOW = 0x00000080
 _WS_EX_TRANSPARENT = 0x00000020
 _WS_EX_NOACTIVATE = 0x08000000
 _WS_EX_TOPMOST = 0x00000008
+_WM_NCCREATE = 0x0081
+_WM_DESTROY = 0x0002
+_WINDOW_CLASS = "WisprCloneNativeHud"
+
+# The class procedure and class registration outlive every NativeHud instance.
+# WM_NCCREATE arrives before CreateWindowExW returns its hwnd, so instances are
+# temporarily indexed by their creating thread during that call.
+_window_lock = threading.RLock()
+_windows: dict[int, NativeHud] = {}
+_pending_windows: dict[int, NativeHud] = {}
+_window_class_registered = False
+_window_proc: Any = None
 
 
 class _WNDCLASSW(ctypes.Structure):
@@ -89,11 +101,13 @@ class NativeHud:
         self._bands = [0.0] * 12
         self._shown = False
         self._last_tick = 0.0
+        self._last_audio = 0.0
         self._last_draw = 0.0
         self._scale = 1.0
         self._apis: tuple[Any, Any, Any] | None = None
+        self.frames_drawn = 0
+        self._drawing_reference_loaded = False
         self._window_position = (0, 0)
-        self._proc: Any = None
         if sys.platform != "win32":
             return
         self._thread = threading.Thread(
@@ -164,40 +178,12 @@ class NativeHud:
             self._declare_apis(user32, gdi32, kernel32)
             self._apis = (user32, gdi32, kernel32)
             self._scale = self._get_scale(user32)
-            callback_type = cast(Any, getattr(ctypes, "WINFUNCTYPE"))(
-                ctypes.c_ssize_t,
-                wintypes.HWND,
-                wintypes.UINT,
-                wintypes.WPARAM,
-                wintypes.LPARAM,
-            )
-
-            def wndproc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
-                try:
-                    if msg == _WM_COMMAND:
-                        self._drain_commands(hwnd)
-                        return 0
-                    if msg == _WM_TIMER:
-                        self._animate(hwnd)
-                        return 0
-                    if msg == 0x0002:
-                        user32.KillTimer(hwnd, _TIMER_ID)
-                        user32.PostQuitMessage(0)
-                        return 0
-                except Exception:
-                    logger.warning("NATIVE_HUD_WINDOW_FAILED")
-                return int(user32.DefWindowProcW(hwnd, msg, wparam, lparam))
-
-            self._proc = callback_type(wndproc)
-            class_name = "WisprCloneNativeHud"
+            self._register_window_class(user32, kernel32)
             wc = _WNDCLASSW()
-            wc.lpfnWndProc = ctypes.cast(self._proc, ctypes.c_void_p).value
             wc.hInstance = kernel32.GetModuleHandleW(None)
-            wc.lpszClassName = class_name
-            get_last_error = cast(Any, getattr(ctypes, "get_last_error"))
-            if not user32.RegisterClassW(ctypes.byref(wc)) and get_last_error() != 1410:
-                self._ready.set()
-                return
+            thread_key = threading.get_native_id()
+            with _window_lock:
+                _pending_windows[thread_key] = self
             ex = (
                 _WS_EX_LAYERED
                 | _WS_EX_TOOLWINDOW
@@ -207,7 +193,7 @@ class NativeHud:
             )
             hwnd = user32.CreateWindowExW(
                 ex,
-                class_name,
+                _WINDOW_CLASS,
                 "Wispr Clone HUD",
                 _WS_POPUP,
                 0,
@@ -219,6 +205,8 @@ class NativeHud:
                 wc.hInstance,
                 None,
             )
+            with _window_lock:
+                _pending_windows.pop(thread_key, None)
             if not hwnd:
                 self._ready.set()
                 return
@@ -230,11 +218,37 @@ class NativeHud:
                 user32.TranslateMessage(ctypes.byref(msg))
                 user32.DispatchMessageW(ctypes.byref(msg))
             user32.DestroyWindow(hwnd)
+            with _window_lock:
+                _windows.pop(int(hwnd), None)
         except Exception:
             logger.warning("NATIVE_HUD_START_FAILED")
             self._ready.set()
         finally:
             self._closed.set()
+
+    @staticmethod
+    def _register_window_class(user32: Any, kernel32: Any) -> None:
+        global _window_class_registered, _window_proc
+        with _window_lock:
+            if _window_class_registered:
+                return
+            callback_type = cast(Any, getattr(ctypes, "WINFUNCTYPE"))(
+                ctypes.c_ssize_t,
+                wintypes.HWND,
+                wintypes.UINT,
+                wintypes.WPARAM,
+                wintypes.LPARAM,
+            )
+            _window_proc = callback_type(_dispatch_window_message)
+            wc = _WNDCLASSW()
+            wc.lpfnWndProc = ctypes.cast(_window_proc, ctypes.c_void_p).value
+            wc.hInstance = kernel32.GetModuleHandleW(None)
+            wc.lpszClassName = _WINDOW_CLASS
+            if not user32.RegisterClassW(ctypes.byref(wc)):
+                error = cast(Any, getattr(ctypes, "get_last_error"))()
+                if error != 1410:
+                    raise OSError(error, "RegisterClassW failed")
+            _window_class_registered = True
 
     @staticmethod
     def _declare_apis(user32: Any, gdi32: Any, kernel32: Any) -> None:
@@ -391,12 +405,18 @@ class NativeHud:
                 apis[0].ShowWindow(hwnd, 0)
             elif name == "state":
                 self._status = payload["status"]
+                if self._status == "recording":
+                    self._last_audio = time.monotonic()
+                else:
+                    self._bands = [0.0] * 12
                 self._model.update(self._bands, self._status == "recording")
                 self._draw(hwnd)
             elif name == "audio":
-                self._bands = payload["bands"]
-                self._model.update(self._bands, self._status == "recording")
-                self._last_tick = time.monotonic()
+                if self._status == "recording":
+                    self._bands = payload["bands"]
+                    self._model.update(self._bands, True)
+                    self._last_audio = time.monotonic()
+                    self._last_tick = self._last_audio
             elif name == "destroy":
                 self._shown = False
                 apis[0].ShowWindow(hwnd, 0)
@@ -441,6 +461,9 @@ class NativeHud:
         if not moving:
             return
         now = time.monotonic()
+        if active and now - self._last_audio >= 0.5 and any(self._bands):
+            self._bands = [0.0] * 12
+            self._model.update(self._bands, True)
         interval = 0.033
         try:
             reduced = wintypes.BOOL()
@@ -461,7 +484,10 @@ class NativeHud:
     def _draw(self, hwnd: int) -> None:
         resources: list[Any] = []
         try:
-            # pywebview's Windows backend has already loaded pythonnet's CLR runtime.
+            if not self._drawing_reference_loaded:
+                clr = importlib.import_module("clr")
+                clr.AddReference("System.Drawing")
+                self._drawing_reference_loaded = True
             importlib.import_module("System")
             drawing = cast(Any, importlib.import_module("System.Drawing"))
             drawing_2d = cast(Any, importlib.import_module("System.Drawing.Drawing2D"))
@@ -662,3 +688,41 @@ class NativeHud:
         user32.ReleaseDC(None, screen)
         if not ok:
             logger.warning("NATIVE_HUD_LAYER_UPDATE_FAILED")
+        else:
+            self.frames_drawn += 1
+
+
+def _dispatch_window_message(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
+    instance: NativeHud | None
+    with _window_lock:
+        instance = _windows.get(int(hwnd))
+        if instance is None and msg == _WM_NCCREATE:
+            instance = _pending_windows.get(threading.get_native_id())
+            if instance is not None:
+                _windows[int(hwnd)] = instance
+    if instance is None:
+        return 0
+    try:
+        apis = instance._apis
+        if apis is None:
+            return 0
+        user32 = apis[0]
+        if msg == _WM_COMMAND:
+            instance._drain_commands(hwnd)
+            return 0
+        if msg == _WM_TIMER:
+            instance._animate(hwnd)
+            return 0
+        if msg == _WM_DESTROY:
+            user32.KillTimer(hwnd, _TIMER_ID)
+            with _window_lock:
+                _windows.pop(int(hwnd), None)
+            user32.PostQuitMessage(0)
+            return 0
+        return int(user32.DefWindowProcW(hwnd, msg, wparam, lparam))
+    except Exception:
+        logger.warning("NATIVE_HUD_WINDOW_FAILED")
+        apis = instance._apis
+        if apis is not None:
+            return int(apis[0].DefWindowProcW(hwnd, msg, wparam, lparam))
+        return 0

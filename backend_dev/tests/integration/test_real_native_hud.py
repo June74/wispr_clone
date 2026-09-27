@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ctypes
+import logging
 import os
+import re
 import sys
 import time
 
@@ -21,7 +23,7 @@ class _Rect(ctypes.Structure):
     ]
 
 
-def test_T_UI_015_real_native_hud() -> None:
+def test_T_UI_015_real_native_hud(caplog: pytest.LogCaptureFixture) -> None:
     if sys.platform != "win32" or os.environ.get("WISPR_REAL_GUI") != "1":
         pytest.skip("requires Windows and WISPR_REAL_GUI=1")
 
@@ -56,6 +58,10 @@ def test_T_UI_015_real_native_hud() -> None:
             time.sleep(0.02)
         assert hwnd and user32.IsWindowVisible(hwnd)
         assert user32.GetForegroundWindow() == before
+        deadline = time.monotonic() + 5
+        while hud.frames_drawn < 1 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert hud.frames_drawn >= 1
         style = user32.GetWindowLongPtrW(hwnd, -20)
         for flag in (0x80000, 0x80, 0x20, 0x08000000, 0x8):
             assert style & flag == flag
@@ -70,7 +76,17 @@ def test_T_UI_015_real_native_hud() -> None:
         hud.publish_event(
             {"name": "run:state", "run_id": "r", "version": 1, "status": "recording"}
         )
-        hud.publish_event({"name": "audio:level", "run_id": "r", "bands": [0.5] * 12})
+        time.sleep(0.1)
+        recording_start_frames = hud.frames_drawn
+        deadline = time.monotonic() + 2
+        while (
+            hud.frames_drawn <= recording_start_frames and time.monotonic() < deadline
+        ):
+            hud.publish_event(
+                {"name": "audio:level", "run_id": "r", "bands": [0.5] * 12}
+            )
+            time.sleep(0.05)
+        assert hud.frames_drawn > recording_start_frames
         hud.hide()
         time.sleep(0.05)
         assert not user32.IsWindowVisible(hwnd)
@@ -84,3 +100,54 @@ def test_T_UI_015_real_native_hud() -> None:
         hud.destroy()
         assert time.monotonic() - start < 2
         assert not hud._thread.is_alive()
+    assert not [
+        record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
+        and re.search(r"\bNATIVE_HUD_[A-Z_]*FAILED\b", record.getMessage())
+    ]
+
+
+def test_T_UI_015b_multiple_real_native_huds() -> None:
+    if sys.platform != "win32" or os.environ.get("WISPR_REAL_GUI") != "1":
+        pytest.skip("requires Windows and WISPR_REAL_GUI=1")
+
+    from wispr_clone.ui.native_hud import NativeHud
+
+    def wait_for_frame(hud: NativeHud) -> None:
+        hud.show()
+        deadline = time.monotonic() + 5
+        while hud.frames_drawn < 1 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert hud.frames_drawn >= 1
+
+    def destroy_and_time(hud: NativeHud) -> tuple[float, bool]:
+        start = time.monotonic()
+        hud.destroy()
+        elapsed = time.monotonic() - start
+        stopped = hud._thread is not None and not hud._thread.is_alive()
+        return elapsed, stopped
+
+    # Reuse of the registered window class must work after the first HUD exits.
+    for _ in range(2):
+        hud = NativeHud()
+        try:
+            assert hud.available
+            wait_for_frame(hud)
+        finally:
+            elapsed, stopped = destroy_and_time(hud)
+        assert elapsed < 2 and stopped
+
+    # Both windows must receive their own messages while alive together.
+    huds = [NativeHud(), NativeHud()]
+    try:
+        assert all(hud.available for hud in huds)
+        for hud in huds:
+            hud.show()
+        deadline = time.monotonic() + 5
+        while any(hud.frames_drawn < 1 for hud in huds) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert all(hud.frames_drawn >= 1 for hud in huds)
+    finally:
+        shutdowns = [destroy_and_time(hud) for hud in huds]
+    assert all(elapsed < 2 and stopped for elapsed, stopped in shutdowns)
