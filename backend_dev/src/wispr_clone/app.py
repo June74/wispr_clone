@@ -92,6 +92,7 @@ class AppFactories:
     clock: Callable[[], float]
     monotonic: Callable[[], float]
     secret_store: Callable[[], SecretStore] | None = None
+    native_hud: Callable[[], Any] | None = None
     insertion_thread_init: Callable[[], None] = _noop
     insertion_thread_exit: Callable[[], None] = _noop
 
@@ -170,6 +171,7 @@ def real_factories() -> AppFactories:
         clock=time.time,
         monotonic=time.monotonic,
         secret_store=lambda: secrets_store,
+        native_hud=NativeHud if sys.platform == "win32" else None,
         insertion_thread_init=init_insertion_thread,
         insertion_thread_exit=exit_insertion_thread,
     )
@@ -767,9 +769,9 @@ class App:
             self._webview_module = self.factories.webview()
         webview = self._webview_module
         hud_url = (Path(__file__).resolve().parents[2] / "web" / "hud.html").as_uri()
-        if sys.platform == "win32":
+        if self.factories.native_hud is not None:
             try:
-                native_hud = NativeHud()
+                native_hud = self.factories.native_hud()
                 if native_hud.available:
                     self._hud = native_hud
                 else:

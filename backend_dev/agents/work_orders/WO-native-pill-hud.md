@@ -117,3 +117,16 @@ destroy (2.00 s).
 - Keep the class name "WisprCloneNativeHud".
 - T-UI-015b (real): two sequential NativeHud instances in one process each draw >= 1 frame and
   destroy in < 2 s. Also two concurrent instances each draw, and both destroy.
+
+## Revision 4: factory seam (CI Windows failure)
+
+`unit (windows-latest)` failed T-APP-016 with `assert len(webview.windows) == 2` → 1. On win32 the
+app constructs a REAL NativeHud even when the factories are fakes.
+- Add `native_hud: Callable[[], Any] | None = None` to the app factories. `real_factories()` sets
+  it to NativeHud on win32, and None elsewhere.
+- `_create_windows` uses `factories.native_hud` when it is set and the result is `.available`.
+  Otherwise it uses open_hud, which is the path unit tests and fakes take.
+- Remove the direct `sys.platform == "win32"` construction.
+- Tests: T-APP-016/composition tests stay as they are, passing on the fake path. Add T-APP-044: a
+  fake native_hud factory is used when provided and available, and open_hud is used when it's
+  unavailable. T-APP-043 (real) still sees the native HUD through real_factories.

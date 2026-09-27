@@ -357,6 +357,52 @@ def test_T_APP_016_webview_factory_is_used_once(tmp_path: Path) -> None:
             app._worker_done.wait(timeout=2)
 
 
+@pytest.mark.parametrize("available", [True, False])
+def test_T_APP_044_native_hud_factory_and_fallback(
+    tmp_path: Path, available: bool
+) -> None:
+    from wispr_clone.app import App
+
+    boundaries = Boundaries()
+    calls = 0
+
+    class FakeNativeHud:
+        def __init__(self) -> None:
+            self.available = available
+            self.destroyed = False
+
+        def destroy(self) -> None:
+            self.destroyed = True
+
+    native_hud = FakeNativeHud()
+
+    def make_native_hud() -> FakeNativeHud:
+        nonlocal calls
+        calls += 1
+        return native_hud
+
+    app = App(
+        replace(boundaries.factories(gui=True), native_hud=make_native_hud),
+        data_dir=tmp_path,
+    )
+    try:
+        assert app.run() == 0
+        assert calls == 1
+        if available:
+            assert app._hud is native_hud
+            assert native_hud.destroyed
+            assert len(boundaries.webview.windows) == 1
+        else:
+            assert app._hud is not native_hud
+            assert not native_hud.destroyed
+            assert len(boundaries.webview.windows) == 2
+            assert boundaries.webview.windows[0].title == "Wispr Clone HUD"
+    finally:
+        if not app._worker_done.is_set():
+            app._schedule_shutdown()
+            app._worker_done.wait(timeout=2)
+
+
 def test_T_APP_016_migration_failure_never_starts_services(tmp_path: Path) -> None:
     from wispr_clone.app import App
 
