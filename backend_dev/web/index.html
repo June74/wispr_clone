@@ -271,7 +271,7 @@
         <div class="card group">
           <div class="row">
             <div class="row-text"><div class="row-title plain">Keep processing local</div><div class="row-desc">Block cloud models. Dictation needs cloud speech recognition.</div></div>
-            <div class="row-control"><button class="switch" role="switch" aria-checked="true" aria-label="Keep processing local" id="local-switch"></button></div>
+            <div class="row-control"><button class="switch" role="switch" aria-checked="false" aria-label="Keep processing local" id="local-switch"></button></div>
           </div>
         </div>
 
@@ -391,9 +391,10 @@
           </div>
           <div class="row">
             <div class="row-text"><div class="row-title">Local-only mode</div><div class="row-desc">Block every network request, including remote cleanup models.</div></div>
-            <div class="row-control"><button class="switch" role="switch" aria-checked="true" aria-label="Local-only mode"></button></div>
+            <div class="row-control"><button class="switch" role="switch" aria-checked="false" aria-label="Local-only mode" id="privacy-local-switch"></button></div>
           </div>
         </div>
+        <div class="callout warning" id="local-only-warning" hidden><svg class="i"><use href="#i-alert"/></svg><div>Dictation needs cloud speech-to-text; it is disabled while local-only is on.</div></div>
 
         <div class="section">
           <h3 class="section-title inline-style-3">Danger zone</h3>

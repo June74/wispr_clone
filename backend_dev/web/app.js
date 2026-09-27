@@ -105,7 +105,10 @@ function renderSettings() {
   const settings = state.settings;
   $('#cleanup-switch')?.setAttribute('aria-checked', String(Boolean(settings.cleanup_enabled)));
   if ($('#instructions')) $('#instructions').value = settings.cleanup_instructions ?? '';
-  $('#local-switch')?.setAttribute('aria-checked', String(Boolean(settings.local_only)));
+  const localOnly = Boolean(settings.local_only);
+  $('#local-switch')?.setAttribute('aria-checked', String(localOnly));
+  $('#privacy-local-switch')?.setAttribute('aria-checked', String(localOnly));
+  const localWarning = $('#local-only-warning'); if (localWarning) localWarning.hidden = !localOnly;
   const keyConfigured = state.secrets?.openrouter_api_key?.configured;
   const keyStatus = $('#openrouter-key-status'); if (keyStatus) keyStatus.textContent = keyConfigured ? 'Key saved' : 'No key saved';
   $('#mode-seg [data-mode]')?.setAttribute('aria-checked', 'true');
@@ -152,6 +155,7 @@ $('#theme-seg')?.addEventListener('click', async (event) => { const button = eve
 $('#cleanup-switch')?.addEventListener('click', async () => { const enabled = $('#cleanup-switch').getAttribute('aria-checked') !== 'true'; const result = await bridge.call('settings_update', { patch: { cleanup_enabled: enabled } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#save-instructions')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { cleanup_instructions: $('#instructions').value } }); if (failed(result)) return; state.settings = result.data; $('#save-instructions').disabled = true; $('#save-note').textContent = 'Saved'; });
 $('#local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
+$('#privacy-local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#privacy-local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#save-openrouter-key')?.addEventListener('click', async () => { const input = $('#openrouter-key'); const value = input.value; input.value = ''; const result = await bridge.call('secret_set', { name: 'openrouter_api_key', value }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
 $('#clear-openrouter-key')?.addEventListener('click', async () => { $('#openrouter-key').value = ''; const result = await bridge.call('secret_clear', { name: 'openrouter_api_key' }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
 $('#mic-test')?.addEventListener('click', async () => { const result = $('#mic-test').dataset.running === 'true' ? await bridge.call('mic_test_stop') : await bridge.call('mic_test_start', { device_id: Number($('#mic-select').value) || null }); if (failed(result)) return; const running = result.data.stopped === false || result.data.started === true; $('#mic-test').dataset.running = String(running); $('#mic-test').innerHTML = `${icon(running ? 'stop' : 'mic')}${running ? 'Stop test' : 'Test microphone'}`; });

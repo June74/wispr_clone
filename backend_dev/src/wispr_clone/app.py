@@ -46,6 +46,7 @@ from wispr_clone.settings.secret_store import (
     DpapiSecretStore,
     MemorySecretStore,
     SecretStore,
+    UnavailableSecretStore,
 )
 from wispr_clone.settings.store import SettingsStore
 from wispr_clone.storage.db import Database
@@ -90,8 +91,10 @@ def real_factories() -> AppFactories:
 
     secrets_store: SecretStore = (
         MemorySecretStore()
-        if "--self-test" in sys.argv or os.name != "nt"
+        if "--self-test" in sys.argv
         else DpapiSecretStore(config.app_data_dir() / "secrets")
+        if os.name == "nt"
+        else UnavailableSecretStore()
     )
 
     def stt(settings: Settings) -> SttEngine:
@@ -365,8 +368,10 @@ class App:
             self.factories.secret_store()
             if self.factories.secret_store is not None
             else MemorySecretStore()
-            if "--self-test" in sys.argv or os.name != "nt"
+            if "--self-test" in sys.argv
             else DpapiSecretStore(config.app_data_dir() / "secrets")
+            if os.name == "nt"
+            else UnavailableSecretStore()
         )
         if self._stopping:
             return

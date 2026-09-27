@@ -57,6 +57,23 @@ class MemorySecretStore:
         self._values.pop(name, None)
 
 
+class UnavailableSecretStore:
+    """Reject secret writes where secure storage is unavailable."""
+
+    def get(self, name: str) -> str | None:
+        _validate_name(name)
+        return None
+
+    def set(self, name: str, value: str) -> None:
+        _validate_name(name)
+        _validate_value(value)
+        raise WisprError(ErrorCode.STORAGE_ERROR, "secrets", "unsupported platform")
+
+    def clear(self, name: str) -> None:
+        _validate_name(name)
+        raise WisprError(ErrorCode.STORAGE_ERROR, "secrets", "unsupported platform")
+
+
 class _Blob(ctypes.Structure):
     _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_ubyte))]
 

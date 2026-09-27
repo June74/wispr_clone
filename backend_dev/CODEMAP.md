@@ -34,7 +34,7 @@ Use this map to find where a responsibility belongs, follow a dictation through 
 
 ## 2. Runtime diagram and ownership of state
 
-The Windows app owns desktop interaction, local data and speech recognition. LM Studio, a separate Windows process the app does not own, serves cleanup. Windows and WSL use separate environments; packages are not shared. LM Studio's endpoint is a local network boundary even though no cloud service is needed. Speech recognition runs in native code inside the app, so a crash in that library ends the app process. That is the accepted trade for no server, lower latency and one less network hop; the recovery rules in §4 and §5 already cover a crash.
+The Windows app owns desktop interaction and local data. OpenRouter sends captured audio to the DeepInfra Whisper endpoint for speech recognition; LM Studio, a separate Windows process the app does not own, serves optional cleanup. Windows and WSL use separate environments; packages are not shared. The STT key is held by Windows DPAPI and is read only when a transcription is requested. A network or provider failure leaves the WAV available for explicit retry under the recovery rules in §4 and §5.
 
 ```mermaid
 flowchart LR
@@ -48,7 +48,7 @@ flowchart LR
     Run --> History[History service]
     History --> DB[(SQLite and temporary WAVs)]
     Run --> STT[STT adapter]
-    STT <-->|in-process, STT thread| Vox[Voxtral via transcribe.cpp, CUDA]
+    STT -->|HTTPS audio request| Cloud[OpenRouter → DeepInfra Whisper]
     Run --> Clean[Cleanup adapter]
     Health --> STT
     Health --> Clean
@@ -72,7 +72,7 @@ Dashed arrows are calls through the injected `EventSink` interface: producers ne
 | Worker thread with an asyncio event loop | Application commands, run state, model requests, history retention, and the single SQLite writer |
 | Hotkey listener | Compares each key against the configured bindings and immediately discards every other key. Posts only start/stop/cancel events to the worker. Never logs, buffers, or forwards keystrokes; performs no blocking work |
 | Audio callback | Copies frames to a bounded queue; processing, WAV writes, and network calls happen outside the callback |
-| STT inference thread | Owns the loaded transcribe.cpp model (one run at a time per model). Loads and warms the model at startup, because the first run after a load stalls. Runs the blocking `feed()`/`finalize()` calls and posts text updates to the worker. `cancel` calls `session.cancel()`. Never runs on the worker's event loop |
+| STT request | Buffers audio during capture, then sends a WAV to OpenRouter with DeepInfra pinned as provider. Network failures preserve the recording for explicit retry. |
 | JS bridge callbacks | Validate and enqueue commands; do not call repositories or mutate state on the callback thread |
 
 Only the worker mutates authoritative application state. UI events carry snapshots; UI controls request changes. Model readiness and run state are separate: a background health poll must not overwrite the HUD state of an active run.
@@ -124,7 +124,7 @@ backend_dev/
 │   │   ├── devices.py / capture.py / resample.py
 │   │   └── wav_writer.py / level_meter.py
 │   ├── stt/
-│   │   └── base.py / voxtral_transcribe_cpp.py   in-process streaming session on the STT thread, warm-up, file replay for retry
+│   │   └── base.py / openrouter_whisper.py      buffered cloud request and file replay for retry
 │   ├── cleanup/
 │   │   └── base.py / lmstudio_cleanup.py / prompt_builder.py / guard.py   OpenAI-compatible chat to LM Studio
 │   ├── dictionary/

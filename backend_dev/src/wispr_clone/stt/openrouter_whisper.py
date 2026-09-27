@@ -76,6 +76,7 @@ class OpenRouterWhisper:
         }
         if self._language:
             body["language"] = self._language
+        request_error: ErrorCode | None = None
         try:
             response = await self._http().post(
                 "/audio/transcriptions",
@@ -85,18 +86,20 @@ class OpenRouterWhisper:
                 },
                 json=body,
             )
-        except httpx.TimeoutException:
-            raise ThirdPartyError(
-                "openrouter", "transcribe", "timeout", ErrorCode.STT_TIMEOUT
-            ) from None
         except httpx.HTTPError as exc:
-            code = (
+            request_error = (
                 ErrorCode.STT_TIMEOUT
                 if isinstance(exc, httpx.TimeoutException)
                 else ErrorCode.STT_UNAVAILABLE
             )
+        if request_error is not None:
             raise ThirdPartyError(
-                "openrouter", "transcribe", type(exc).__name__, code
+                "openrouter",
+                "transcribe",
+                "timeout"
+                if request_error == ErrorCode.STT_TIMEOUT
+                else "request failed",
+                request_error,
             ) from None
         if response.status_code in (401, 403):
             raise ThirdPartyError(
@@ -119,6 +122,8 @@ class OpenRouterWhisper:
         try:
             result = response.json()
         except (ValueError, UnicodeError):
+            result = None
+        if result is None:
             raise ThirdPartyError(
                 "openrouter",
                 "transcribe",
@@ -165,6 +170,10 @@ class OpenRouterWhisper:
                     raise WisprError(ErrorCode.VALIDATION, "stt", "wav format")
                 data = reader.readframes(reader.getnframes())
         except (wave.Error, EOFError, OSError):
+            invalid_wav = True
+        else:
+            invalid_wav = False
+        if invalid_wav:
             raise WisprError(ErrorCode.VALIDATION, "stt", "wav format") from None
         return await self._transcribe_wav(_wav_bytes(data))
 
