@@ -63,9 +63,9 @@
     <span class="spacer"></span>
     <span class="badge" id="title-status"><span class="status-dot success"></span>Ready</span>
     <div class="win-ctrl" aria-label="Window controls">
-      <button aria-label="Minimize"><svg class="i"><use href="#i-minus"/></svg></button>
-      <button aria-label="Maximize"><svg class="i"><use href="#i-square"/></svg></button>
-      <button class="close" aria-label="Close"><svg class="i"><use href="#i-x"/></svg></button>
+      <button aria-label="Minimize" data-window="window_minimize"><svg class="i"><use href="#i-minus"/></svg></button>
+      <button aria-label="Maximize" data-window="window_toggle_maximize"><svg class="i"><use href="#i-square"/></svg></button>
+      <button class="close" aria-label="Close" data-window="window_close"><svg class="i"><use href="#i-x"/></svg></button>
     </div>
   </header>
 
@@ -77,10 +77,7 @@
           <button class="side-logo" id="side-logo" aria-label="Wispr Clone"><span class="brand-mark"><svg class="i"><use href="#i-wave"/></svg></span><span class="logo-text">Wispr Clone</span></button>
           <button class="btn btn-ghost btn-icon btn-sm sidebar-toggle" id="sidebar-toggle" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse sidebar" title="Collapse sidebar (Ctrl+B)"><svg class="i"><use href="#i-panel"/></svg></button>
         </div>
-        <div class="side-section">
-          <button class="nav-item" id="quick-search" data-tip="Quick search"><svg class="i"><use href="#i-search"/></svg><span class="nav-text">Quick search</span><kbd>Ctrl K</kbd></button>
-        </div>
-        <div class="side-section side-scroll">
+        <div class="side-scroll">
           <div class="nav-group" data-group="App">
             <div class="nav-label"><span>App</span></div>
             <button class="nav-item" data-page="home" data-tip="General"><svg class="i"><use href="#i-house"/></svg><span class="nav-text">General</span></button>
@@ -196,12 +193,12 @@
           <h3 class="section-title inline-style-3">Startup &amp; sound</h3>
           <div class="card group">
             <div class="row">
-              <div class="row-text"><div class="row-title">Launch at login</div><div class="row-desc">Start quietly in the system tray.</div></div>
-              <div class="row-control"><button class="switch" role="switch" aria-checked="true" aria-label="Launch at login" disabled></button></div>
+              <div class="row-text"><div class="row-title">Launch at login</div><div class="row-desc" id="autostart-desc">Start quietly in the system tray.</div></div>
+              <div class="row-control"><button class="switch" id="autostart-switch" role="switch" aria-checked="false" aria-label="Launch at login" disabled></button></div>
             </div>
             <div class="row">
               <div class="row-text"><div class="row-title">Sound cues</div><div class="row-desc">Play a soft tick when recording starts and stops.</div></div>
-              <div class="row-control"><button class="switch" role="switch" aria-checked="false" aria-label="Sound cues" disabled></button></div>
+              <div class="row-control"><button class="switch" id="sound-switch" role="switch" aria-checked="false" aria-label="Sound cues"></button></div>
             </div>
             <div class="row is-disabled">
               <div class="row-text"><div class="row-title">Auto-update <span class="badge">Coming soon</span></div><div class="row-desc">Not available in this build.</div></div>
@@ -521,13 +518,6 @@
 </div>
 
 <div class="tip" id="tip" role="tooltip"></div>
-
-<div class="backdrop top" id="search-modal" role="dialog" aria-modal="true" aria-label="Quick search">
-  <div class="modal palette">
-    <label class="palette-input"><svg class="i i-lg"><use href="#i-search"/></svg><input id="search-input" placeholder="Jump to a page…" autocomplete="off"><kbd>Esc</kbd></label>
-    <div class="palette-list" id="search-list" role="listbox"></div>
-  </div>
-</div>
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
 

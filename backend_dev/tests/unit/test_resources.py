@@ -1,24 +1,23 @@
-"""T-PKG-001: resource paths work in source and frozen distributions."""
+"""T-PKG-001: resource paths work in a checkout and in an installed wheel."""
 
 import ast
-import sys
 from pathlib import Path
 
 from wispr_clone import config
 
 
-def test_T_PKG_001_resource_root_in_source_and_frozen(
+def test_T_PKG_001_resource_root_in_checkout_and_installed_wheel(
     monkeypatch, tmp_path: Path
 ) -> None:
-    monkeypatch.delattr(sys, "frozen", raising=False)
-    monkeypatch.delattr(sys, "_MEIPASS", raising=False)
     root = config.resource_root()
     assert root == Path(config.__file__).resolve().parents[2]
     assert (root / "web" / "index.html").is_file()
 
-    monkeypatch.setattr(sys, "frozen", True, raising=False)
-    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
-    assert config.resource_root() == tmp_path
+    installed = tmp_path / "site-packages" / "wispr_clone"
+    (installed / "web").mkdir(parents=True)
+    (installed / "web" / "index.html").write_text("", encoding="utf-8")
+    monkeypatch.setattr(config, "__file__", str(installed / "config.py"))
+    assert config.resource_root() == installed
 
 
 def test_T_PKG_002_web_paths_do_not_use_module_file() -> None:

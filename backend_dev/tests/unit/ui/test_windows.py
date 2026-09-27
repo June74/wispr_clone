@@ -208,3 +208,88 @@ def test_T_UI_005_release_start_disables_http_server_downloads_and_devtools() ->
     assert calls[0]["debug"] is False
     assert calls[0]["http_server"] is False
     assert calls[0]["private_mode"] is True
+
+
+@pytest.mark.unit
+def test_T_UI_018_settings_starts_hidden_and_shows_once_frame_is_prepared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import wispr_clone.ui.windows as windows
+
+    webview = FakeWebview()
+    attached: list[object] = []
+    monkeypatch.setattr(
+        windows,
+        "attach_window_controls",
+        lambda _bridge, controls: attached.append(controls),
+    )
+
+    installs: list[object] = []
+    monkeypatch.setattr(windows.sys, "platform", "win32")
+    monkeypatch.setattr(
+        windows,
+        "_install_frame",
+        lambda window, _controls: installs.append(window) or 4321,
+    )
+    settings = open_settings(webview, object(), debug=False)
+    assert settings.options["hidden"] is True
+
+    webview.start()
+
+    assert installs == [settings]
+    assert [name for name, _ in settings.calls].count("show") == 1
+    assert len(attached) == 1
+    assert getattr(attached[0], "hwnd") == 4321
+
+
+@pytest.mark.unit
+def test_T_UI_018_frame_failure_still_shows_window_with_native_caption(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import wispr_clone.ui.windows as windows
+
+    webview = FakeWebview()
+
+    def fail(_window: object, _controls: object) -> int:
+        raise RuntimeError("no pythonnet")
+
+    monkeypatch.setattr(windows.sys, "platform", "win32")
+    monkeypatch.setattr(windows, "_install_frame", fail)
+    settings = open_settings(webview, object(), debug=False)
+    webview.start()
+
+    assert [name for name, _ in settings.calls].count("show") == 1
+
+
+@pytest.mark.unit
+def test_T_UI_019_window_controls_route_to_native_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from wispr_clone.ui import win_frame
+    from wispr_clone.ui.windows import WindowControls
+
+    webview = FakeWebview()
+    window = webview.create_window("settings")
+    webview.start()
+    native: list[tuple[str, object]] = []
+    for name in ("begin_drag", "minimize", "toggle_maximize"):
+        monkeypatch.setattr(
+            win_frame, name, lambda hwnd, name=name: native.append((name, hwnd)) or True
+        )
+    controls = WindowControls(window)
+
+    # Without a native frame the OS caption remains, so only minimize is mirrored.
+    assert controls("window_drag") is False
+    assert controls("window_toggle_maximize") is False
+    assert controls("window_minimize") is True
+    assert native == []
+
+    controls.hwnd = 77
+    assert controls("window_drag") is True
+    assert controls("window_minimize") is True
+    assert controls("window_toggle_maximize") is True
+    assert controls("unknown") is False
+    assert native == [("begin_drag", 77), ("minimize", 77), ("toggle_maximize", 77)]
+
+    assert controls("window_close") is True
+    assert ("destroy", ()) in window.calls

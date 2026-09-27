@@ -67,6 +67,7 @@ def test_T_SET_001_defaults_and_json_round_trip() -> None:
         "cleanup_instructions": "",
         "local_only": False,
         "theme": "light",
+        "sound_cues": False,
         "idle_jump_seconds": 1.0,
         "return_settle_seconds": 0.3,
         "destination_wait_limit_seconds": 600,

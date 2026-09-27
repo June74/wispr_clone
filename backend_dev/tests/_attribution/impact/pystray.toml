@@ -1,0 +1,7 @@
+dependency = "pystray"
+kind = "library"
+modules = ["ui.tray"]
+import_names = ["pystray", "PIL"]  # PIL = Pillow, which pystray uses for the icon image
+features = ["tray icon", "hide to tray"]
+error_codes = []
+action = "Check the pystray and Pillow pins in uv.lock; the app still runs without a tray (close then quits)"

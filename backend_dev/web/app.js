@@ -1,4 +1,4 @@
-import { createBridge } from './lib/bridge.js';
+import { createBridge, whenHostReady } from './lib/bridge.js';
 import { createStore, applyEvent, acceptsEvent } from './lib/store.js';
 import { hudState, shouldToastInserted, recoveryButtons } from './lib/view.js';
 import { messageFor } from './lib/messages.js';
@@ -104,6 +104,7 @@ function renderSettings() {
   applyTheme();
   const settings = state.settings;
   $('#cleanup-switch')?.setAttribute('aria-checked', String(Boolean(settings.cleanup_enabled)));
+  $('#sound-switch')?.setAttribute('aria-checked', String(Boolean(settings.sound_cues)));
   if ($('#instructions')) $('#instructions').value = settings.cleanup_instructions ?? '';
   const localOnly = Boolean(settings.local_only);
   $('#local-switch')?.setAttribute('aria-checked', String(localOnly));
@@ -115,8 +116,15 @@ function renderSettings() {
   const shortcut = $('#shortcut-current'); if (shortcut) shortcut.textContent = formatBinding(settings.dictation_shortcut ?? 'ctrl+shift+space');
 }
 function render() { renderRun(); renderModels(); renderHistory(); renderDictionary(); renderSettings(); }
+// Launch at login lives in the Windows Run key; only the installed app can register itself.
+function renderAutostart(status) {
+  const toggle = $('#autostart-switch'); if (!toggle) return;
+  toggle.disabled = !status.available; toggle.setAttribute('aria-checked', String(Boolean(status.enabled)));
+  $('#autostart-desc').textContent = status.available ? 'Start quietly in the system tray.' : 'Available in the installed app (Start menu → Wispr Clone).';
+}
 async function refreshLists() {
-  const [historyResult, dictResult, micResult] = await Promise.all([bridge.call('history_list'), bridge.call('dict_list'), bridge.call('mic_list')]);
+  const [historyResult, dictResult, micResult, autostartResult] = await Promise.all([bridge.call('history_list'), bridge.call('dict_list'), bridge.call('mic_list'), bridge.call('autostart_get')]);
+  if (autostartResult?.ok) renderAutostart(autostartResult.data);
   if (historyResult?.ok) state = { ...state, history: historyResult.data.runs ?? [] };
   if (dictResult?.ok) state = { ...state, dictionary: dictResult.data.entries ?? [] };
   if (micResult?.ok) { state = { ...state, microphones: micResult.data.devices ?? [] }; const select = $('#mic-select'); if (select) select.innerHTML = state.microphones.map((device) => `<option value="${esc(device.device_id)}">${esc(device.name)}${device.is_default ? ' (default)' : ''}</option>`).join(''); }
@@ -132,6 +140,13 @@ window.wisprReconnect = async () => {
   if (!result?.ok) { failed(result); return; }
   state = createStore(result.data); currentRun = result.data.active_run_id; $('#title-status').innerHTML = '<span class="status-dot success"></span>Connected'; render(); await refreshLists();
 };
+
+// Title bar: the page draws the caption; the host moves and sizes the native window.
+$('.titlebar')?.addEventListener('mousedown', (event) => {
+  if (event.button !== 0 || event.target.closest('button')) return;
+  bridge.window(event.detail === 2 ? 'window_toggle_maximize' : 'window_drag');
+});
+$('.win-ctrl')?.addEventListener('click', (event) => { const button = event.target.closest('[data-window]'); if (button) bridge.window(button.dataset.window); });
 
 $('#rec-btn')?.addEventListener('click', async () => {
   const active = run(); let result;
@@ -186,8 +201,10 @@ $('#shortcut-change')?.addEventListener('click', () => {
   window.addEventListener('keydown', onKeyDown, true);
   window.addEventListener('blur', onBlur);
 });
+$('#sound-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { sound_cues: $('#sound-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#cleanup-switch')?.addEventListener('click', async () => { const enabled = $('#cleanup-switch').getAttribute('aria-checked') !== 'true'; const result = await bridge.call('settings_update', { patch: { cleanup_enabled: enabled } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#save-instructions')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { cleanup_instructions: $('#instructions').value } }); if (failed(result)) return; state.settings = result.data; $('#save-instructions').disabled = true; $('#save-note').textContent = 'Saved'; });
+$('#autostart-switch')?.addEventListener('click', async () => { const result = await bridge.call('autostart_set', { enabled: $('#autostart-switch').getAttribute('aria-checked') !== 'true' }); if (failed(result)) return; renderAutostart(result.data); });
 $('#local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#privacy-local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#privacy-local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#save-openrouter-key')?.addEventListener('click', async () => { const input = $('#openrouter-key'); const value = normalizeSecret(input.value); input.value = ''; const result = await bridge.call('secret_set', { name: 'openrouter_api_key', value }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
@@ -204,21 +221,17 @@ $$('.nav-item[data-page]').forEach((button) => button.addEventListener('click', 
 $$('[data-goto]').forEach((button) => button.addEventListener('click', () => page(button.dataset.goto)));
 $('#sidebar-toggle')?.addEventListener('click', () => { document.documentElement.dataset.sidebar = 'collapsed'; localStorage.setItem('wc-sidebar', 'collapsed'); });
 $('#side-logo')?.addEventListener('click', () => { const open = document.documentElement.dataset.sidebar === 'collapsed'; document.documentElement.dataset.sidebar = open ? '' : 'collapsed'; localStorage.setItem('wc-sidebar', open ? 'open' : 'collapsed'); });
-$('#quick-search')?.addEventListener('click', () => { $('#search-modal').classList.add('is-open'); $('#search-input').focus(); });
-$('#search-list')?.addEventListener('click', (event) => { const button = event.target.closest('[data-go]'); if (button) { $('#search-modal').classList.remove('is-open'); page(button.dataset.go); } });
-$('#search-input')?.addEventListener('input', () => { const query = $('#search-input').value.toLowerCase(); const pages = $$('.nav-item[data-page]').filter((button) => button.textContent.toLowerCase().includes(query)); $('#search-list').innerHTML = pages.map((button) => `<button class="palette-item" data-go="${esc(button.dataset.page)}">${esc(button.textContent.trim())}</button>`).join(''); });
 $$('[data-page]').forEach((button) => button.addEventListener('click', () => page(button.dataset.page)));
 $$('[data-model]').forEach((card) => { $('[data-test]', card)?.addEventListener('click', async () => { const model = state.models.find((item) => item.role === (card.dataset.model === 'cleanup' ? 'cleanup' : 'stt')); if (model) { const result = await bridge.call('models_test', { model_id: model.model_id }); if (failed(result)) return; toast(result.data.ready ? 'success' : 'warning', result.data.ready ? 'Model ready' : messageFor(result.data.error_code)); } }); });
 
 document.addEventListener('keydown', (event) => {
   if (event.ctrlKey && !event.altKey && !event.shiftKey && event.code === 'KeyB') { event.preventDefault(); $('#side-logo')?.click(); }
-  if (event.ctrlKey && !event.altKey && !event.shiftKey && event.code === 'KeyK') { event.preventDefault(); $('#quick-search')?.click(); }
   if (event.key === 'Escape') $$('.backdrop.is-open').forEach((modal) => modal.classList.remove('is-open'));
 });
 window.addEventListener('storage', applyTheme);
 
 (async () => {
-  if (!bridge.available()) { render(); $('#title-status').innerHTML = '<span class="status-dot warning"></span>Not connected'; $('#rec-btn').disabled = true; return; }
+  if (!bridge.available()) { render(); $('#title-status').innerHTML = '<span class="status-dot warning"></span>Not connected'; $('#rec-btn').disabled = true; await whenHostReady(window); }
   const result = await bridge.reconnect();
   if (failed(result)) return;
   state = { ...createStore(result.data), secrets: result.data.secrets }; currentRun = result.data.active_run_id; $('#title-status').innerHTML = '<span class="status-dot success"></span>Connected'; render();

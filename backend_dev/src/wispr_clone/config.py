@@ -1,7 +1,6 @@
 """Application paths and bounded operational settings; importing performs no I/O."""
 
 import os
-import sys
 from pathlib import Path
 
 MAX_RETAINED_RUNS: int = 10
@@ -34,7 +33,9 @@ def history_dir() -> Path:
 
 
 def resource_root() -> Path:
-    """Directory holding bundled resources such as ``web/``, frozen or not."""
-    if getattr(sys, "frozen", False):
-        return Path(getattr(sys, "_MEIPASS"))
-    return Path(__file__).resolve().parents[2]
+    """Directory holding resources such as ``web/``, installed or in a checkout."""
+    package = Path(__file__).resolve().parent
+    # An installed wheel carries web/ inside the package (see pyproject.toml).
+    if (package / "web" / "index.html").is_file():
+        return package
+    return package.parents[1]

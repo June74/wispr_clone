@@ -230,8 +230,7 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 /* empty space in the collapsed strip expands it; the cursor hints the direction */
 [data-sidebar="collapsed"] .side-scroll { cursor: e-resize; }
 .side-card button, .side-card input { cursor: pointer; }
-.side-section { padding: var(--s-3) var(--s-2) 0; flex: none; }      /* search row: 12px below header line */
-.side-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 var(--s-2) var(--s-2); }
+.side-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: var(--s-3) var(--s-2) var(--s-2); }   /* nav starts 12px below header line */
 
 .side-head { display: flex; align-items: center; height: 56px; padding: 0 var(--s-2); gap: var(--s-2); border-bottom: 1px solid var(--border); flex: none; }
 .side-logo { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 5px; border-radius: var(--r-md);
@@ -275,11 +274,9 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 .nav-item[aria-current="page"] .i { color: var(--accent-text); }
 .nav-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; transition: opacity var(--t-fast); }
 .nav-item .count { font: var(--t-label); color: var(--text-3); transition: opacity var(--t-fast); }
-.nav-item kbd { height: 20px; min-width: 0; padding: 0 6px; font-size: 10px; border-bottom-width: 1px; box-shadow: none; color: var(--text-3); transition: opacity var(--t-fast); }
 .nav-item .status-dot { transition: transform var(--t-base) var(--ease); }
 [data-sidebar="collapsed"] .nav-text,
 [data-sidebar="collapsed"] .nav-item .count,
-[data-sidebar="collapsed"] .nav-item kbd,
 [data-sidebar="collapsed"] .side-logo .logo-text { opacity: 0; }
 /* status dots stay visible on the closed strip, pinned to the icon's corner */
 [data-sidebar="collapsed"] .nav-item .status-dot { position: absolute; left: 22px; top: 6px; box-shadow: 0 0 0 2px var(--side-bg); }
@@ -297,22 +294,6 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 .tip::before { content: ""; position: absolute; left: -4px; top: 50%; width: 8px; height: 8px; background: inherit;
   transform: translateY(-50%) rotate(45deg); border-radius: 1px; }
 .tip.is-on { opacity: 1; transform: translate(0, -50%); }
-
-/* Quick search palette */
-.backdrop.top { align-items: start; padding-top: 14vh; }
-.palette { width: 520px; overflow: hidden; }
-.palette-input { display: flex; align-items: center; gap: var(--s-3); padding: 0 var(--s-4); height: 52px; border-bottom: 1px solid var(--border); }
-.palette-input input { flex: 1; border: 0; outline: 0; background: transparent; font: 400 15px/20px var(--font-sans); }
-.palette-input .i { color: var(--text-3); }
-.palette-list { padding: var(--s-2); max-height: 340px; overflow: auto; }
-.palette-item { display: flex; align-items: center; gap: var(--s-3); width: 100%; height: 40px; padding: 0 var(--s-3);
-  border-radius: var(--r-md); text-align: left; color: var(--text-1); }
-.palette-item .i { color: var(--text-2); }
-.palette-item .group { margin-left: auto; font: var(--t-small); color: var(--text-3); }
-.palette-item.is-active { background: var(--accent-soft); }
-.palette-item.is-active .i { color: var(--accent-text); }
-.palette-empty { padding: var(--s-6); text-align: center; color: var(--text-3); }
-
 
 /* Main content */
 .main { overflow: auto; min-width: 0; position: relative; scroll-behavior: smooth; }
@@ -458,6 +439,8 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 .field.is-error { border-color: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
 .field.is-disabled { background: var(--surface-2); color: var(--text-3); cursor: not-allowed; box-shadow: none; }
 .field select { appearance: none; cursor: pointer; padding-right: 20px; }
+/* The open list is drawn by the browser engine and ignores color-scheme; theme it explicitly. */
+.field select option { background: var(--surface); color: var(--text-1); }
 .select { position: relative; min-width: 220px; }
 .select > .i:last-child { position: absolute; right: 10px; pointer-events: none; }
 textarea.textarea {

@@ -22,12 +22,13 @@ The Windows project uses Python 3.12 and `uv`, with metadata in `backend_dev/pyp
 | `httpx` — runtime | Async requests to LM Studio's OpenAI-compatible `/v1/chat/completions` and `/v1/models` (cleanup and health) | `openai` client package; `aiohttp` | Replace cleanup/health transport |
 | UI Automation client — runtime, **`uiautomation` 2.0.29 (Apache-2.0; pulls in `comtypes`), chosen by the user 2026-09-25**; Windows only; added to the lock by `feat/insertion-win`. It cannot share a process thread with pywebview's COM setup, so it runs on the insertion worker thread | Hybrid delivery needs the browser tab and focused text field identity, tab reselection and focus restore. Win32 alone sees only windows | pywinauto (heavier); or window-level delivery only, losing tab/field precision | Hybrid delivery drops to the return trigger only |
 | `pydantic` — runtime | Settings, command and import validation | Dataclasses plus explicit validation, or another schema validator | Validation responsibility remains and needs replacement |
+| `pystray` 0.19.5 — runtime, **chosen by the user 2026-09-27**; Windows only (LGPL-3.0; pulls in `Pillow` 12.3.0 and `six`) | Tray icon so the app keeps running with its window hidden: closing the window hides it, launch at login starts in the tray, and the global hotkey keeps working. The icon image is drawn with Pillow at startup, so no image asset is bundled | Own `Shell_NotifyIcon` ctypes adapter (more Win32 code, no dependency) | Closing the window quits the app again; launch at login would open a visible window |
 | `pywin32` — runtime | Desktop/process/clipboard APIs | `ctypes` wrappers | Rewrite native wrappers; keep insertion contract unchanged |
 | `keyring` — optional runtime | Cloud credential storage; backend availability must be verified | Windows credential APIs via pywin32 | Local mode unaffected; replace cloud secret store |
 | `pytest`, `pytest-asyncio` — dev | Deterministic unit/integration checks for asynchronous behavior | stdlib `unittest` | Replace test harness |
 | `ruff` — dev | Shared formatting/lint rules | Separate formatter/linter | Replace checks or maintain manually |
 | `pyright` or `mypy` — optional dev | Check shared command/event and adapter types; choose one | Runtime validation/tests alone | Less static checking |
-| `pyinstaller` — dev | Proposed Windows executable packaging | Nuitka or Briefcase | Run from source or replace packager |
+| ~~`pyinstaller` — dev~~ **removed 2026-09-27** | Built `WisprClone.exe`. Windows Smart App Control blocked each new unsigned build, so the app is now installed as a wheel into a venv made by the signed python.org Python (`packaging/install_windows.py`) | Code signing (paid certificate) | — |
 
 Removed 2026-09-27: `transcribe-cpp` and `transcribe-cpp-native-cu12`. The local Voxtral path was retired because cloud Whisper is the selected STT.
 
@@ -50,7 +51,7 @@ The simple host proposal is pywebview because the UI already exists as web asset
 | Planned file | Responsibility and exit evidence |
 |---|---|
 | Cloud STT readiness | The app checks key presence locally; `tests/probes/openrouter` verifies the remote transcription and provider pin only when explicitly enabled |
-| `packaging/wispr_clone.spec` | Package Windows source/web assets; verify webview/audio/native dependencies, the transcribe.cpp CUDA provider, and a clean target launch |
+| `packaging/install_windows.py` | Install/update the app for the current user: wheel (with `web/`) into `%LOCALAPPDATA%\wispr_clone\app`, a venv from the signed python.org Python, locked dependencies, `--self-test`, Start menu shortcut, launch-at-login migration |
 
 Model acquisition is a documented manual step (download in LM Studio). No project script downloads models or starts LM Studio. LM Studio's "serve on local network" setting must stay off; check it rather than assume it. Do not expose it to the LAN to work around a connection problem.
 

@@ -91,6 +91,10 @@ class Window:
         self._require_started()
         self.calls.append(("hide", ()))
 
+    def minimize(self) -> None:
+        self._require_started()
+        self.calls.append(("minimize", ()))
+
     def destroy(self) -> None:
         self._require_started()
         self.calls.append(("destroy", ()))
