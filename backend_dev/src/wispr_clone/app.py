@@ -796,7 +796,7 @@ class App:
         if self._webview_module is None:
             self._webview_module = self.factories.webview()
         webview = self._webview_module
-        hud_url = (Path(__file__).resolve().parents[2] / "web" / "hud.html").as_uri()
+        hud_url = (config.resource_root() / "web" / "hud.html").as_uri()
         if self.factories.native_hud is not None:
             try:
                 native_hud = self.factories.native_hud(

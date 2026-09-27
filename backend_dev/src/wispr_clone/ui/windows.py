@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from urllib.parse import urldefrag, urlsplit
+
+from wispr_clone import config
 
 
 def _settings_url() -> str:
-    return (Path(__file__).resolve().parents[3] / "web" / "index.html").as_uri()
+    return (config.resource_root() / "web" / "index.html").as_uri()
 
 
 def _normalized_url(url: str | None) -> tuple[str, str, str, str, str] | None:

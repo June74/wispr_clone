@@ -1,6 +1,7 @@
 """Application paths and bounded operational settings; importing performs no I/O."""
 
 import os
+import sys
 from pathlib import Path
 
 MAX_RETAINED_RUNS: int = 10
@@ -30,3 +31,10 @@ def app_data_dir() -> Path:
 def history_dir() -> Path:
     """Resolve the temporary run-audio directory on demand."""
     return app_data_dir() / "history"
+
+
+def resource_root() -> Path:
+    """Directory holding bundled resources such as ``web/``, frozen or not."""
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS"))
+    return Path(__file__).resolve().parents[2]
