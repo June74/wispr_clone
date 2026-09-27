@@ -6,7 +6,7 @@ import inspect
 import sys
 
 import pytest
-from fakes.webview import FakeWebview, WindowEvents
+from fakes.webview import FakeWebview, Screen, WindowEvents
 
 pytestmark = [pytest.mark.probe("pywebview"), pytest.mark.windows]
 
@@ -24,6 +24,14 @@ def test_P_WEBVIEW_001_real_module_supports_fake_surface() -> None:
         fake_parameters = inspect.signature(getattr(fake, name)).parameters
         assert set(fake_parameters) - {"kwargs"} <= set(real_parameters)
     assert set(fake.settings) <= set(webview.settings)
+    assert fake.screens
+    assert isinstance(fake.screens[0], Screen)
+    assert webview.screens
+    for name in ("x", "y", "width", "height"):
+        assert hasattr(webview.screens[0], name), name
+        assert hasattr(fake.screens[0], name), name
+    assert not hasattr(webview.screens[0], "is_primary")
+    assert not hasattr(fake.screens[0], "is_primary")
     for name in (
         "run_js",
         "evaluate_js",

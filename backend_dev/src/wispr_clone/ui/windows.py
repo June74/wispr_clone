@@ -21,12 +21,19 @@ def _normalized_url(url: str | None) -> tuple[str, str, str, str, str] | None:
 def _lock_navigation(window: object, allowed: str) -> None:
     """Keep a native window on its single bundled page."""
 
-    def check_navigation(*_args: object, **_kwargs: object) -> None:
-        current = window.get_current_url()  # type: ignore[attr-defined]
-        if _normalized_url(current) != _normalized_url(allowed):
-            window.load_url(allowed)  # type: ignore[attr-defined]
+    blocks = 0
+    failures = 0
 
-    window.events.before_load += check_navigation  # type: ignore[attr-defined]
+    def check_navigation(*_args: object, **_kwargs: object) -> None:
+        nonlocal blocks, failures
+        try:
+            current = window.get_current_url()  # type: ignore[attr-defined]
+            if _normalized_url(current) != _normalized_url(allowed):
+                blocks += 1
+                window.load_url(allowed)  # type: ignore[attr-defined]
+        except Exception:
+            failures += 1
+
     window.events.loaded += check_navigation  # type: ignore[attr-defined]
 
 

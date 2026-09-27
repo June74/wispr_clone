@@ -3,7 +3,17 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
+
+
+@dataclass(frozen=True)
+class Screen:
+    x: int
+    y: int
+    width: int
+    height: int
+    scale: float = 1.0
 
 
 class Event:
@@ -31,8 +41,14 @@ class WindowEvents:
         self.initialized = Event()
 
 
+class WebViewException(Exception):
+    pass
+
+
 class Window:
-    def __init__(self, title: str, url: str | None, options: dict[str, object]) -> None:
+    def __init__(
+        self, title: str, url: str | None, options: dict[str, object], *, started: bool
+    ) -> None:
         self.title = title
         self.url = url
         self.options = options
@@ -40,38 +56,52 @@ class Window:
         self.calls: list[tuple[str, tuple[object, ...]]] = []
         self.on_top = bool(options.get("on_top", False))
         self.raise_on_run_js = False
+        self.started = started
+
+    def _require_started(self) -> None:
+        if not self.started:
+            raise WebViewException("Main window failed to start")
 
     def run_js(self, script: str) -> None:
+        self._require_started()
         self.calls.append(("run_js", (script,)))
         if self.raise_on_run_js:
             raise RuntimeError("fake JS delivery failed")
 
     def evaluate_js(self, script: str) -> None:
+        self._require_started()
         self.calls.append(("evaluate_js", (script,)))
 
     def get_current_url(self) -> str | None:
+        self._require_started()
         self.calls.append(("get_current_url", ()))
         return self.url
 
     def load_url(self, url: str) -> None:
+        self._require_started()
         self.calls.append(("load_url", (url,)))
         self.url = url
 
     def show(self) -> None:
+        self._require_started()
         self.calls.append(("show", ()))
         self.events.shown.emit()
 
     def hide(self) -> None:
+        self._require_started()
         self.calls.append(("hide", ()))
 
     def destroy(self) -> None:
+        self._require_started()
         self.calls.append(("destroy", ()))
         self.events.closed.emit()
 
     def move(self, x: int, y: int) -> None:
+        self._require_started()
         self.calls.append(("move", (x, y)))
 
     def resize(self, width: int, height: int) -> None:
+        self._require_started()
         self.calls.append(("resize", (width, height)))
 
 
@@ -84,7 +114,9 @@ class FakeWebview:
             "OPEN_DEVTOOLS_IN_DEBUG": True,
         }
         self.windows: list[Window] = []
+        self.screens: list[Screen] = [Screen(0, 0, 1920, 1080)]
         self.calls: list[tuple[str, dict[str, object]]] = []
+        self.started = False
 
     def create_window(
         self,
@@ -137,7 +169,7 @@ class FakeWebview:
             **kwargs,
         }
         self.calls.append(("create_window", {"title": title, **options}))
-        window = Window(title, url, options)
+        window = Window(title, url, options, started=self.started)
         self.windows.append(window)
         return window
 
@@ -169,3 +201,9 @@ class FakeWebview:
                 },
             )
         )
+        self.started = True
+        for window in self.windows:
+            window.events.before_load.emit()
+            window.started = True
+            window.events.shown.emit()
+            window.events.loaded.emit()
