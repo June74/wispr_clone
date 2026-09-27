@@ -3,6 +3,7 @@ import { createStore, applyEvent, acceptsEvent } from './lib/store.js';
 import { hudState, shouldToastInserted, recoveryButtons } from './lib/view.js';
 import { messageFor } from './lib/messages.js';
 import { createWaveform } from './waveform.js';
+import { normalizeSecret } from './lib/secrets.js';
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -156,7 +157,7 @@ $('#cleanup-switch')?.addEventListener('click', async () => { const enabled = $(
 $('#save-instructions')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { cleanup_instructions: $('#instructions').value } }); if (failed(result)) return; state.settings = result.data; $('#save-instructions').disabled = true; $('#save-note').textContent = 'Saved'; });
 $('#local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#privacy-local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#privacy-local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
-$('#save-openrouter-key')?.addEventListener('click', async () => { const input = $('#openrouter-key'); const value = input.value; input.value = ''; const result = await bridge.call('secret_set', { name: 'openrouter_api_key', value }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
+$('#save-openrouter-key')?.addEventListener('click', async () => { const input = $('#openrouter-key'); const value = normalizeSecret(input.value); input.value = ''; const result = await bridge.call('secret_set', { name: 'openrouter_api_key', value }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
 $('#clear-openrouter-key')?.addEventListener('click', async () => { $('#openrouter-key').value = ''; const result = await bridge.call('secret_clear', { name: 'openrouter_api_key' }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
 $('#mic-test')?.addEventListener('click', async () => { const result = $('#mic-test').dataset.running === 'true' ? await bridge.call('mic_test_stop') : await bridge.call('mic_test_start', { device_id: Number($('#mic-select').value) || null }); if (failed(result)) return; const running = result.data.stopped === false || result.data.started === true; $('#mic-test').dataset.running = String(running); $('#mic-test').innerHTML = `${icon(running ? 'stop' : 'mic')}${running ? 'Stop test' : 'Test microphone'}`; });
 $('#delete-all')?.addEventListener('click', () => $('#delete-modal').classList.add('is-open'));

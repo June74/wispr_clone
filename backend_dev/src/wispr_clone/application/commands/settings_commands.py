@@ -12,6 +12,21 @@ from wispr_clone.pipeline.run_controller import RunController
 from wispr_clone.settings.secret_store import MemorySecretStore, SecretStore
 from wispr_clone.settings.store import SettingsStore
 
+_ZERO_WIDTH_SECRET_CHARS = frozenset("\u200b\u200c\u200d\u2060\ufeff")
+
+
+def _normalize_secret(value: str) -> str:
+    start, end = 0, len(value)
+    while start < end and (
+        value[start].isspace() or value[start] in _ZERO_WIDTH_SECRET_CHARS
+    ):
+        start += 1
+    while end > start and (
+        value[end - 1].isspace() or value[end - 1] in _ZERO_WIDTH_SECRET_CHARS
+    ):
+        end -= 1
+    return value[start:end]
+
 
 class SettingsCommands:
     def __init__(
@@ -73,6 +88,9 @@ class SettingsCommands:
         name, value = payload.get("name"), payload.get("value")
         if name != "openrouter_api_key" or not isinstance(value, str):
             raise WisprError(ErrorCode.VALIDATION, "secrets", "name") from None
+        value = _normalize_secret(value)
+        if any(character in _ZERO_WIDTH_SECRET_CHARS for character in value):
+            raise WisprError(ErrorCode.VALIDATION, "secrets", "value") from None
         self._secret_store.set(name, value)
         if self._model_service is not None:
             await self._model_service.poll()
