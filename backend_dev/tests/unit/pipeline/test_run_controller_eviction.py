@@ -411,7 +411,9 @@ async def test_T_RUN_032a_abort_during_dictionary_read_frees_reserved_slot(
 async def test_T_RUN_032b_abort_during_cleanup_failure_write_emits_no_event(
     tmp_path: Path,
 ) -> None:
-    cleanup = FakeCleanupEngine(RuntimeError("cleanup failed"))
+    cleanup = FakeCleanupEngine(
+        WisprError(ErrorCode.CLEANUP_TIMEOUT, "cleanup", "timed out")
+    )
     async with scenario(tmp_path, cleanup=cleanup) as rig:
         rig.config["cleanup_enabled"] = True
         update = rig.history.update_run
@@ -517,7 +519,10 @@ async def test_T_RUN_032e_aborted_ids_are_reclaimed_after_evicted_tasks_finish(
 
 @pytest.mark.asyncio
 async def test_T_RUN_032f_retry_cleanup_rereads_dictionary(tmp_path: Path) -> None:
-    cleanup = FakeCleanupEngine(RuntimeError("unavailable"), "open whisper.")
+    cleanup = FakeCleanupEngine(
+        WisprError(ErrorCode.CLEANUP_TIMEOUT, "cleanup", "timed out"),
+        "open whisper.",
+    )
     async with scenario(tmp_path, cleanup=cleanup) as rig:
         rig.config["cleanup_enabled"] = True
         run_id = await rig.controller.start(start_request_id="first")
@@ -537,7 +542,10 @@ async def test_T_RUN_032f_retry_cleanup_rereads_dictionary(tmp_path: Path) -> No
 async def test_T_RUN_032g_abort_pending_recovery_discards_cleanup_result(
     tmp_path: Path,
 ) -> None:
-    cleanup = FakeCleanupEngine(RuntimeError("unavailable"), "open whisper.")
+    cleanup = FakeCleanupEngine(
+        WisprError(ErrorCode.CLEANUP_TIMEOUT, "cleanup", "timed out"),
+        "open whisper.",
+    )
     async with scenario(tmp_path, cleanup=cleanup) as rig:
         rig.config["cleanup_enabled"] = True
         run_id = await rig.controller.start(start_request_id="first")

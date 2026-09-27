@@ -1046,9 +1046,22 @@ class RunController:
         self, record: RunRecord, status: CleanupStatus, reason: str
     ) -> bool:
         run_id = record.id
+        if self._is_aborted(run_id):
+            return False
         if self._cancel_flags.get(run_id, False):
             await self._transition(run_id, RunEvent.CANCEL)
             return False
+        if status == CleanupStatus.FAILED and reason == "cleanup_unavailable":
+            updated = await self._services.history.update_run(
+                run_id,
+                expected_version=record.version,
+                cleanup_status=CleanupStatus.FAILED,
+                cleanup_reason=reason,
+                cleaned_text=None,
+                output_selection="original",
+            )
+            await self._insert_selected(updated, updated.original_text or "")
+            return True
         failed = transition(
             RunState(record.status, record.version), RunEvent.CLEANUP_FAILED
         )

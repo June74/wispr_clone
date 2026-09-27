@@ -174,6 +174,74 @@ def assert_choice(rig: Rig, run_id: str, record: RunRecord) -> None:
     }
 
 
+async def assert_unavailable_inserts_original(
+    rig: Rig, run_id: str, record: RunRecord
+) -> None:
+    assert record.status == RunStatus.DONE
+    assert record.original_text == RAW and record.adjusted_text == ADJUSTED
+    assert record.cleaned_text is None
+    assert record.cleanup_status == CleanupStatus.FAILED
+    assert record.cleanup_reason == ErrorCode.CLEANUP_UNAVAILABLE.value
+    assert record.output_selection == "original"
+    assert rig.states(run_id) == ["recording", "processing", "done"]
+    assert rig.events.by_name("run:recovery") == []
+    assert rig.sends() == 1 and rig.uia.texts[(1, 2)] == "before" + RAW
+    assert len(await rig.history.attempts(run_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_T_PIPE_CLN_001_unavailable_error_inserts_original(
+    tmp_path: Path,
+) -> None:
+    error = WisprError(ErrorCode.CLEANUP_UNAVAILABLE, "cleanup", "fake unavailable")
+    async with scenario(tmp_path, cleanup=FakeCleanupEngine(error)) as rig:
+        rig.inserted[0] = RAW
+        run_id, record = await rig.finish()
+        await assert_unavailable_inserts_original(rig, run_id, record)
+
+
+@pytest.mark.asyncio
+async def test_T_PIPE_CLN_002_generic_error_inserts_original(tmp_path: Path) -> None:
+    async with scenario(
+        tmp_path, cleanup=FakeCleanupEngine(RuntimeError("fake unavailable"))
+    ) as rig:
+        rig.inserted[0] = RAW
+        run_id, record = await rig.finish()
+        await assert_unavailable_inserts_original(rig, run_id, record)
+
+
+@pytest.mark.asyncio
+async def test_T_PIPE_CLN_003_rejected_verdict_still_offers_choice(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path, cleanup=FakeCleanupEngine("do OpenWhispr")) as rig:
+        run_id, record = await rig.finish()
+        assert_choice(rig, run_id, record)
+        assert record.cleanup_status == CleanupStatus.REJECTED
+        assert record.cleanup_reason == "negation"
+        assert await rig.history.attempts(run_id) == ()
+
+
+@pytest.mark.asyncio
+async def test_T_PIPE_CLN_004_cancel_before_fallback_insert(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    error = WisprError(ErrorCode.CLEANUP_UNAVAILABLE, "cleanup", "fake unavailable")
+    async with scenario(tmp_path, cleanup=FakeCleanupEngine(error)) as rig:
+        insert_selected = rig.controller._insert_selected
+
+        async def cancel_then_insert(record: RunRecord, text: str) -> None:
+            rig.controller._cancel_flags[record.id] = True
+            await insert_selected(record, text)
+
+        monkeypatch.setattr(rig.controller, "_insert_selected", cancel_then_insert)
+        run_id, record = await rig.finish()
+        assert record.status == RunStatus.CANCELLED
+        assert rig.states(run_id) == ["recording", "processing", "cancelled"]
+        assert rig.sends() == 0
+        assert await rig.history.attempts(run_id) == ()
+
+
 @pytest.mark.asyncio
 async def test_T_RUN_009_cleanup_off_uses_adjusted_text(tmp_path: Path) -> None:
     cleanup = FakeCleanupEngine(CLEANED)
@@ -285,10 +353,9 @@ async def test_T_RUN_010b_unexpected_cleanup_error_uses_fixed_reason(
     async with scenario(
         tmp_path, cleanup=FakeCleanupEngine(RuntimeError("private input"))
     ) as rig:
+        rig.inserted[0] = RAW
         run_id, record = await rig.finish()
-        assert_choice(rig, run_id, record)
-        assert record.cleanup_status == CleanupStatus.FAILED
-        assert record.cleanup_reason == "cleanup_unavailable"
+        await assert_unavailable_inserts_original(rig, run_id, record)
 
 
 @pytest.mark.asyncio
@@ -302,12 +369,11 @@ async def test_T_RUN_011c_guard_rejects_lost_negation(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_T_RUN_011d_missing_engine_offers_choice(tmp_path: Path) -> None:
+async def test_T_RUN_011d_missing_engine_inserts_original(tmp_path: Path) -> None:
     async with scenario(tmp_path, cleanup=None) as rig:
+        rig.inserted[0] = RAW
         run_id, record = await rig.finish()
-        assert_choice(rig, run_id, record)
-        assert record.cleanup_status == CleanupStatus.FAILED
-        assert record.cleanup_reason == "cleanup_unavailable"
+        await assert_unavailable_inserts_original(rig, run_id, record)
 
 
 @pytest.mark.asyncio
@@ -696,7 +762,7 @@ async def test_T_RUN_017f_cancel_during_retry_cleanup_discards_result(
     [
         (True, "  do not OpenWhispr. \n", RunStatus.DONE),
         (True, "do OpenWhispr", RunStatus.AWAITING_CLEANUP_CHOICE),
-        (False, None, RunStatus.AWAITING_CLEANUP_CHOICE),
+        (False, None, RunStatus.DONE),
     ],
 )
 async def test_T_RUN_017g_real_cleanup_and_guard_boundary(
@@ -718,13 +784,16 @@ async def test_T_RUN_017g_real_cleanup_and_guard_boundary(
     engine = LmStudioCleanup(transport=httpx.MockTransport(handler))
     try:
         async with scenario(tmp_path, cleanup=engine) as rig:  # type: ignore[arg-type]
-            rig.inserted[0] = CLEANED
+            rig.inserted[0] = CLEANED if loaded else RAW
             run_id, record = await rig.finish()
             assert record.status == expected_status
             if expected_status == RunStatus.DONE:
-                assert record.cleaned_text == CLEANED
+                assert record.cleaned_text == (CLEANED if loaded else None)
                 assert rig.sends() == 1
-                assert rig.uia.texts[(1, 2)] == "before" + CLEANED
+                assert rig.uia.texts[(1, 2)] == "before" + rig.inserted[0]
+                if not loaded:
+                    assert record.cleanup_reason == "cleanup_unavailable"
+                    assert record.output_selection == "original"
             else:
                 assert record.cleaned_text is None
                 assert rig.sends() == 0 and await rig.history.attempts(run_id) == ()
