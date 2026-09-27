@@ -22,6 +22,7 @@ test('T-WEB-013: HUD pill fills its opaque window without translation or shadow'
   assert.equal(pill.get('box-shadow'), 'none');
   assert.equal(pill.get('width'), '100vw');
   assert.equal(pill.get('height'), '100vh');
+  assert.equal(pill.get('padding'), '0 0 0 16px');
   assert.equal(pill.get('border-radius'), '8px');
 });
 

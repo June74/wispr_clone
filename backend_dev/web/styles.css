@@ -876,6 +876,6 @@ ins.add { text-decoration: none; color: var(--green-text); background: var(--gre
 .inline-style-27 {font-weight:400}
 .hud-root, .hud-root body { background: #1b161d; }
 .hud-page { margin: 0; min-width: 0; min-height: 0; overflow: hidden; }
-.pill.hud-pill { position: relative; left: auto; bottom: auto; opacity: 1; pointer-events: auto; transform: none; margin: 0; box-shadow: none; width: 100vw; height: 100vh; border-radius: 8px; }
+.pill.hud-pill { position: relative; left: auto; bottom: auto; opacity: 1; pointer-events: auto; transform: none; margin: 0; box-shadow: none; width: 100vw; height: 100vh; border-radius: 8px; padding: 0 0 0 16px; }
 .hud-pill .pill-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hud-wave { width: 88px; height: 28px; }

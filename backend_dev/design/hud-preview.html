@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUD preview — Wispr Clone (design tool, not shipped)</title>
+<link rel="stylesheet" href="../web/styles.css">
+<link rel="stylesheet" href="hud-preview.css">
+</head>
+<body class="preview-page">
+<header class="pv-head">
+  <h1>HUD preview</h1>
+  <p>Uses the real <code>web/styles.css</code> and <code>web/waveform.js</code>. The dashed outline is the native window. Corner radius above 8&nbsp;px needs the native-drawn HUD; half the height makes a full pill. Audio levels are simulated.</p>
+</header>
+
+<main class="pv-main">
+  <div class="pv-left">
+  <section class="pv-stage" id="stage" aria-label="HUD at actual size">
+    <div class="pv-window" id="main-window"></div>
+  </section>
+  <section class="pv-all" aria-label="Every state at the chosen size">
+    <h2>Every state (1×)</h2>
+    <div class="pv-grid" id="all"></div>
+  </section>
+  </div>
+
+  <aside class="pv-controls" aria-label="HUD settings">
+    <div class="pv-presets">
+      <button type="button" data-preset="current">Current</button>
+      <button type="button" data-preset="compact">Compact</button>
+      <button type="button" data-preset="mini">Mini</button>
+    </div>
+    <label>State
+      <select id="status">
+        <option value="recording">Listening</option>
+        <option value="processing">Working</option>
+        <option value="awaiting_destination">Waiting for destination</option>
+        <option value="awaiting_cleanup_choice">Needs attention</option>
+        <option value="error">Could not confirm</option>
+        <option value="idle">Ready</option>
+      </select>
+    </label>
+    <div id="sliders"></div>
+    <label class="pv-check"><input type="checkbox" id="hideListeningLabel"> Hide the label while listening (wave only)</label>
+    <label class="pv-check"><input type="checkbox" id="autoWidth" checked> Window width fits the longest label</label>
+    <label class="pv-check"><input type="checkbox" id="lightDesk"> Light desktop behind the HUD</label>
+    <label>Zoom
+      <select id="zoom"><option value="1">1×</option><option value="2" selected>2×</option><option value="3">3×</option></select>
+    </label>
+    <p class="pv-size" id="size"></p>
+    <button type="button" id="copy" class="pv-copy">Copy settings</button>
+    <textarea id="out" readonly rows="7" aria-label="Settings to send back"></textarea>
+  </aside>
+</main>
+
+<script type="module" src="hud-preview.js"></script>
+</body>
+</html>

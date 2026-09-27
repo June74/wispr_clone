@@ -51,9 +51,9 @@ def test_T_UI_008_hud_window_geometry_and_creation_options() -> None:
         "transparent": False,
         "background_color": "#1b161d",
         "min_size": (1, 1),
-        "width": 280,
+        "width": 268,
         "height": 44,
-        "x": (3440 - 280) // 2,
+        "x": (3440 - 268) // 2,
         "y": 1440 - 44 - 48,
     }
 
@@ -88,7 +88,7 @@ def test_T_UI_009_shown_resizes_before_native_prepare(
     assert hud.prepared.is_set()
     assert hud.native_ready is True
     assert calls == [
-        ("resize", (280, 44)),
+        ("resize", (268, 44)),
         ("prepare", "Wispr Clone HUD"),
     ]
 
