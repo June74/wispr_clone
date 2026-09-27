@@ -16,8 +16,14 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import Any, cast
 
-from wispr_clone.ui.hud_model import HUD_SPEC, STATUS_LABELS, layout, status_color
-from wispr_clone.ui.waveform_model import CENTER, OPACITY, REST, H, W, WaveformModel, X
+from wispr_clone.ui.hud_model import (
+    HUD_SPEC,
+    STATUS_LABELS,
+    HudTimer,
+    classify_hit,
+    layout,
+    status_color,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +44,16 @@ _WS_EX_NOACTIVATE = 0x08000000
 _WS_EX_TOPMOST = 0x00000008
 _WM_NCCREATE = 0x0081
 _WM_DESTROY = 0x0002
+_WM_MOUSEACTIVATE = 0x0021
+_WM_NCHITTEST = 0x0084
+_WM_MOUSEMOVE = 0x0200
+_WM_MOUSELEAVE = 0x02A3
+_WM_LBUTTONUP = 0x0202
+_HTCLIENT = 1
+_HTTRANSPARENT = -1
+_MA_NOACTIVATE = 3
+_TME_LEAVE = 0x00000002
+_MK_LBUTTON = 0x0001
 _WINDOW_CLASS = "WisprCloneNativeHud"
 
 # The class procedure and class registration outlive every NativeHud instance.
@@ -74,6 +90,15 @@ class _BLENDFUNCTION(ctypes.Structure):
     ]
 
 
+class _TRACKMOUSEEVENT(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("hwndTrack", wintypes.HWND),
+        ("dwHoverTime", wintypes.DWORD),
+    ]
+
+
 class _MONITORINFO(ctypes.Structure):
     _fields_ = [
         ("cbSize", wintypes.DWORD),
@@ -86,7 +111,7 @@ class _MONITORINFO(ctypes.Structure):
 class NativeHud:
     """Own a Windows layered HUD on a dedicated message-loop thread."""
 
-    def __init__(self) -> None:
+    def __init__(self, on_cancel: Any = None) -> None:
         self.available = False
         self._hwnd: int | None = None
         self._thread_id = 0
@@ -96,8 +121,9 @@ class NativeHud:
         self._commands: queue.SimpleQueue[tuple[str, dict[str, Any]]] = (
             queue.SimpleQueue()
         )
-        self._model = WaveformModel()
+        self._on_cancel = on_cancel
         self._status = "idle"
+        self._timer = HudTimer(time.monotonic)
         self._bands = [0.0] * 12
         self._shown = False
         self._last_tick = 0.0
@@ -108,6 +134,7 @@ class NativeHud:
         self.frames_drawn = 0
         self._drawing_reference_loaded = False
         self._window_position = (0, 0)
+        self._hover = False
         if sys.platform != "win32":
             return
         self._thread = threading.Thread(
@@ -184,13 +211,7 @@ class NativeHud:
             thread_key = threading.get_native_id()
             with _window_lock:
                 _pending_windows[thread_key] = self
-            ex = (
-                _WS_EX_LAYERED
-                | _WS_EX_TOOLWINDOW
-                | _WS_EX_TRANSPARENT
-                | _WS_EX_NOACTIVATE
-                | _WS_EX_TOPMOST
-            )
+            ex = _WS_EX_LAYERED | _WS_EX_TOOLWINDOW | _WS_EX_NOACTIVATE | _WS_EX_TOPMOST
             hwnd = user32.CreateWindowExW(
                 ex,
                 _WINDOW_CLASS,
@@ -336,6 +357,7 @@ class NativeHud:
                     [wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT],
                     wintypes.BOOL,
                 ),
+                "TrackMouseEvent": ([ctypes.POINTER(_TRACKMOUSEEVENT)], wintypes.BOOL),
             },
             gdi32: {
                 "CreateCompatibleDC": ([wintypes.HDC], wintypes.HDC),
@@ -404,17 +426,17 @@ class NativeHud:
                 self._shown = False
                 apis[0].ShowWindow(hwnd, 0)
             elif name == "state":
-                self._status = payload["status"]
+                status = payload["status"]
+                self._status = status
+                self._timer.set_status(status)
                 if self._status == "recording":
                     self._last_audio = time.monotonic()
                 else:
                     self._bands = [0.0] * 12
-                self._model.update(self._bands, self._status == "recording")
                 self._draw(hwnd)
             elif name == "audio":
                 if self._status == "recording":
                     self._bands = payload["bands"]
-                    self._model.update(self._bands, True)
                     self._last_audio = time.monotonic()
                     self._last_tick = self._last_audio
             elif name == "destroy":
@@ -457,13 +479,11 @@ class NativeHud:
         if apis is None:
             return
         active = self._status == "recording"
-        moving = active or any(height != REST for height in self._model.heights)
-        if not moving:
+        if not active:
             return
         now = time.monotonic()
         if active and now - self._last_audio >= 0.5 and any(self._bands):
             self._bands = [0.0] * 12
-            self._model.update(self._bands, True)
         interval = 0.033
         try:
             reduced = wintypes.BOOL()
@@ -476,9 +496,7 @@ class NativeHud:
             pass
         if now - self._last_draw < interval:
             return
-        dt = min(0.08, now - self._last_tick or 0.016)
         self._last_tick = now
-        self._model.tick(dt)
         self._draw(hwnd)
 
     def _draw(self, hwnd: int) -> None:
@@ -565,6 +583,18 @@ class NativeHud:
             radius = spec.dot_radius
             rgb = status_color(self._status)
             dot = tuple(int(rgb[i : i + 2], 16) for i in (1, 3, 5))
+            if self._status == "recording":
+                phase = (time.monotonic() % 1.4) / 1.4
+                pulse_radius = radius + self._scale * (2 + 6 * phase)
+                graphics.DrawEllipse(
+                    track(
+                        Pen(Color.FromArgb(int(120 * (1 - phase)), *dot), self._scale)
+                    ),
+                    cx - pulse_radius,
+                    cy - pulse_radius,
+                    pulse_radius * 2,
+                    pulse_radius * 2,
+                )
             graphics.FillEllipse(
                 track(SolidBrush(Color.FromArgb(255, *dot))),
                 cx - radius,
@@ -575,7 +605,11 @@ class NativeHud:
 
             font = self._font(PrivateFontCollection, FontFamily)
             graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit
-            label = STATUS_LABELS.get(self._status, "Ready")
+            label = {
+                "recording": "Listening",
+                "processing": "Working",
+                "awaiting_destination": "Working",
+            }.get(self._status, STATUS_LABELS.get(self._status, "Ready"))
             text_font = track(
                 Font(
                     font,
@@ -584,34 +618,66 @@ class NativeHud:
                     GraphicsUnit.Pixel,
                 )
             )
+            available = spec.label_rect.right - spec.label_rect.left
+            while label and graphics.MeasureString(label, text_font).Width > available:
+                label = label[:-2] + "…" if len(label) > 1 else ""
             measured = graphics.MeasureString(label, text_font)
             graphics.DrawString(
                 label,
                 text_font,
                 track(SolidBrush(Color.White)),
-                spec.label_x,
+                spec.label_rect.left,
                 cy - measured.Height / 2,
             )
-
-            wave_rect = spec.wave_rect
-            wx, ww = wave_rect.left, wave_rect.right - wave_rect.left
-            wh = wave_rect.bottom - wave_rect.top
-            center_y = wave_rect.top + CENTER * wh / H
-            pen_width = max(1.0, 3 * ww / W)
-            for index, bar_height in enumerate(self._model.heights):
-                x = wx + X(index) * ww / W
-                alpha = int(255 * OPACITY[index])
-                scaled_height = bar_height * wh / H
-                pen = track(Pen(Color.FromArgb(alpha, 255, 255, 255), pen_width))
-                pen.StartCap = LineCap.Round
-                pen.EndCap = LineCap.Round
-                graphics.DrawLine(
-                    pen,
-                    x,
-                    center_y - scaled_height / 2,
-                    x,
-                    center_y + scaled_height / 2,
+            timer = self._timer.text
+            timer_font = track(
+                Font(
+                    "Cascadia Mono",
+                    12 * self._scale,
+                    FontStyle.Regular,
+                    GraphicsUnit.Pixel,
                 )
+            )
+            timer_brush = track(SolidBrush(Color.FromArgb(179, 255, 255, 255)))
+            graphics.DrawString(
+                timer,
+                timer_font,
+                timer_brush,
+                spec.timer_rect.left,
+                cy - 7 * self._scale,
+            )
+            button = spec.cancel_rect
+            bx, by = button.left + 14 * self._scale, button.top + 14 * self._scale
+            if self._hover:
+                graphics.FillEllipse(
+                    track(SolidBrush(Color.FromArgb(26, 255, 255, 255))),
+                    button.left,
+                    button.top,
+                    28 * self._scale,
+                    28 * self._scale,
+                )
+            cross = track(
+                Pen(
+                    Color.White if self._hover else Color.FromArgb(179, 255, 255, 255),
+                    1.5 * self._scale,
+                )
+            )
+            cross.StartCap = LineCap.Round
+            cross.EndCap = LineCap.Round
+            graphics.DrawLine(
+                cross,
+                bx - 4 * self._scale,
+                by - 4 * self._scale,
+                bx + 4 * self._scale,
+                by + 4 * self._scale,
+            )
+            graphics.DrawLine(
+                cross,
+                bx + 4 * self._scale,
+                by - 4 * self._scale,
+                bx - 4 * self._scale,
+                by + 4 * self._scale,
+            )
             self._push(hwnd, bitmap)
             self._last_draw = time.monotonic()
         except Exception:
@@ -707,6 +773,50 @@ def _dispatch_window_message(hwnd: int, msg: int, wparam: int, lparam: int) -> i
         if apis is None:
             return 0
         user32 = apis[0]
+        if msg == _WM_MOUSEACTIVATE:
+            return _MA_NOACTIVATE
+        if msg == _WM_NCHITTEST:
+            sx = ctypes.c_short(lparam & 0xFFFF).value
+            sy = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+            x, y = sx - instance._window_position[0], sy - instance._window_position[1]
+            hit = classify_hit(layout(instance._scale), x, y)
+            return _HTTRANSPARENT if hit == "transparent" else _HTCLIENT
+        if msg == _WM_MOUSEMOVE:
+            tracking = _TRACKMOUSEEVENT(
+                ctypes.sizeof(_TRACKMOUSEEVENT), _TME_LEAVE, hwnd, 0
+            )
+            user32.TrackMouseEvent(ctypes.byref(tracking))
+            x, y = (
+                ctypes.c_short(lparam & 0xFFFF).value,
+                ctypes.c_short((lparam >> 16) & 0xFFFF).value,
+            )
+            button = layout(instance._scale).cancel_rect
+            hover = button.left <= x < button.right and button.top <= y < button.bottom
+            if hover != instance._hover:
+                instance._hover = hover
+                instance._draw(hwnd)
+            return 0
+        if msg == _WM_MOUSELEAVE:
+            if instance._hover:
+                instance._hover = False
+                instance._draw(hwnd)
+            return 0
+        if msg == _WM_LBUTTONUP:
+            x, y = (
+                ctypes.c_short(lparam & 0xFFFF).value,
+                ctypes.c_short((lparam >> 16) & 0xFFFF).value,
+            )
+            if (
+                classify_hit(layout(instance._scale), x, y) == "cancel"
+                and instance._on_cancel is not None
+            ):
+                try:
+                    threading.Thread(
+                        target=instance._on_cancel, name="wispr-hud-cancel", daemon=True
+                    ).start()
+                except Exception:
+                    logger.warning("NATIVE_HUD_CANCEL_FAILED")
+            return 0
         if msg == _WM_COMMAND:
             instance._drain_commands(hwnd)
             return 0

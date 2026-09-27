@@ -92,7 +92,7 @@ class AppFactories:
     clock: Callable[[], float]
     monotonic: Callable[[], float]
     secret_store: Callable[[], SecretStore] | None = None
-    native_hud: Callable[[], Any] | None = None
+    native_hud: Callable[..., Any] | None = None
     insertion_thread_init: Callable[[], None] = _noop
     insertion_thread_exit: Callable[[], None] = _noop
 
@@ -610,6 +610,34 @@ class App:
         loop = self._loop or asyncio.get_running_loop()
         loop.call_soon_threadsafe(callback)
 
+    def _schedule_hud_cancel(self) -> None:
+        loop = self._loop
+        if loop is None:
+            return
+
+        def schedule() -> None:
+            # Read the active run on the loop thread, not the HUD thread.
+            active_run_id = self._controller.active_run_id if self._controller else None
+            if active_run_id is None:
+                return
+
+            async def invoke() -> None:
+                await self.api.call(
+                    "run_cancel",
+                    {
+                        "session_token": self.api.session_token,
+                        "deadline": self.factories.clock() + 10,
+                        "run_id": active_run_id,
+                    },
+                )
+
+            task = loop.create_task(invoke())
+            task.add_done_callback(
+                lambda done: done.exception() if not done.cancelled() else None
+            )
+
+        loop.call_soon_threadsafe(schedule)
+
     def _start_hotkey(self) -> None:
         if self._settings is None or self._api is None:
             return
@@ -771,7 +799,9 @@ class App:
         hud_url = (Path(__file__).resolve().parents[2] / "web" / "hud.html").as_uri()
         if self.factories.native_hud is not None:
             try:
-                native_hud = self.factories.native_hud()
+                native_hud = self.factories.native_hud(
+                    on_cancel=lambda: self._schedule_hud_cancel()
+                )
                 if native_hud.available:
                     self._hud = native_hud
                 else:
