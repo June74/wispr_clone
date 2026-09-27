@@ -1,7 +1,7 @@
 dependency = "pywebview"
 kind = "library"
-modules = ["app"]
-import_names = ["webview"]
+modules = ["app", "ui.overlay"]
+import_names = ["webview", "System"]  # System = pythonnet, the pywebview Windows backend
 features = ["settings window", "HUD"]
 error_codes = ["storage_error"]
 action = "Check the pywebview pin in uv.lock and the WebView2 runtime"
