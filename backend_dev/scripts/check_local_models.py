@@ -2,27 +2,17 @@
 """Report local model readiness without changing the machine configuration."""
 
 import argparse
-import hashlib
 import json
 import socket
-import subprocess
 import sys
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any, Callable
 
-EXPECTED_GGUF_SHA256 = (
-    "39dc1f65539373a406edea7490505822d77c12edff521744678717eef4da4723"
-)
-DEFAULT_GGUF = Path(
-    r"C:\Users\2006i\.lmstudio\models\handy-computer\Voxtral-Mini-4B-Realtime-2602-gguf\Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf"
-)
 LMSTUDIO_BASE = "http://127.0.0.1:1234"
 LMSTUDIO_PORT = 1234
 PINNED_MODEL = "meta-llama-3.1-8b-instruct"
-CHUNK_SIZE = 1024 * 1024
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -48,34 +38,6 @@ class Check:
     status: str
     ok: bool
     detail: str
-
-
-def check_gguf(path: Path, expected_sha256: str = EXPECTED_GGUF_SHA256) -> Check:
-    """Stream a model file into SHA-256 and compare it with its pinned digest."""
-    try:
-        with path.open("rb") as model_file:
-            digest = hashlib.sha256()
-            while block := model_file.read(CHUNK_SIZE):
-                digest.update(block)
-    except FileNotFoundError:
-        return Check(
-            "gguf", "missing", False, f"Expected model file is missing: {path}"
-        )
-    except OSError as exc:
-        return Check(
-            "gguf", "unavailable", False, f"Cannot read model file {path}: {exc}"
-        )
-
-    actual_sha256 = digest.hexdigest()
-    if actual_sha256 != expected_sha256:
-        return Check(
-            "gguf",
-            "sha256_mismatch",
-            False,
-            f"SHA-256 mismatch for {path}: expected {expected_sha256}, "
-            f"got {actual_sha256}",
-        )
-    return Check("gguf", "ok", True, f"SHA-256 verified for {path}: {actual_sha256}")
 
 
 def check_lmstudio(
@@ -214,70 +176,27 @@ def check_lan_exposure(
     )
 
 
-def check_gpu(*, run: Callable[..., Any] = subprocess.run) -> Check:
-    """Query NVIDIA GPU memory using nvidia-smi without changing GPU state."""
-    command = [
-        "nvidia-smi",
-        "--query-gpu=name,memory.total,memory.used,memory.free",
-        "--format=csv,noheader,nounits",
-    ]
-    try:
-        result = run(command, capture_output=True, text=True, check=False, timeout=5.0)
-    except (OSError, subprocess.SubprocessError) as exc:
-        return Check("gpu", "unavailable", False, f"nvidia-smi unavailable: {exc}")
-    if result.returncode != 0:
-        return Check("gpu", "unavailable", False, "nvidia-smi could not query the GPU")
-    try:
-        rows = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        if not rows:
-            raise ValueError("empty output")
-        fields = [field.strip() for field in rows[0].split(",")]
-        if len(fields) != 4:
-            raise ValueError("unexpected output")
-        free_mib = int(fields[3])
-    except (ValueError, IndexError):
-        return Check(
-            "gpu", "unavailable", False, "nvidia-smi returned unparseable memory data"
-        )
-    return Check(
-        "gpu", "ok", True, f"{fields[0]}: {free_mib} MiB free of {fields[1]} MiB"
-    )
-
-
 def run_checks(
     *,
-    gguf: Path = DEFAULT_GGUF,
     lan_ip: str | None = None,
-    skip_gpu: bool = False,
     opener: Callable[..., Any] = urllib.request.urlopen,
     connect: Callable[..., Any] = socket.create_connection,
-    gpu_run: Callable[..., Any] = subprocess.run,
 ) -> list[Check]:
     """Run readiness checks with injectable boundaries for isolated tests."""
-    checks = [
-        check_gguf(gguf),
+    return [
         check_lmstudio(opener=opener),
         check_lan_exposure(lan_ip=lan_ip, connect=connect),
     ]
-    if not skip_gpu:
-        checks.append(check_gpu(run=gpu_run))
-    return checks
 
 
 def main(argv: list[str] | None = None) -> int:
     """Print the JSON readiness report and return a process exit status."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--gguf", type=Path, default=DEFAULT_GGUF, help="path to the Voxtral GGUF"
-    )
-    parser.add_argument(
-        "--skip-gpu", action="store_true", help="omit the nvidia-smi check"
-    )
-    parser.add_argument(
         "--json-only", action="store_true", help="accepted for script compatibility"
     )
-    args = parser.parse_args(argv)
-    checks = run_checks(gguf=args.gguf, skip_gpu=args.skip_gpu)
+    parser.parse_args(argv)
+    checks = run_checks()
     ready = all(check.ok for check in checks)
     print(
         json.dumps(

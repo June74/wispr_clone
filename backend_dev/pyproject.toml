@@ -13,8 +13,6 @@ dependencies = [
     "uiautomation==2.0.29; sys_platform == 'win32'",
     "pynput; sys_platform == 'win32'",
     "pywebview; sys_platform == 'win32'",
-    "transcribe-cpp @ https://github.com/handy-computer/transcribe.cpp/releases/download/v0.2.3/transcribe_cpp-0.2.3-py3-none-any.whl ; sys_platform == 'win32'",
-    "transcribe-cpp-native-cu12 @ https://github.com/handy-computer/transcribe.cpp/releases/download/v0.2.3/transcribe_cpp_native_cu12-0.2.3-py3-none-win_amd64.whl ; sys_platform == 'win32'",
 ]
 
 [dependency-groups]

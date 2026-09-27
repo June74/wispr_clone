@@ -6,9 +6,9 @@ Status: **planning only**. Companion to [CODEMAP.md](CODEMAP.md). No packages, m
 
 The Windows project uses Python 3.12 and `uv`, with metadata in `backend_dev/pyproject.toml`, a committed `uv.lock`, and `.python-version`. Keep project packages local. G1 is decided: one WSL checkout, with the Windows venv on the Windows disk (`UV_PROJECT_ENVIRONMENT`). The WSL venv serves development and Linux CI only.
 
-**No model server runs in WSL (G2, decided 2026-09-24).** Speech recognition runs in-process through transcribe.cpp. Cleanup uses the user's existing LM Studio on Windows, which is an external application: it is not installed, pinned or started by this project. Record the LM Studio version and loaded model with each G2/tier G result.
+**No model server runs in WSL.** STT uses cloud Whisper through OpenRouter/DeepInfra; audio leaves the device and usage pricing applies. Cleanup uses the user's existing LM Studio on Windows, which is an external application: it is not installed, pinned or started by this project.
 
-**Manifest impact now:** none. At implementation, add approved Windows runtime/dev dependencies and commit their lockfile. The transcribe.cpp wheels come from GitHub release URLs (not PyPI), so pin them by URL with hashes in `uv.lock`. Optional cloud, encryption, and launcher dependencies wait for their corresponding decisions.
+**Manifest impact (2026-09-27):** removed `transcribe-cpp` and `transcribe-cpp-native-cu12`; cloud Whisper uses the existing `httpx` dependency. The local Voxtral path was removed because cloud Whisper is the selected STT. Optional encryption and launcher dependencies wait for their corresponding decisions.
 
 ## Proposed Windows packages
 
@@ -28,6 +28,8 @@ The Windows project uses Python 3.12 and `uv`, with metadata in `backend_dev/pyp
 | `ruff` — dev | Shared formatting/lint rules | Separate formatter/linter | Replace checks or maintain manually |
 | `pyright` or `mypy` — optional dev | Check shared command/event and adapter types; choose one | Runtime validation/tests alone | Less static checking |
 | `pyinstaller` — dev | Proposed Windows executable packaging | Nuitka or Briefcase | Run from source or replace packager |
+
+Removed 2026-09-27: `transcribe-cpp` and `transcribe-cpp-native-cu12`. The local Voxtral path was retired because cloud Whisper is the selected STT.
 
 Baseline: no runtime dependency changes for cloud STT; httpx is already locked. OpenRouter / DeepInfra is an external service with usage pricing, and audio leaves the device. The local system also uses the user's LM Studio process for cleanup.
 

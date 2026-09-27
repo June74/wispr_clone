@@ -147,8 +147,8 @@ backend_dev/
 │   ├── app.js / waveform.js            render backend state and backend audio levels
 │   └── bridge-adapter.js               commands, subscriptions, initial snapshot and errors
 ├── scripts/
-│   └── check_local_models.py           readiness report: Voxtral GGUF present with pinned SHA-256; LM Studio answers
-│                                        on 127.0.0.1:1234 with the pinned model loaded and not on the LAN IP; free VRAM
+│   └── check_local_models.py           readiness report: LM Studio answers
+│                                        on 127.0.0.1:1234 with the pinned model loaded and not on the LAN IP
 ├── packaging/wispr_clone.spec          proposed Windows executable packaging
 └── tests/
     ├── unit/                          transitions, retention, matching, guard and validation
