@@ -120,16 +120,30 @@ async def test_hotkey_and_settings_update_use_api_and_rebuild_listener(
     app = App(boundaries.factories(), data_dir=tmp_path)
     try:
         await app.startup()
+        controller = app._controller
+        assert controller is not None
         listener = boundaries.listeners[0]
         for key in ("ctrl", "shift", "space"):
             listener.service.handle(KeyAction.DOWN, key)
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        state = await app.api.call("state_get", {})
+        async with asyncio.timeout(2):
+            while True:
+                state = await app.api.call("state_get", {})
+                if (
+                    state.ok
+                    and state.data is not None
+                    and state.data["active_run_id"] is not None
+                    and controller.active_run_id == state.data["active_run_id"]
+                    and isinstance(state.data["runs"], list)
+                    and len(state.data["runs"]) == 1
+                ):
+                    break
+                await asyncio.sleep(0.01)
         assert state.ok
         assert state.data is not None
         assert state.data["active_run_id"] is not None
+        assert isinstance(state.data["runs"], list)
         assert len(state.data["runs"]) == 1
+        first_run_id = str(state.data["active_run_id"])
         result = await _command(
             app, "settings_update", patch={"dictation_shortcut": "ctrl+alt+space"}
         )
@@ -139,13 +153,28 @@ async def test_hotkey_and_settings_update_use_api_and_rebuild_listener(
         assert boundaries.listeners[1].starts == 1
         cancelled = await _command(app, "run_cancel")
         assert cancelled.ok  # type: ignore[attr-defined]
+        async with asyncio.timeout(2):
+            try:
+                await controller.settled(first_run_id)
+            except Exception:
+                pass
         for key in ("ctrl", "alt", "space"):
             boundaries.listeners[1].service.handle(KeyAction.DOWN, key)
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        rebuilt_state = await app.api.call("state_get", {})
+        async with asyncio.timeout(2):
+            while True:
+                rebuilt_state = await app.api.call("state_get", {})
+                if (
+                    rebuilt_state.ok
+                    and rebuilt_state.data is not None
+                    and rebuilt_state.data["active_run_id"] is not None
+                    and isinstance(rebuilt_state.data["runs"], list)
+                    and len(rebuilt_state.data["runs"]) == 2
+                ):
+                    break
+                await asyncio.sleep(0.01)
         assert rebuilt_state.ok
         assert rebuilt_state.data is not None
+        assert isinstance(rebuilt_state.data["runs"], list)
         assert len(rebuilt_state.data["runs"]) == 2
     finally:
         await app.shutdown()

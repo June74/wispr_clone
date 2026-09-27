@@ -70,6 +70,10 @@ class ListenerLike(Protocol):
     def stop(self) -> None: ...
 
 
+def _noop() -> None:
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class AppFactories:
     open_database: Callable[[Path], Database]
@@ -84,6 +88,8 @@ class AppFactories:
     clock: Callable[[], float]
     monotonic: Callable[[], float]
     secret_store: Callable[[], SecretStore] | None = None
+    insertion_thread_init: Callable[[], None] = _noop
+    insertion_thread_exit: Callable[[], None] = _noop
 
 
 def real_factories() -> AppFactories:
@@ -136,6 +142,17 @@ def real_factories() -> AppFactories:
 
         return webview
 
+    def init_insertion_thread() -> None:
+        if os.name == "nt":
+            uiautomation = cast(Any, __import__("uiautomation"))
+            uiautomation.Logger.SetLogFile("")
+            uiautomation.InitializeUIAutomationInCurrentThread()
+
+    def exit_insertion_thread() -> None:
+        if os.name == "nt":
+            uiautomation = cast(Any, __import__("uiautomation"))
+            uiautomation.UninitializeUIAutomationInCurrentThread()
+
     return AppFactories(
         open_database=Database,
         stt_engine=stt,
@@ -149,6 +166,8 @@ def real_factories() -> AppFactories:
         clock=time.time,
         monotonic=time.monotonic,
         secret_store=lambda: secrets_store,
+        insertion_thread_init=init_insertion_thread,
+        insertion_thread_exit=exit_insertion_thread,
     )
 
 
@@ -274,8 +293,11 @@ class App:
         self.shutdown_log: list[str] = []
         self.timer_errors: dict[str, int] = {}
         self.insertion_executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="wispr-insertion"
+            max_workers=1,
+            thread_name_prefix="wispr-insertion",
+            initializer=self.factories.insertion_thread_init,
         )
+        self._insertion_thread_error = False
         self._cleanup_cache: dict[str, CleanupEngine] = {}
         self._tasks: list[asyncio.Task[None]] = []
         self._timers: list[asyncio.Task[None]] = []
@@ -332,8 +354,13 @@ class App:
         if self._stopping:
             return
         self.startup_log.append("database")
-        win32, uia = self.factories.win32(), self.factories.uia()
-        self._win32, self._uia = win32, uia
+        try:
+            win32, uia = await self._offload(
+                lambda: (self.factories.win32(), self.factories.uia())
+            )
+            self._win32, self._uia = win32, uia
+        except Exception:
+            self._insertion_thread_error = True
         self._history = HistoryRepo(
             self._db,
             clock=self.factories.clock,
@@ -391,8 +418,8 @@ class App:
         )
         insertion = InsertionProtocol(
             self._history,
-            self._win32,
-            self._uia,
+            cast(Win32Api, self._win32),
+            cast(UiaApi, self._uia),
             offload=self._offload,
             clock=self.factories.monotonic,
             new_id=lambda: secrets.token_urlsafe(18),
@@ -656,6 +683,8 @@ class App:
             await self._model_service.poll()
 
     async def _track_destination(self) -> None:
+        if self._insertion_thread_error:
+            raise RuntimeError("insertion thread initialization failed")
         if self._win32 is None or self._uia is None:
             return
         win32, uia = self._win32, self._uia
@@ -795,6 +824,11 @@ class App:
             except Exception:
                 pass
         self.shutdown_log.append("models")
+        if not self._insertion_thread_error:
+            try:
+                await self._offload(self.factories.insertion_thread_exit)
+            except Exception:
+                pass
         self.insertion_executor.shutdown(wait=True, cancel_futures=True)
         self.shutdown_log.append("insertion_executor")
         if self._db is not None:
