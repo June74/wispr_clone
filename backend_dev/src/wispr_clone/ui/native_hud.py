@@ -16,6 +16,7 @@ from ctypes import wintypes
 from pathlib import Path
 from typing import Any, cast
 
+from wispr_clone import config
 from wispr_clone.ui.hud_model import (
     HUD_SPEC,
     STATUS_LABELS,
@@ -701,12 +702,7 @@ class NativeHud:
                 )
                 local.parent.mkdir(parents=True, exist_ok=True)
                 if not local.exists():
-                    source = (
-                        Path(__file__).resolve().parents[3]
-                        / "web"
-                        / "assets"
-                        / "geist.ttf"
-                    )
+                    source = config.resource_root() / "web" / "assets" / "geist.ttf"
                     shutil.copyfile(source, local)
                 collection = private_font_collection()
                 collection.AddFontFile(str(local))
