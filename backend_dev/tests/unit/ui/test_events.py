@@ -16,6 +16,7 @@ def _windows() -> tuple[Window, Window]:
     webview = FakeWebview()
     settings = webview.create_window("settings")
     hud = webview.create_window("hud")
+    webview.start()
     return settings, hud
 
 

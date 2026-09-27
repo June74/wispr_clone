@@ -290,6 +290,7 @@ class App:
         self.data_dir = data_dir
         self.debug = debug
         self.startup_log: list[str] = []
+        self.failure: tuple[str, str] | None = None
         self.shutdown_log: list[str] = []
         self.timer_errors: dict[str, int] = {}
         self.insertion_executor = ThreadPoolExecutor(
@@ -306,6 +307,8 @@ class App:
         self._worker_ready = threading.Event()
         self._worker_done = threading.Event()
         self._worker_error: BaseException | None = None
+        self._shutdown_schedule_lock = threading.Lock()
+        self._shutdown_scheduled = False
         self._gui_thread_id: int | None = None
         self._instance: SingleInstance | None = None
         self._started = False
@@ -729,9 +732,29 @@ class App:
 
     def _schedule_shutdown(self) -> None:
         loop = self._loop
-        if loop is not None:
-            future = asyncio.run_coroutine_threadsafe(self.shutdown(), loop)
-            future.add_done_callback(lambda _done: loop.call_soon_threadsafe(loop.stop))
+        if loop is None or loop.is_closed() or not loop.is_running():
+            return
+        with self._shutdown_schedule_lock:
+            if self._shutdown_scheduled:
+                return
+            self._shutdown_scheduled = True
+
+        coroutine = self.shutdown()
+        try:
+            future = asyncio.run_coroutine_threadsafe(coroutine, loop)
+        except RuntimeError:
+            coroutine.close()
+            return
+
+        def stop_loop(_done: Any) -> None:
+            if loop.is_closed():
+                return
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            except RuntimeError:
+                pass
+
+        future.add_done_callback(stop_loop)
 
     def _create_windows(self) -> None:
         if self.factories.webview is None or self._windows:
@@ -848,6 +871,8 @@ class App:
             self._worker.start()
         self._worker_ready.wait()
         if self._worker_error is not None:
+            step = self.startup_log[-1] if self.startup_log else "startup"
+            self.failure = (step, type(self._worker_error).__name__)
             return 1
         exit_code = 0
         if self.factories.webview is not None:
@@ -857,7 +882,9 @@ class App:
                 if self._webview_module is None:
                     raise RuntimeError("webview unavailable")
                 start_webview(self._webview_module, debug=self.debug)
-            except Exception:
+            except Exception as error:
+                step = "webview" if "windows" in self.startup_log else "windows"
+                self.failure = (step, type(error).__name__)
                 exit_code = 1
             finally:
                 self._schedule_shutdown()

@@ -15,6 +15,17 @@ class HudWindow(Protocol):
 
 def open_hud(webview: object, *, hud_url: str) -> HudWindow:
     """Create a hidden HUD with no JS API and place it near screen bottom."""
+    placement: dict[str, int] = {}
+    screens = getattr(webview, "screens", ())
+    if screens:
+        primary = next(
+            (screen for screen in screens if screen.x == 0 and screen.y == 0),
+            screens[0],
+        )
+        placement = {
+            "x": primary.x + (primary.width - 240) // 2,
+            "y": primary.y + primary.height - 56 - 48,
+        }
     window = webview.create_window(  # type: ignore[attr-defined]
         "Wispr Clone HUD",
         url=hud_url,
@@ -28,12 +39,7 @@ def open_hud(webview: object, *, hud_url: str) -> HudWindow:
         width=240,
         height=56,
         hidden=True,
+        **placement,
     )
     _lock_navigation(window, hud_url)
-    screens = getattr(webview, "screens", ())
-    if screens:
-        primary = next((screen for screen in screens if screen.is_primary), screens[0])
-        x = int(primary.x + (primary.width - 240) / 2)
-        y = int(primary.y + primary.height - 56 - 48)
-        window.move(x, y)
     return cast(HudWindow, window)
