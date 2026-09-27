@@ -87,7 +87,7 @@ def test_T_UI_003_hud_has_no_bridge_and_cannot_activate() -> None:
     assert window.options["background_color"] == "#1b161d"
     assert window.options["min_size"] == (1, 1)
     assert window.options["hidden"] is True
-    assert window.options["width"] == 280
+    assert window.options["width"] == 268
     assert window.options["height"] == 44
 
 
@@ -98,7 +98,7 @@ def test_T_UI_007_hud_uses_origin_screen_and_skips_placement_without_screens() -
 
     open_hud(webview, hud_url="file:///bundled/hud.html")
 
-    assert webview.windows[0].options["x"] == (3440 - 280) // 2
+    assert webview.windows[0].options["x"] == (3440 - 268) // 2
     assert webview.windows[0].options["y"] == 1440 - 44 - 48
     assert all(name != "move" for name, _ in webview.windows[0].calls)
 
