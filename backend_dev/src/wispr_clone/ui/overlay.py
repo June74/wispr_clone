@@ -9,7 +9,7 @@ from typing import Any
 
 from wispr_clone.ui.windows import _lock_navigation
 
-HUD_WIDTH = 268
+HUD_WIDTH = 272
 HUD_HEIGHT = 44
 HUD_TITLE = "Wispr Clone HUD"
 logger = logging.getLogger(__name__)
