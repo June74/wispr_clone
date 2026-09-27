@@ -283,33 +283,6 @@ wheels = [
 ]
 
 [[package]]
-name = "nvidia-cublas-cu12"
-version = "12.9.2.10"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "nvidia-cuda-nvrtc-cu12" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/20/e2/fc9a0e985249d873150276d5afb02e39a66817fedbf1a385724393e505ed/nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl", hash = "sha256:623f43027d40d44ceadf0043f002bd25cf353e8f13ce90b9a87057019f560661", size = 553162896, upload-time = "2026-04-08T18:53:10.035Z" },
-]
-
-[[package]]
-name = "nvidia-cuda-nvrtc-cu12"
-version = "12.9.86"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/52/de/823919be3b9d0ccbf1f784035423c5f18f4267fb0123558d58b813c6ec86/nvidia_cuda_nvrtc_cu12-12.9.86-py3-none-win_amd64.whl", hash = "sha256:72972ebdcf504d69462d3bcd67e7b81edd25d0fb85a2c46d3ea3517666636349", size = 76408187, upload-time = "2025-06-05T20:12:27.819Z" },
-]
-
-[[package]]
-name = "nvidia-cuda-runtime-cu12"
-version = "12.9.79"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/59/df/e7c3a360be4f7b93cee39271b792669baeb3846c58a4df6dfcf187a7ffab/nvidia_cuda_runtime_cu12-12.9.79-py3-none-win_amd64.whl", hash = "sha256:8e018af8fa02363876860388bd10ccb89eb9ab8fb0aa749aaf58430a9f7c4891", size = 3591604, upload-time = "2025-06-05T20:11:17.036Z" },
-]
-
-[[package]]
 name = "packaging"
 version = "26.3"
 source = { registry = "https://pypi.org/simple" }
@@ -623,53 +596,6 @@ wheels = [
 ]
 
 [[package]]
-name = "transcribe-cpp"
-version = "0.2.3"
-source = { url = "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.2.3/transcribe_cpp-0.2.3-py3-none-any.whl" }
-dependencies = [
-    { name = "transcribe-cpp-native" },
-]
-wheels = [
-    { url = "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.2.3/transcribe_cpp-0.2.3-py3-none-any.whl", hash = "sha256:ef043b3b736049f05636f83818b130f30c7118c6d9148b1982f46ed62c10bce2" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy", marker = "extra == 'test'" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=7" },
-    { name = "transcribe-cpp-native", specifier = "==0.2.3.*" },
-    { name = "transcribe-cpp-native-cu12", marker = "extra == 'cu12'", specifier = "==0.2.3.*" },
-]
-provides-extras = ["cu12", "test"]
-
-[[package]]
-name = "transcribe-cpp-native"
-version = "0.2.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/11/1e/200a13bfbf3393312379a7699c789cbdb6db8ee53d61797ed27d00f06738/transcribe_cpp_native-0.2.3.tar.gz", hash = "sha256:ed0ac5608a218497a0c80f9ee05a67667ebf70e7165e700953df3fe2249e2d4e", size = 8045834, upload-time = "2026-08-30T10:54:16.717Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a1/55/3875745fbf7194eafccc1303f317d793bb0d67f8fb4a0b259615c5cd0c5b/transcribe_cpp_native-0.2.3-py3-none-win_amd64.whl", hash = "sha256:f29cf0e5659f4e135a0c2918a8de2141298797b921702c757e7a4c44737c9c77", size = 20388111, upload-time = "2026-08-30T10:54:12.935Z" },
-]
-
-[[package]]
-name = "transcribe-cpp-native-cu12"
-version = "0.2.3"
-source = { url = "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.2.3/transcribe_cpp_native_cu12-0.2.3-py3-none-win_amd64.whl" }
-dependencies = [
-    { name = "nvidia-cublas-cu12" },
-    { name = "nvidia-cuda-runtime-cu12" },
-]
-wheels = [
-    { url = "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.2.3/transcribe_cpp_native_cu12-0.2.3-py3-none-win_amd64.whl", hash = "sha256:04b35695b8d56f016cf2592460371ef5f638f06c4c4368d638a07d6812dbcafc" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "nvidia-cublas-cu12", specifier = ">=12.1" },
-    { name = "nvidia-cuda-runtime-cu12", specifier = ">=12.1" },
-]
-
-[[package]]
 name = "typing-extensions"
 version = "4.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -715,8 +641,6 @@ dependencies = [
     { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "sounddevice" },
     { name = "soxr" },
-    { name = "transcribe-cpp", marker = "sys_platform == 'win32'" },
-    { name = "transcribe-cpp-native-cu12", marker = "sys_platform == 'win32'" },
     { name = "uiautomation", marker = "sys_platform == 'win32'" },
 ]
 
@@ -739,8 +663,6 @@ requires-dist = [
     { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "sounddevice" },
     { name = "soxr" },
-    { name = "transcribe-cpp", marker = "sys_platform == 'win32'", url = "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.2.3/transcribe_cpp-0.2.3-py3-none-any.whl" },
-    { name = "transcribe-cpp-native-cu12", marker = "sys_platform == 'win32'", url = "https://github.com/handy-computer/transcribe.cpp/releases/download/v0.2.3/transcribe_cpp_native_cu12-0.2.3-py3-none-win_amd64.whl" },
     { name = "uiautomation", marker = "sys_platform == 'win32'", specifier = "==2.0.29" },
 ]
 

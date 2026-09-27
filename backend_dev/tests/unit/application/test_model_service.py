@@ -26,7 +26,6 @@ from wispr_clone.storage.migrations import (
     m003_dictionary,
     m004_history,
 )
-from wispr_clone.stt.voxtral_transcribe_cpp import VoxtralTranscribeCpp
 
 STT_ID = "openai/whisper-large-v3-turbo"
 CLEANUP_ID = "meta-llama-3.1-8b-instruct"
@@ -332,31 +331,6 @@ async def test_T_APP_016_model_commands_session_deadline_and_error_codes(
 
 
 @pytest.mark.asyncio
-async def test_T_APP_017_real_adapters_readiness_does_not_load(tmp_path: Path) -> None:
-    requests: list[tuple[str, str]] = []
-
-    def respond(request: httpx.Request) -> httpx.Response:
-        requests.append((request.method, request.url.path))
-        return httpx.Response(
-            200,
-            json={"data": [{"id": CLEANUP_ID, "state": "not-loaded"}]},
-        )
-
-    cleanup = LmStudioCleanup(
-        model_id=CLEANUP_ID, transport=httpx.MockTransport(respond)
-    )
-    stt = VoxtralTranscribeCpp(tmp_path / "missing.gguf")
-    try:
-        assert stt.ready is False
-        assert await cleanup.health() is False
-        assert stt.ready is False
-        assert requests == [("GET", "/api/v0/models")]
-    finally:
-        await cleanup.aclose()
-        await stt.close()
-
-
-@pytest.mark.asyncio
 async def test_T_APP_017_health_must_return_a_bool(tmp_path: Path) -> None:
     async with scenario(tmp_path) as rig:
         rig.cleanup.response = "loaded"  # type: ignore[assignment]
@@ -451,3 +425,24 @@ async def test_T_APP_017_store_must_be_loaded_before_readiness(tmp_path: Path) -
         with pytest.raises(WisprError) as error:
             await service.status()
         assert error.value.error_code == ErrorCode.STORAGE_ERROR
+
+
+@pytest.mark.asyncio
+async def test_T_APP_017_real_cleanup_readiness_does_not_load() -> None:
+    requests: list[tuple[str, str]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        return httpx.Response(
+            200,
+            json={"data": [{"id": CLEANUP_ID, "state": "not-loaded"}]},
+        )
+
+    cleanup = LmStudioCleanup(
+        model_id=CLEANUP_ID, transport=httpx.MockTransport(respond)
+    )
+    try:
+        assert await cleanup.health() is False
+        assert requests == [("GET", "/api/v0/models")]
+    finally:
+        await cleanup.aclose()

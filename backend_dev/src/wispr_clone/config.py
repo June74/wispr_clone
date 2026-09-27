@@ -17,16 +17,6 @@ MODEL_POLL_S: float = 5.0
 TRACKER_S: float = 0.25
 
 
-def stt_model_path() -> Path:
-    """Return the configured Voxtral GGUF path without checking the filesystem."""
-    configured = os.environ.get("WISPR_STT_MODEL")
-    if configured:
-        return Path(configured)
-    return Path(
-        r"C:\Users\2006i\.lmstudio\models\handy-computer\Voxtral-Mini-4B-Realtime-2602-gguf\Voxtral-Mini-4B-Realtime-2602-Q4_K_M.gguf"
-    )
-
-
 def app_data_dir() -> Path:
     """Resolve the per-user application directory on demand."""
     local_app_data = os.environ.get("LOCALAPPDATA")

@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import ast
-import hashlib
 import importlib.util
 import io
 import json
-import subprocess
 import sys
 from email.message import Message
 from pathlib import Path
@@ -31,26 +29,6 @@ def checker():
     spec.loader.exec_module(module)
     yield module
     sys.modules.pop(spec.name, None)
-
-
-@pytest.mark.unit
-def test_T_OPS_001_gguf_missing_mismatch_and_matching_hash(checker, tmp_path):
-    absent = tmp_path / "absent.gguf"
-    missing = checker.check_gguf(absent)
-    assert (missing.name, missing.status, missing.ok) == ("gguf", "missing", False)
-    assert str(absent) in missing.detail
-
-    model = tmp_path / "model.gguf"
-    model.write_bytes(b"synthetic GGUF test bytes")
-    actual = hashlib.sha256(model.read_bytes()).hexdigest()
-    wrong = "0" * 64
-    mismatch = checker.check_gguf(model, expected_sha256=wrong)
-    assert (mismatch.status, mismatch.ok) == ("sha256_mismatch", False)
-    assert str(model) in mismatch.detail
-    assert actual in mismatch.detail and wrong in mismatch.detail
-
-    matching = checker.check_gguf(model, expected_sha256=actual)
-    assert (matching.status, matching.ok) == ("ok", True)
 
 
 @pytest.mark.unit
@@ -81,13 +59,13 @@ def test_T_OPS_002_lan_exposure_fails_readiness(checker, monkeypatch, capsys):
     assert calls[-1] == (("192.0.2.44", 1234), 1.0)
 
     def fake_checks(**overrides):
-        return [checker.Check("gguf", "ok", True, "synthetic"), exposed]
+        return [exposed]
 
     monkeypatch.setattr(checker, "run_checks", fake_checks)
     assert checker.main(["--json-only"]) == 1
     report = json.loads(capsys.readouterr().out)
     assert report["ready"] is False
-    assert report["checks"][1]["status"] == "exposed"
+    assert report["checks"][0]["status"] == "exposed"
 
 
 @pytest.mark.unit
@@ -229,44 +207,17 @@ def test_T_OPS_004_script_has_no_download_or_remote_control_paths():
 
 
 @pytest.mark.unit
-def test_T_OPS_005_main_json_exit_codes_skip_gpu_and_free_mib(
-    checker, monkeypatch, capsys
-):
-    def fake_run(command, **kwargs):
-        assert command == [
-            "nvidia-smi",
-            "--query-gpu=name,memory.total,memory.used,memory.free",
-            "--format=csv,noheader,nounits",
-        ]
-        return subprocess.CompletedProcess(
-            command, 0, "NVIDIA RTX 5080, 16303, 15000, 1303\n", ""
-        )
-
-    gpu = checker.check_gpu(run=fake_run)
-    assert (gpu.name, gpu.status, gpu.ok) == ("gpu", "ok", True)
-    assert "1303" in gpu.detail
-
-    def fake_checks(**overrides):
-        names = ["gguf", "lmstudio", "lan_exposure"]
-        if not overrides.get("skip_gpu", False):
-            names.append("gpu")
-        return [checker.Check(name, "ok", True, "synthetic") for name in names]
+def test_T_OPS_005_main_json_exit_codes(checker, monkeypatch, capsys):
+    def fake_checks():
+        return [checker.Check("lmstudio", "ready", True, "synthetic")]
 
     monkeypatch.setattr(checker, "run_checks", fake_checks)
     assert checker.main(["--json-only"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["ready"] is True
-    assert {row["name"] for row in report["checks"]} == {
-        "gguf",
-        "lmstudio",
-        "lan_exposure",
-        "gpu",
-    }
-    assert checker.main(["--skip-gpu", "--json-only"]) == 0
-    report = json.loads(capsys.readouterr().out)
-    assert "gpu" not in {row["name"] for row in report["checks"]}
+    assert {row["name"] for row in report["checks"]} == {"lmstudio"}
 
-    def failing_checks(**overrides):
+    def failing_checks():
         return [checker.Check("lmstudio", "not_running", False, "synthetic")]
 
     monkeypatch.setattr(checker, "run_checks", failing_checks)
