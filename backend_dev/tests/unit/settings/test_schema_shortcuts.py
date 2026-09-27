@@ -23,7 +23,7 @@ def test_T_SET_002_valid_shortcuts_are_canonical_and_round_trip(
 ) -> None:
     settings = parse_settings(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "dictation_shortcut": dictation,
             "cancel_shortcut": cancel,
         },
@@ -49,7 +49,7 @@ def test_T_SET_002_invalid_shortcut_names_only_its_field(
     field: str, shortcut: str
 ) -> None:
     with pytest.raises(WisprError) as caught:
-        parse_settings({"schema_version": 1, field: shortcut}, default_registry())
+        parse_settings({"schema_version": 2, field: shortcut}, default_registry())
     error = caught.value
     assert error.error_code == ErrorCode.VALIDATION
     assert error.where == "settings.schema"
@@ -61,7 +61,7 @@ def test_T_SET_002_invalid_shortcut_names_only_its_field(
 def test_T_SET_002_bad_shortcut_does_not_expose_typed_text(field: str) -> None:
     sentinel = "PRIVATE_SENTINEL_7e4f"
     with pytest.raises(WisprError) as caught:
-        parse_settings({"schema_version": 1, field: sentinel}, default_registry())
+        parse_settings({"schema_version": 2, field: sentinel}, default_registry())
     error = caught.value
     assert error.error_code == ErrorCode.VALIDATION
     assert error.where == "settings.schema"
@@ -75,7 +75,7 @@ def test_T_SET_002_equivalent_dictation_and_cancel_shortcuts_conflict() -> None:
     with pytest.raises(WisprError) as caught:
         parse_settings(
             {
-                "schema_version": 1,
+                "schema_version": 2,
                 "dictation_shortcut": "ctrl+shift+space",
                 "cancel_shortcut": "Ctrl + Shift + Space",
             },

@@ -21,6 +21,12 @@ _MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.AUDIO_QUEUE_OVERFLOW: "Audio could not be processed quickly enough.",
     ErrorCode.NO_SPEECH_DETECTED: "No speech was detected in this recording.",
     ErrorCode.STT_UNAVAILABLE: "Speech recognition is unavailable.",
+    ErrorCode.API_KEY_MISSING: (
+        "Add your OpenRouter API key in Models to enable dictation."
+    ),
+    ErrorCode.API_KEY_INVALID: (
+        "The OpenRouter API key was rejected. Check it in Models."
+    ),
     ErrorCode.MODEL_LOAD_FAILED: "A selected model could not be loaded.",
     ErrorCode.STT_TIMEOUT: "Speech recognition took too long.",
     ErrorCode.STT_STREAM_CLOSED: "The speech recognition session ended unexpectedly.",
@@ -55,6 +61,8 @@ _ACTIONS: dict[ErrorCode, tuple[str, ...]] = {
     ErrorCode.AUDIO_QUEUE_OVERFLOW: ("retry", "dismiss"),
     ErrorCode.NO_SPEECH_DETECTED: ("retry_stt", "dismiss"),
     ErrorCode.STT_UNAVAILABLE: ("open_settings", "retry_stt"),
+    ErrorCode.API_KEY_MISSING: ("open_settings",),
+    ErrorCode.API_KEY_INVALID: ("open_settings",),
     ErrorCode.MODEL_LOAD_FAILED: ("open_settings", "retry"),
     ErrorCode.STT_TIMEOUT: ("retry_stt", "use_original", "copy"),
     ErrorCode.STT_STREAM_CLOSED: ("retry_stt", "use_original", "copy"),

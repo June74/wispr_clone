@@ -89,7 +89,11 @@ class ModelService:
             elif stt_engine.ready:
                 ready = True
             else:
-                error_code = ErrorCode.MODEL_LOAD_FAILED.value
+                error_code = (
+                    ErrorCode.API_KEY_MISSING.value
+                    if model_id == "openai/whisper-large-v3-turbo"
+                    else ErrorCode.MODEL_LOAD_FAILED.value
+                )
         else:
             cleanup_engine = self._cleanup_for(model_id)
             if cleanup_engine is None:

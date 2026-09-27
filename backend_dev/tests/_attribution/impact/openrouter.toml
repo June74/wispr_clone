@@ -1,0 +1,7 @@
+dependency = "openrouter-service"
+kind = "service"
+import_names = ["httpx"]
+modules = ["stt.openrouter_whisper"]
+features = ["live dictation", "retry_stt"]
+error_codes = ["stt_unavailable", "stt_timeout", "api_key_missing", "api_key_invalid"]
+action = "Check the OpenRouter key in Models, credits, and status.openrouter.ai"

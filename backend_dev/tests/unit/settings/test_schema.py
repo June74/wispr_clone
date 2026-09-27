@@ -18,7 +18,8 @@ class TestCatalog:
 
     def __init__(self) -> None:
         self.models = {
-            "voxtral-mini-4b-realtime-2602": ("stt", True),
+            "openai/whisper-large-v3-turbo": ("stt", False),
+            "local-stt": ("stt", True),
             "meta-llama-3.1-8b-instruct": ("cleanup", True),
             "cloud-stt": ("stt", False),
             "cloud-cleanup": ("cleanup", False),
@@ -38,7 +39,7 @@ def schema():
 
 
 def valid_data() -> dict[str, object]:
-    return {"schema_version": 1}
+    return {"schema_version": 2}
 
 
 def assert_error(data: dict[str, object], code: ErrorCode) -> WisprError:
@@ -55,23 +56,23 @@ def test_T_SET_001_defaults_and_json_round_trip() -> None:
     from wispr_clone.models.registry import default_registry
 
     expected = {
-        "schema_version": 1,
+        "schema_version": 2,
         "recording_mode": "toggle",
         "dictation_shortcut": "ctrl+shift+space",
         "cancel_shortcut": "escape",
         "microphone_id": None,
-        "stt_model_id": "voxtral-mini-4b-realtime-2602",
+        "stt_model_id": "openai/whisper-large-v3-turbo",
         "cleanup_model_id": "meta-llama-3.1-8b-instruct",
         "cleanup_enabled": True,
         "cleanup_instructions": "",
-        "local_only": True,
+        "local_only": False,
         "theme": "light",
         "idle_jump_seconds": 1.0,
         "return_settle_seconds": 0.3,
         "destination_wait_limit_seconds": 600,
     }
     settings = module.default_settings()
-    assert module.SETTINGS_SCHEMA_VERSION == 1
+    assert module.SETTINGS_SCHEMA_VERSION == 2
     assert settings.model_dump() == expected
     assert settings.idle_jump_seconds == config.IDLE_JUMP_SECONDS
     assert settings.return_settle_seconds == config.RETURN_SETTLE_SECONDS
@@ -88,14 +89,19 @@ def test_T_SET_001_defaults_and_json_round_trip() -> None:
 @pytest.mark.parametrize(
     "field,cloud_id",
     [
-        ("stt_model_id", "cloud-stt"),
+        ("stt_model_id", "openai/whisper-large-v3-turbo"),
         ("cleanup_model_id", "cloud-cleanup"),
     ],
 )
 def test_T_SET_003_cloud_selection_respects_local_only(
     field: str, cloud_id: str
 ) -> None:
-    payload = {**valid_data(), field: cloud_id}
+    payload = {
+        **valid_data(),
+        "stt_model_id": "local-stt",
+        "local_only": True,
+        field: cloud_id,
+    }
     assert_error(payload, ErrorCode.CLOUD_MODEL_FORBIDDEN)
     accepted = schema().parse_settings({**payload, "local_only": False}, TestCatalog())
     assert getattr(accepted, field) == cloud_id
@@ -108,7 +114,7 @@ def test_T_SET_003_cloud_selection_respects_local_only(
         ("stt_model_id", "unknown"),
         ("cleanup_model_id", "unknown"),
         ("stt_model_id", "meta-llama-3.1-8b-instruct"),
-        ("cleanup_model_id", "voxtral-mini-4b-realtime-2602"),
+        ("cleanup_model_id", "local-stt"),
     ],
 )
 def test_T_SET_003_unknown_or_wrong_role_rejected(field: str, model_id: str) -> None:
@@ -124,9 +130,11 @@ def test_T_SET_004_upgrade_version_zero_without_mutating_input() -> None:
         calls.append(dict(old))
         return {**old, "schema_version": 1, "recording_mode": "hold"}
 
-    parsed = schema().parse_settings(payload, TestCatalog(), upgrade_steps={0: upgrade})
+    parsed = schema().parse_settings(
+        payload, TestCatalog(), upgrade_steps={0: upgrade, 1: schema().UPGRADE_STEPS[1]}
+    )
     assert calls == [{"schema_version": 0, "theme": "dark"}]
-    assert parsed.schema_version == 1
+    assert parsed.schema_version == 2
     assert parsed.recording_mode == "hold"
     assert parsed.theme == "dark"
     assert payload == {"schema_version": 0, "theme": "dark"}
@@ -158,8 +166,10 @@ def test_T_SET_004_upgrade_cannot_mutate_nested_input_data() -> None:
         legacy["private"] = "changed"
         return {"schema_version": 1}
 
-    parsed = schema().parse_settings(payload, TestCatalog(), upgrade_steps={0: upgrade})
-    assert parsed.schema_version == 1
+    parsed = schema().parse_settings(
+        payload, TestCatalog(), upgrade_steps={0: upgrade, 1: schema().UPGRADE_STEPS[1]}
+    )
+    assert parsed.schema_version == 2
     assert payload == {"schema_version": 0, "legacy": {"private": "original"}}
 
 
@@ -168,7 +178,7 @@ def test_T_SET_004_upgrade_cannot_mutate_nested_input_data() -> None:
     "payload",
     [
         {"schema_version": 0},
-        {"schema_version": 2},
+        {"schema_version": 3},
         {},
         {"schema_version": "1"},
         {"schema_version": True},

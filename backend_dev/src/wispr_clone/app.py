@@ -42,6 +42,11 @@ from wispr_clone.pipeline.insertion_protocol import InsertionProtocol
 from wispr_clone.pipeline.run_controller import RunController, RunServices
 from wispr_clone.pipeline.state_machine import RunEvent, RunState, transition
 from wispr_clone.settings.schema import Settings
+from wispr_clone.settings.secret_store import (
+    DpapiSecretStore,
+    MemorySecretStore,
+    SecretStore,
+)
 from wispr_clone.settings.store import SettingsStore
 from wispr_clone.storage.db import Database
 from wispr_clone.stt.base import SttEngine
@@ -77,16 +82,25 @@ class AppFactories:
     webview: Callable[[], Any] | None
     clock: Callable[[], float]
     monotonic: Callable[[], float]
+    secret_store: Callable[[], SecretStore] | None = None
 
 
 def real_factories() -> AppFactories:
     """Create lazy adapters; platform libraries load only when a factory is used."""
 
+    secrets_store: SecretStore = (
+        MemorySecretStore()
+        if "--self-test" in sys.argv or os.name != "nt"
+        else DpapiSecretStore(config.app_data_dir() / "secrets")
+    )
+
     def stt(settings: Settings) -> SttEngine:
         del settings
-        from wispr_clone.stt.voxtral_transcribe_cpp import VoxtralTranscribeCpp
+        from wispr_clone.stt.openrouter_whisper import OpenRouterWhisper
 
-        return VoxtralTranscribeCpp(config.stt_model_path())
+        return OpenRouterWhisper(
+            api_key=lambda: secrets_store.get("openrouter_api_key")
+        )
 
     def cleanup(model_id: str) -> CleanupEngine:
         return LmStudioCleanup(model_id=model_id, base_url=config.LM_STUDIO_ENDPOINT)
@@ -131,6 +145,7 @@ def real_factories() -> AppFactories:
         webview=webview_factory,
         clock=time.time,
         monotonic=time.monotonic,
+        secret_store=lambda: secrets_store,
     )
 
 
@@ -279,6 +294,7 @@ class App:
         self._webview_module: Any = None
         self._hud: Any = None
         self._settings: Settings | None = None
+        self._secret_store: SecretStore | None = None
         self._api: Api | None = None
         self._hotkey: HotkeyService | None = None
         self._listener: ListenerLike | None = None
@@ -345,6 +361,13 @@ class App:
         registry = default_registry()
         store = SettingsStore(self._db, registry)
         self._settings = await store.load()
+        self._secret_store = (
+            self.factories.secret_store()
+            if self.factories.secret_store is not None
+            else MemorySecretStore()
+            if "--self-test" in sys.argv or os.name != "nt"
+            else DpapiSecretStore(config.app_data_dir() / "secrets")
+        )
         if self._stopping:
             return
         self.startup_log.append("settings")
@@ -438,6 +461,8 @@ class App:
             self._controller,
             session_token=lambda: self.api.session_token,
             readiness=readiness,
+            secret_store=self._secret_store,
+            model_service=model_service,
         )
         commands: dict[str, CommandSpec] = {}
         commands.update(self._run_commands.specs())

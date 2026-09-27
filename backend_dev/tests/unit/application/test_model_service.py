@@ -28,7 +28,7 @@ from wispr_clone.storage.migrations import (
 )
 from wispr_clone.stt.voxtral_transcribe_cpp import VoxtralTranscribeCpp
 
-STT_ID = "voxtral-mini-4b-realtime-2602"
+STT_ID = "openai/whisper-large-v3-turbo"
 CLEANUP_ID = "meta-llama-3.1-8b-instruct"
 OTHER_LOCAL_ID = "other-local-cleanup"
 OTHER_STT_ID = "other-local-stt"
@@ -196,6 +196,7 @@ async def test_T_APP_006_cloud_selection_and_test_are_blocked_without_contact(
     tmp_path: Path,
 ) -> None:
     async with scenario(tmp_path) as rig:
+        await rig.store.update({"stt_model_id": OTHER_STT_ID, "local_only": True})
         original = rig.store.current().model_dump(mode="json")
         for operation in (rig.service.select, rig.service.test):
             with pytest.raises(WisprError) as error:
@@ -212,7 +213,7 @@ async def test_T_APP_013_status_and_test_readiness_codes(tmp_path: Path) -> None
     async with scenario(tmp_path) as rig:
         rig.stt.ready = False
         assert await rig.service.status() == [
-            item(STT_ID, "stt", False, "model_load_failed"),
+            item(STT_ID, "stt", False, "api_key_missing"),
             item(CLEANUP_ID, "cleanup", True),
         ]
         rig.stt_engines.clear()
@@ -322,6 +323,11 @@ async def test_T_APP_016_model_commands_session_deadline_and_error_codes(
         forbidden = await api.call(
             "models_test", {"session_token": "session-1", "model_id": CLOUD_ID}
         )
+        assert forbidden.ok and forbidden.data == item(CLOUD_ID, "cleanup", True)
+        await rig.store.update({"stt_model_id": OTHER_STT_ID, "local_only": True})
+        forbidden = await api.call(
+            "models_test", {"session_token": "session-1", "model_id": CLOUD_ID}
+        )
         assert forbidden.error == ErrorCode.CLOUD_MODEL_FORBIDDEN
 
 
@@ -411,6 +417,7 @@ async def test_T_APP_017_local_only_toggle_and_registered_role(tmp_path: Path) -
         stt_result = await rig.service.select(OTHER_STT_ID)
         assert stt_result["settings"]["stt_model_id"] == OTHER_STT_ID
         assert rig.store.current().cleanup_model_id == CLEANUP_ID
+        await rig.store.update({"local_only": True})
         await rig.store.update({"local_only": False})
         selected = await rig.service.select(CLOUD_ID)
         assert selected["settings"]["cleanup_model_id"] == CLOUD_ID

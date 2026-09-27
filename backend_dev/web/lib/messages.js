@@ -15,6 +15,8 @@ export const messages = Object.freeze({
   audio_queue_overflow: 'Audio could not be processed quickly enough.',
   no_speech_detected: 'No speech was detected in this recording.',
   stt_unavailable: 'Speech recognition is unavailable.',
+  api_key_missing: 'Add your OpenRouter API key in Models to enable dictation.',
+  api_key_invalid: 'The OpenRouter API key was rejected. Check it in Models.',
   model_load_failed: 'A selected model could not be loaded.',
   stt_timeout: 'Speech recognition took too long.',
   stt_stream_closed: 'The speech recognition session ended unexpectedly.',
