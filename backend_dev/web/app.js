@@ -252,6 +252,9 @@ document.addEventListener('keydown', (event) => {
 });
 window.addEventListener('storage', applyTheme);
 
+// Land on General; no page is marked active in the markup.
+page('home');
+
 (async () => {
   if (!bridge.available()) { render(); $('#title-status').innerHTML = '<span class="status-dot warning"></span>Not connected'; $('#rec-btn').disabled = true; await whenHostReady(window); }
   const result = await bridge.reconnect();

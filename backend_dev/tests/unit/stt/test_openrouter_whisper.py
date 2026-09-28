@@ -4,6 +4,8 @@ import array
 import base64
 import io
 import json
+import math
+import struct
 import wave
 from pathlib import Path
 
@@ -25,7 +27,20 @@ def make_engine(handler, *, key=FAKE_KEY, **options):
 
 
 def samples() -> array.array[float]:
-    return array.array("f", [0.0, 0.5, -0.5, 0.25])
+    """0.5 s silence, 1 s of a 440 Hz tone (stands in for speech), 0.5 s silence."""
+    silence = [0.0] * 8_000
+    tone = [0.5 * math.sin(2 * math.pi * 440 * i / 16_000) for i in range(16_000)]
+    return array.array("f", silence + tone + silence)
+
+
+def speech_pcm() -> bytes:
+    return b"".join(
+        struct.pack("<h", max(-32768, min(32767, round(v * 32768)))) for v in samples()
+    )
+
+
+# Speech-gate trim: 1 s of tone plus 0.3 s before and 0.4 s after it.
+TRIMMED_FRAMES = 16_000 + 4_800 + 6_400
 
 
 @pytest.mark.unit
@@ -71,8 +86,10 @@ async def test_T_STT_020_request_shape_and_wav(language: str | None) -> None:
             2,
             16_000,
         )
-        assert reader.getnframes() == 4
-        assert reader.readframes(4) == b"\x00\x00\x00@\x00\xc0\x00 "
+        assert reader.getnframes() == TRIMMED_FRAMES
+        frames = reader.readframes(TRIMMED_FRAMES)
+    start = (8_000 - 4_800) * 2
+    assert frames == speech_pcm()[start : start + TRIMMED_FRAMES * 2]
     await engine.close()
 
 
@@ -194,14 +211,13 @@ async def test_T_STT_024_replay_validation_https_and_no_redirect(
     valid = tmp_path / "valid.wav"
     with wave.open(str(valid), "wb") as writer:
         writer.setparams((1, 2, 16_000, 0, "NONE", "not compressed"))
-        writer.writeframes(b"\x00\x00\x00@")
+        writer.writeframes(speech_pcm())
     with pytest.raises(ThirdPartyError):
         await engine.transcribe_file(valid)
     assert len(requests) == 1
-    assert (
-        base64.b64decode(json.loads(requests[0].content)["input_audio"]["data"])
-        == valid.read_bytes()
-    )
+    sent = base64.b64decode(json.loads(requests[0].content)["input_audio"]["data"])
+    with wave.open(io.BytesIO(sent), "rb") as reader:
+        assert reader.getnframes() == TRIMMED_FRAMES
     for channels, width, rate in ((2, 2, 16_000), (1, 1, 16_000), (1, 2, 8_000)):
         invalid = tmp_path / f"invalid-{channels}-{width}-{rate}.wav"
         with wave.open(str(invalid), "wb") as writer:
@@ -235,4 +251,20 @@ async def test_T_STT_020_switching_model_changes_provider_routing() -> None:
         ("deepgram/nova-3", {"data_collection": "deny"}),
         (MODEL, {"only": ["deepinfra"], "allow_fallbacks": False}),
     ]
+    await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_T_STT_032_silent_recording_is_not_sent() -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"text": "Thank you."})
+
+    engine = make_engine(respond)
+    session = engine.start_session()
+    session.push_audio(array.array("f", [0.0] * 32_000))
+    assert await session.finish() == ""
+    assert requests == []
     await engine.close()

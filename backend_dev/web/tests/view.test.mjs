@@ -38,3 +38,12 @@ test('waveform moves only for a recent recording level', () => {
   assert.equal(waveformActive('processing', 900, 1000), false);
   assert.equal(waveformActive('awaiting_destination', 900, 1000), false);
 });
+
+test('T-WEB-022: the window opens on the General page', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const app = await readFile(new URL('../app.js', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(html, /id="page-home"/);
+  // Selected before the backend connection is awaited, so the page is never blank.
+  assert.ok(app.indexOf("page('home');") > -1 && app.indexOf("page('home');") < app.indexOf('await whenHostReady(window)'));
+});
