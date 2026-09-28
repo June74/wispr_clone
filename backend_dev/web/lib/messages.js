@@ -18,6 +18,7 @@ export const messages = Object.freeze({
   api_key_missing: 'Add your OpenRouter API key in Models to enable dictation.',
   api_key_invalid: 'The OpenRouter API key was rejected. Check it in Models.',
   model_load_failed: 'A selected model could not be loaded.',
+  model_loading: 'Loading the model in LM Studio…',
   stt_timeout: 'Speech recognition took too long.',
   stt_stream_closed: 'The speech recognition session ended unexpectedly.',
   cleanup_unavailable: 'Text cleanup is unavailable.',

@@ -1,15 +1,26 @@
 """Metadata-only model registry with local endpoint boundary checks."""
 
 import ipaddress
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 from urllib.parse import urlsplit
 
 from wispr_clone import config
 from wispr_clone.contracts.common import ErrorCode, WisprError
 
 ModelRole = Literal["stt", "cleanup"]
+
+# Models picked from a live list (OpenRouter transcription models, LM Studio
+# downloads) are not registered here. Their identifiers are accepted by shape,
+# and the role decides where they run: speech in the cloud, cleanup locally.
+_DISCOVERED_ID = {
+    "stt": re.compile(r"[a-z0-9][a-z0-9._-]*/[A-Za-z0-9._:-]+"),
+    "cleanup": re.compile(r"[A-Za-z0-9][A-Za-z0-9._@:/-]*"),
+}
+_DISCOVERED_LOCAL = {"stt": False, "cleanup": True}
+_MAX_ID_LENGTH = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +79,37 @@ class ModelRegistry:
         """Return whether a known model is local; unknown identifiers are false."""
         model = self.get(model_id)
         return model.local if model is not None else False
+
+    def accepts(self, role: str, model_id: str) -> bool:
+        """Whether an unregistered identifier is well-formed for a role."""
+        pattern = _DISCOVERED_ID.get(role)
+        return (
+            pattern is not None
+            and len(model_id) <= _MAX_ID_LENGTH
+            and ".." not in model_id
+            and pattern.fullmatch(model_id) is not None
+        )
+
+    def is_local_role(self, role: str) -> bool:
+        """Where an unregistered model of this role runs."""
+        return _DISCOVERED_LOCAL.get(role, False)
+
+    def resolve(self, role: str, model_id: str) -> ModelInfo | None:
+        """Registered metadata, or metadata for a well-formed discovered id."""
+        model = self.get(model_id)
+        if model is not None:
+            return model if model.role == role else None
+        if not self.accepts(role, model_id):
+            return None
+        local = self.is_local_role(role)
+        return ModelInfo(
+            model_id,
+            cast(ModelRole, role),
+            model_id,
+            local,
+            "lmstudio" if local else "openrouter",
+            config.LM_STUDIO_ENDPOINT if local else config.OPENROUTER_ENDPOINT,
+        )
 
 
 def is_loopback_endpoint(url: str) -> bool:

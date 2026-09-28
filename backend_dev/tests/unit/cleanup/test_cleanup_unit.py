@@ -399,3 +399,34 @@ async def test_T_CLN_008_closed_engine_cannot_issue_another_request():
         assert len(calls) == 2
     finally:
         await engine.aclose()
+
+
+@pytest.mark.asyncio
+async def test_T_CLN_020_app_endpoint_with_v1_suffix_is_not_doubled() -> None:
+    """Regression: the app passes config.LM_STUDIO_ENDPOINT (".../v1")."""
+    from wispr_clone import config
+    from wispr_clone.cleanup.base import CleanupRequest
+    from wispr_clone.cleanup.lmstudio_cleanup import LmStudioCleanup
+
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path == "/api/v0/models":
+            return httpx.Response(
+                200,
+                json={"data": [{"id": config.LM_STUDIO_MODEL_ID, "state": "loaded"}]},
+            )
+        if request.url.path == "/v1/chat/completions":
+            return httpx.Response(
+                200, json={"choices": [{"message": {"content": "Hi."}}]}
+            )
+        return httpx.Response(404)
+
+    engine = LmStudioCleanup(
+        base_url=config.LM_STUDIO_ENDPOINT, transport=httpx.MockTransport(handler)
+    )
+    assert await engine.health() is True
+    assert await engine.clean(CleanupRequest(text="hi")) == "Hi."
+    assert paths == ["/api/v0/models", "/api/v0/models", "/v1/chat/completions"]
+    await engine.aclose()

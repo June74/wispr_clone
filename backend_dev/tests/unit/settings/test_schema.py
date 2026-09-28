@@ -270,3 +270,33 @@ def test_T_SET_005_microphone_id_length_boundaries_are_valid(
         {**valid_data(), "microphone_id": microphone_id}, TestCatalog()
     )
     assert parsed.microphone_id == microphone_id
+
+
+@pytest.mark.unit
+def test_T_SET_020_discovered_models_validate_by_role_and_locality() -> None:
+    from wispr_clone.models.registry import default_registry
+
+    parse = schema().parse_settings
+    registry = default_registry()
+    picked = parse(
+        {
+            **valid_data(),
+            "stt_model_id": "deepgram/nova-3",
+            "cleanup_model_id": "qwen/qwen3-8b",
+        },
+        registry,
+    )
+    assert (picked.stt_model_id, picked.cleanup_model_id) == (
+        "deepgram/nova-3",
+        "qwen/qwen3-8b",
+    )
+    with pytest.raises(WisprError) as caught:
+        parse({**valid_data(), "stt_model_id": "no-vendor"}, registry)
+    assert caught.value.error_code == ErrorCode.VALIDATION
+    # Speech is always a cloud model, so local-only still refuses it.
+    with pytest.raises(WisprError) as caught:
+        parse(
+            {**valid_data(), "local_only": True, "stt_model_id": "deepgram/nova-3"},
+            registry,
+        )
+    assert caught.value.error_code == ErrorCode.CLOUD_MODEL_FORBIDDEN

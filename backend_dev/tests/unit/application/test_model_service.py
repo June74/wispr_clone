@@ -15,7 +15,7 @@ from wispr_clone.application.api import Api
 from wispr_clone.application.commands.model_commands import ModelCommands
 from wispr_clone.application.model_service import ModelService
 from wispr_clone.cleanup.lmstudio_cleanup import LmStudioCleanup
-from wispr_clone.contracts.common import ErrorCode, WisprError
+from wispr_clone.contracts.common import ErrorCode, ThirdPartyError, WisprError
 from wispr_clone.history.repo import HistoryRepo
 from wispr_clone.models.registry import ModelInfo, ModelRegistry, default_registry
 from wispr_clone.settings.store import SettingsStore
@@ -446,3 +446,104 @@ async def test_T_APP_017_real_cleanup_readiness_does_not_load() -> None:
         assert requests == [("GET", "/api/v0/models")]
     finally:
         await cleanup.aclose()
+
+
+@pytest.mark.asyncio
+async def test_T_APP_049_catalog_lists_live_models_and_keeps_current_choice(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+
+        async def stt_models() -> list[dict[str, object]]:
+            return [{"model_id": "deepgram/nova-3", "display_name": "Nova-3"}]
+
+        async def cleanup_models() -> list[dict[str, object]]:
+            raise ThirdPartyError(
+                "lmstudio", "models", "connect", ErrorCode.CLEANUP_UNAVAILABLE
+            )
+
+        rig.service._list_stt = stt_models
+        rig.service._list_cleanup = cleanup_models
+        catalog = await rig.service.catalog()
+        # The saved choice is listed first and flagged when the provider dropped it.
+        assert catalog["stt"] == {
+            "models": [
+                {
+                    "model_id": STT_ID,
+                    "display_name": "Whisper Large v3 Turbo (DeepInfra)",
+                    "missing": True,
+                },
+                {"model_id": "deepgram/nova-3", "display_name": "Nova-3"},
+            ],
+            "error_code": None,
+        }
+        assert catalog["cleanup"] == {
+            "models": [
+                {
+                    "model_id": CLEANUP_ID,
+                    "display_name": "Llama 3.1 8B Instruct",
+                    "missing": False,
+                },
+            ],
+            "error_code": "cleanup_unavailable",
+        }
+
+
+@pytest.mark.asyncio
+async def test_T_APP_050_select_discovered_model_by_role(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as rig:
+        result = await rig.service.select("qwen/qwen3-8b", "cleanup")
+        assert result["settings"]["cleanup_model_id"] == "qwen/qwen3-8b"
+        await rig.service.select("deepgram/nova-3", "stt")
+        assert rig.store.current().stt_model_id == "deepgram/nova-3"
+        with pytest.raises(WisprError) as error:
+            await rig.service.select("no-vendor", "stt")
+        assert error.value.error_code == ErrorCode.VALIDATION
+        # Without a role only registered models can be chosen, as before.
+        with pytest.raises(WisprError):
+            await rig.service.select("qwen/qwen3-8b")
+
+
+@pytest.mark.asyncio
+async def test_T_APP_051_keeps_cleanup_model_loaded_and_backs_off(
+    tmp_path: Path,
+) -> None:
+    async with scenario(tmp_path) as rig:
+        now = [100.0]
+        loads: list[str] = []
+        seen_while_loading: list[object] = []
+        outcome: list[object] = [True]
+
+        async def load(model_id: str) -> bool:
+            loads.append(model_id)
+            rig.cleanup.response = False
+            seen_while_loading.append((await rig.service.status())[1]["error_code"])
+            result = outcome[0]
+            if isinstance(result, Exception):
+                raise result
+            rig.cleanup.response = True
+            return bool(result)
+
+        rig.service._load_cleanup = load
+        rig.service._clock = lambda: now[0]
+        await rig.service.keep_cleanup_loaded()
+        assert loads == [CLEANUP_ID]
+        assert seen_while_loading == ["model_loading"]
+        assert rig.events.by_name("models:status")[-1]["models"][1]["ready"] is True
+
+        outcome[0] = ThirdPartyError(
+            "lmstudio", "load", "http 500", ErrorCode.MODEL_LOAD_FAILED
+        )
+        await rig.service.keep_cleanup_loaded()
+        await rig.service.keep_cleanup_loaded()  # inside the retry window: skipped
+        assert len(loads) == 2
+        await rig.service.keep_cleanup_loaded(force=True)  # a new selection retries now
+        assert len(loads) == 3
+        now[0] += 61
+        outcome[0] = True
+        await rig.service.keep_cleanup_loaded()
+        assert len(loads) == 4
+
+        await rig.store.update({"cleanup_enabled": False})
+        await rig.service.keep_cleanup_loaded(force=True)
+        assert len(loads) == 4

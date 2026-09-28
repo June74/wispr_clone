@@ -20,7 +20,20 @@ class ModelCommands:
             "models_status": CommandSpec(self._status, mutating=False),
             "models_test": CommandSpec(self._test, mutating=False),
             "models_select": CommandSpec(self._select, mutating=True),
+            "models_catalog": CommandSpec(self._catalog, mutating=False),
         }
+
+    async def _catalog(self, _: Mapping[str, object]) -> Mapping[str, object]:
+        return await self._service.catalog()
+
+    @staticmethod
+    def _role(payload: Mapping[str, object]) -> str | None:
+        role = payload.get("role")
+        if role is None:
+            return None
+        if role not in ("stt", "cleanup"):
+            raise WisprError(ErrorCode.VALIDATION, "models", "role") from None
+        return str(role)
 
     async def _status(self, _: Mapping[str, object]) -> Mapping[str, object]:
         return {"models": await self._service.status()}
@@ -29,10 +42,10 @@ class ModelCommands:
         model_id = payload.get("model_id")
         if not isinstance(model_id, str):
             raise WisprError(ErrorCode.VALIDATION, "models", "model_id") from None
-        return await self._service.test(model_id)
+        return await self._service.test(model_id, self._role(payload))
 
     async def _select(self, payload: Mapping[str, object]) -> Mapping[str, object]:
         model_id = payload.get("model_id")
         if not isinstance(model_id, str):
             raise WisprError(ErrorCode.VALIDATION, "models", "model_id") from None
-        return await self._service.select(model_id)
+        return await self._service.select(model_id, self._role(payload))

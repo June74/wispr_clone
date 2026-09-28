@@ -1,4 +1,5 @@
 import { createBridge, whenHostReady } from './lib/bridge.js';
+import { catalogNote, modelBadge, pickerOptions } from './lib/models.js';
 import { createStore, applyEvent, acceptsEvent } from './lib/store.js';
 import { hudState, shouldToastInserted, recoveryButtons } from './lib/view.js';
 import { messageFor } from './lib/messages.js';
@@ -33,6 +34,7 @@ function applyTheme() {
   $$('#theme-seg [data-theme-set]').forEach((button) => button.setAttribute('aria-checked', String(button.dataset.themeSet === theme)));
 }
 function page(id) {
+  if (id === 'models') void refreshCatalog();
   $$('.page').forEach((el) => el.classList.toggle('is-active', el.id === `page-${id}`));
   $$('.nav-item[data-page]').forEach((el) => el.dataset.page === id ? el.setAttribute('aria-current', 'page') : el.removeAttribute('aria-current'));
   const active = $(`#page-${id}`); if (active) { $('#crumb').textContent = active.dataset.title; $('#main').scrollTop = 0; }
@@ -59,16 +61,28 @@ function renderDictionary() {
   body.innerHTML = rows.map((entry) => `<tr><td class="term">${esc(entry.spelling)}</td><td><div class="chips">${(entry.aliases ?? []).map((alias) => `<span class="chip">${esc(alias)}</span>`).join('') || '<span class="faint">—</span>'}</div></td><td class="faint"></td><td class="actions"><div><button class="btn btn-ghost btn-icon btn-sm" aria-label="Edit ${esc(entry.spelling)}" data-edit-term="${esc(entry.id)}">${icon('pencil')}</button><button class="btn btn-ghost btn-icon btn-sm danger" aria-label="Delete ${esc(entry.spelling)}" data-delete-term="${esc(entry.id)}">${icon('trash')}</button></div></td></tr>`).join('');
   $('#dict-empty').hidden = rows.length > 0; $('.table thead').style.display = rows.length ? '' : 'none'; $('#dict-count').textContent = state.dictionary.length;
 }
+// Live model lists (OpenRouter speech models, LM Studio downloads), fetched when the page opens.
+let modelCatalog = null;
+async function refreshCatalog() {
+  const result = await bridge.call('models_catalog');
+  if (result?.ok) { modelCatalog = result.data; renderModels(); }
+}
 function renderModels() {
   $$('.model-card').forEach((card) => {
     const role = card.dataset.model === 'cleanup' ? 'cleanup' : 'stt';
     const model = state.models.find((item) => item.role === role);
+    const current = model?.model_id ?? state.settings?.[`${role}_model_id`];
     const badge = $('[data-status]', card);
     const select = $('[data-select]', card);
-    if (select) { select.replaceChildren(); const option = document.createElement('option'); option.value = model?.model_id ?? ''; option.textContent = role === 'stt' ? 'Whisper Large v3 Turbo (DeepInfra)' : model?.model_id ?? 'Unavailable'; select.append(option); select.disabled = true; }
-    const modelId = $('[data-model-id]', card); if (modelId) modelId.textContent = model?.model_id ?? '';
-    const where = $('[data-where]', card); if (where && role === 'stt') where.textContent = 'Leaves this device';
-    if (badge && model) { badge.className = `badge ${model.ready ? 'success' : 'danger'}`; badge.textContent = model.ready ? 'Ready' : messageFor(model.error_code); }
+    if (select && document.activeElement !== select) {
+      select.replaceChildren(...pickerOptions(role, modelCatalog, current).map((item) => { const option = document.createElement('option'); option.value = item.value; option.textContent = item.label; option.selected = item.selected; return option; }));
+      // Speech recognition is always a cloud model, so local-only mode locks its picker.
+      select.disabled = !modelCatalog || (role === 'stt' && Boolean(state.settings?.local_only));
+    }
+    const modelId = $('[data-model-id]', card); if (modelId) modelId.textContent = current ?? '';
+    const where = $('[data-where]', card); if (where) where.textContent = role === 'stt' ? 'Leaves this device' : 'On this device (LM Studio)';
+    const note = $('[data-catalog-note]', card); if (note) note.textContent = catalogNote(role, modelCatalog);
+    if (badge) { const view = modelBadge(model, messageFor); badge.className = `badge ${view.tone}`; badge.textContent = view.text; }
   });
   const dot = $('.nav-item[data-page="models"] .status-dot');
   if (dot) dot.hidden = !state.models.some((item) => !item.ready);
@@ -222,7 +236,15 @@ $$('[data-goto]').forEach((button) => button.addEventListener('click', () => pag
 $('#sidebar-toggle')?.addEventListener('click', () => { document.documentElement.dataset.sidebar = 'collapsed'; localStorage.setItem('wc-sidebar', 'collapsed'); });
 $('#side-logo')?.addEventListener('click', () => { const open = document.documentElement.dataset.sidebar === 'collapsed'; document.documentElement.dataset.sidebar = open ? '' : 'collapsed'; localStorage.setItem('wc-sidebar', open ? 'open' : 'collapsed'); });
 $$('[data-page]').forEach((button) => button.addEventListener('click', () => page(button.dataset.page)));
-$$('[data-model]').forEach((card) => { $('[data-test]', card)?.addEventListener('click', async () => { const model = state.models.find((item) => item.role === (card.dataset.model === 'cleanup' ? 'cleanup' : 'stt')); if (model) { const result = await bridge.call('models_test', { model_id: model.model_id }); if (failed(result)) return; toast(result.data.ready ? 'success' : 'warning', result.data.ready ? 'Model ready' : messageFor(result.data.error_code)); } }); });
+$$('[data-model]').forEach((card) => {
+  const role = card.dataset.model === 'cleanup' ? 'cleanup' : 'stt';
+  $('[data-test]', card)?.addEventListener('click', async () => { const model = state.models.find((item) => item.role === role); if (model) { const result = await bridge.call('models_test', { model_id: model.model_id, role }); if (failed(result)) return; toast(result.data.ready ? 'success' : 'warning', result.data.ready ? 'Model ready' : messageFor(result.data.error_code)); } });
+  $('[data-select]', card)?.addEventListener('change', async (event) => {
+    const result = await bridge.call('models_select', { model_id: event.target.value, role });
+    if (!failed(result)) { state.settings = result.data.settings; state.models = result.data.models; toast('success', 'Model changed', role === 'cleanup' ? 'LM Studio is loading it if needed.' : 'Used from your next dictation.'); }
+    event.target.blur(); render();
+  });
+});
 
 document.addEventListener('keydown', (event) => {
   if (event.ctrlKey && !event.altKey && !event.shiftKey && event.code === 'KeyB') { event.preventDefault(); $('#side-logo')?.click(); }

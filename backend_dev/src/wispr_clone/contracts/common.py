@@ -27,6 +27,7 @@ class ErrorCode(StrEnum):
     API_KEY_MISSING = "api_key_missing"
     API_KEY_INVALID = "api_key_invalid"
     MODEL_LOAD_FAILED = "model_load_failed"
+    MODEL_LOADING = "model_loading"
     STT_TIMEOUT = "stt_timeout"
     STT_STREAM_CLOSED = "stt_stream_closed"
     CLEANUP_UNAVAILABLE = "cleanup_unavailable"

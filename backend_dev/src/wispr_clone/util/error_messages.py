@@ -28,6 +28,7 @@ _MESSAGES: dict[ErrorCode, str] = {
         "The OpenRouter API key was rejected. Check it in Models."
     ),
     ErrorCode.MODEL_LOAD_FAILED: "A selected model could not be loaded.",
+    ErrorCode.MODEL_LOADING: "Loading the model in LM Studio…",
     ErrorCode.STT_TIMEOUT: "Speech recognition took too long.",
     ErrorCode.STT_STREAM_CLOSED: "The speech recognition session ended unexpectedly.",
     ErrorCode.CLEANUP_UNAVAILABLE: "Text cleanup is unavailable.",
@@ -64,6 +65,7 @@ _ACTIONS: dict[ErrorCode, tuple[str, ...]] = {
     ErrorCode.API_KEY_MISSING: ("open_settings",),
     ErrorCode.API_KEY_INVALID: ("open_settings",),
     ErrorCode.MODEL_LOAD_FAILED: ("open_settings", "retry"),
+    ErrorCode.MODEL_LOADING: ("wait",),
     ErrorCode.STT_TIMEOUT: ("retry_stt", "use_original", "copy"),
     ErrorCode.STT_STREAM_CLOSED: ("retry_stt", "use_original", "copy"),
     ErrorCode.CLEANUP_UNAVAILABLE: ("retry_cleanup", "use_original", "copy"),

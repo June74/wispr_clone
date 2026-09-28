@@ -43,7 +43,9 @@ class LmStudioCleanup:
     ) -> None:
         if not _is_loopback_endpoint(base_url):
             raise WisprError(ErrorCode.NON_LOOPBACK_ENDPOINT, "cleanup", "endpoint")
-        self._base_url = base_url.rstrip("/")
+        # Paths below include their API prefix; accept the OpenAI-style ".../v1"
+        # endpoint from config without doubling it (".../v1/api/v0/models").
+        self._base_url = base_url.rstrip("/").removesuffix("/v1")
         self._model_id = model_id
         self._timeout = httpx.Timeout(timeout_s)
         self._transport = transport
