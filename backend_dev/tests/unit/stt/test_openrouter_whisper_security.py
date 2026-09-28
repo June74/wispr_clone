@@ -2,6 +2,7 @@
 
 import array
 import logging
+import math
 
 import httpx
 import pytest
@@ -24,7 +25,7 @@ async def test_T_STT_025_transport_error_does_not_retain_key_in_exception_graph(
         api_key=lambda: FAKE_KEY, transport=httpx.MockTransport(fail)
     )
     session = engine.start_session()
-    session.push_audio(array.array("f", [0.25]))
+    session.push_audio(array.array("f", [0.5 * math.sin(i / 3) for i in range(16_000)]))
     with caplog.at_level(logging.DEBUG):
         with pytest.raises(ThirdPartyError) as caught:
             await session.finish()

@@ -16,6 +16,7 @@ import httpx
 from wispr_clone.contracts.common import ErrorCode, ThirdPartyError, WisprError
 
 from .base import SAMPLE_RATE, SttSession, TextCallback
+from .speech_gate import drop_hallucination, find_speech
 
 # Providers pinned per model (fallback disabled). Other models are routed by
 # OpenRouter to providers that do not collect data.
@@ -163,6 +164,14 @@ class OpenRouterWhisper:
     async def _transcribe_wav(self, data: bytes) -> str:
         return await self._send(data)
 
+    async def _transcribe_pcm(self, pcm: bytes) -> str:
+        """Send only the speech; silence alone is never sent (see speech_gate)."""
+        speech = find_speech(pcm, SAMPLE_RATE)
+        if speech is None:
+            return ""
+        text = await self._transcribe_wav(_wav_bytes(speech.pcm))
+        return drop_hallucination(text, speech.speech_s)
+
     def start_session(self, on_text: TextCallback | None = None) -> SttSession:
         del on_text
         with self._lock:
@@ -194,7 +203,7 @@ class OpenRouterWhisper:
             invalid_wav = False
         if invalid_wav:
             raise WisprError(ErrorCode.VALIDATION, "stt", "wav format") from None
-        return await self._transcribe_wav(_wav_bytes(data))
+        return await self._transcribe_pcm(data)
 
     async def close(self) -> None:
         if self._client is not None:
@@ -238,7 +247,7 @@ class _BufferSession:
         if sys.byteorder != "little":
             samples.byteswap()
         try:
-            return await self.owner._transcribe_wav(_wav_bytes(samples.tobytes()))
+            return await self.owner._transcribe_pcm(samples.tobytes())
         finally:
             self.owner._release(self)
 
