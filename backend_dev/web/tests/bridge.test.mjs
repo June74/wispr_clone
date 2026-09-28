@@ -46,3 +46,41 @@ test('T-WEB-006: previous-session rejection refreshes once without replay', asyn
   assert.deepEqual(calls.map((call) => call.name), ['state_get', 'run_cancel', 'state_get']);
   assert.deepEqual(calls.at(-1).payload, {});
 });
+
+test('T-WEB-018: title-bar commands go straight to the host without a session token', async () => {
+  const calls = [];
+  const bridge = createBridge(async (name, payload) => { calls.push({ name, payload }); return { ok: true, data: null, error: null }; });
+  for (const name of ['window_drag', 'window_minimize', 'window_toggle_maximize', 'window_close']) {
+    assert.deepEqual(await bridge.window(name), { ok: true, data: null, error: null });
+  }
+  assert.deepEqual(calls.map((call) => call.name), ['window_drag', 'window_minimize', 'window_toggle_maximize', 'window_close']);
+  assert.ok(calls.every((call) => Object.keys(call.payload).length === 0));
+  assert.deepEqual(await bridge.window('history_delete_all'), { ok: false, data: null, error: 'unknown_command' });
+  assert.equal(calls.length, 4);
+});
+
+test('T-WEB-019: launch-at-login changes carry a deadline like other mutations', async () => {
+  const calls = [];
+  const bridge = createBridge(async (name, payload) => { calls.push({ name, payload }); return name === 'state_get' ? { ok: true, data: { session_token: 's' }, error: null } : { ok: true, data: {}, error: null }; }, { now: () => 1000 });
+  await bridge.call('autostart_get');
+  await bridge.call('autostart_set', { enabled: true });
+  assert.deepEqual(calls.slice(1), [
+    { name: 'autostart_get', payload: { session_token: 's' } },
+    { name: 'autostart_set', payload: { enabled: true, session_token: 's', deadline: 11 } },
+  ]);
+});
+
+test('T-WEB-020: the page waits for pywebviewready when the host API arrives late', async () => {
+  const { whenHostReady } = await import('../lib/bridge.js');
+  await whenHostReady({ pywebview: { api: { call() {} } } });
+  const listeners = [];
+  const host = { addEventListener: (name, listener, options) => listeners.push({ name, listener, options }) };
+  let ready = false;
+  const waiting = whenHostReady(host).then(() => { ready = true; });
+  await Promise.resolve();
+  assert.equal(ready, false);
+  assert.deepEqual(listeners.map(({ name, options }) => ({ name, options })), [{ name: 'pywebviewready', options: { once: true } }]);
+  listeners[0].listener();
+  await waiting;
+  assert.equal(ready, true);
+});

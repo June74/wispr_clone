@@ -1,6 +1,6 @@
 dependency = "pywebview"
 kind = "library"
-modules = ["app", "ui.overlay", "ui.native_hud"]
+modules = ["app", "ui.overlay", "ui.native_hud", "ui.windows"]
 import_names = ["webview", "System", "clr"]  # System/clr = pythonnet, the pywebview Windows backend
 features = ["settings window", "HUD"]
 error_codes = ["storage_error"]

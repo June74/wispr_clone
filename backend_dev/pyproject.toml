@@ -13,12 +13,12 @@ dependencies = [
     "uiautomation==2.0.29; sys_platform == 'win32'",
     "pynput; sys_platform == 'win32'",
     "pywebview; sys_platform == 'win32'",
+    "pystray>=0.19.5 ; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
 dev = [
     "mypy",
-    "pyinstaller; sys_platform == 'win32'",
     "pytest",
     "pytest-asyncio",
     "ruff",
@@ -30,6 +30,17 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wispr_clone"]
+
+# The installed app (packaging/install_windows.py) needs the page files, not web/tests.
+[tool.hatch.build.targets.wheel.force-include]
+"web/index.html" = "wispr_clone/web/index.html"
+"web/hud.html" = "wispr_clone/web/hud.html"
+"web/app.js" = "wispr_clone/web/app.js"
+"web/hud.js" = "wispr_clone/web/hud.js"
+"web/waveform.js" = "wispr_clone/web/waveform.js"
+"web/styles.css" = "wispr_clone/web/styles.css"
+"web/lib" = "wispr_clone/web/lib"
+"web/assets" = "wispr_clone/web/assets"
 
 [tool.hatch.metadata]
 allow-direct-references = true

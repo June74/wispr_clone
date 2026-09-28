@@ -1,4 +1,5 @@
-const MUTATING = new Set(['run_start', 'run_stop', 'run_cancel', 'run_recover', 'settings_update', 'secret_set', 'secret_clear', 'models_select', 'dict_add', 'dict_update', 'dict_delete', 'dict_import', 'history_delete', 'history_delete_all', 'history_copy', 'mic_test_start', 'mic_test_stop']);
+const MUTATING = new Set(['run_start', 'run_stop', 'run_cancel', 'run_recover', 'settings_update', 'secret_set', 'secret_clear', 'models_select', 'dict_add', 'dict_update', 'dict_delete', 'dict_import', 'history_delete', 'history_delete_all', 'history_copy', 'mic_test_start', 'mic_test_stop', 'autostart_set']);
+const WINDOW = new Set(['window_drag', 'window_minimize', 'window_toggle_maximize', 'window_close']);
 export function createBridge(windowLike, options = {}) {
   const hostCall = typeof windowLike === 'function' ? windowLike : async (name, payload) => windowLike?.pywebview?.api?.call(name, payload);
   const clock = options.now ?? Date.now;
@@ -32,5 +33,17 @@ export function createBridge(windowLike, options = {}) {
     if (name === 'state_get' && result?.ok) token = result.data?.session_token ?? null;
     return result;
   }
-  return { available, call, reconnect };
+  // Title-bar commands act on the native window only; they carry no session token.
+  async function windowCommand(name) {
+    if (!WINDOW.has(name) || !available()) return { ok: false, data: null, error: 'unknown_command' };
+    return hostCall(name, {});
+  }
+  return { available, call, reconnect, window: windowCommand };
+}
+
+// pywebview injects window.pywebview.api after page scripts may already run; it then fires
+// 'pywebviewready'. Resolve once the host API can be called.
+export function whenHostReady(windowLike) {
+  if (typeof windowLike?.pywebview?.api?.call === 'function') return Promise.resolve();
+  return new Promise((resolve) => windowLike.addEventListener('pywebviewready', () => resolve(), { once: true }));
 }

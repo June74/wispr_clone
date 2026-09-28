@@ -12,7 +12,7 @@ from unittest.mock import Mock
 import pytest
 
 from wispr_clone.application.api import Api, CommandSpec
-from wispr_clone.ui.bridge import Bridge
+from wispr_clone.ui.bridge import Bridge, attach_window_controls
 
 
 @pytest.fixture
@@ -154,3 +154,46 @@ def test_T_UI_001_bridge_cancels_timed_out_dispatch_and_redacts_errors(
     }
     future.result.assert_called_once_with(timeout=15)
     future.cancel.assert_called_once_with()
+
+
+@pytest.mark.unit
+def test_T_UI_019_window_commands_stay_on_the_calling_thread(
+    worker_loop: asyncio.AbstractEventLoop,
+) -> None:
+    async def handler(_: Mapping[str, object]) -> Mapping[str, object]:
+        raise AssertionError("window commands must not reach the api")
+
+    api = Api(
+        {"window_close": CommandSpec(handler, False, False)},
+        session_token="session",
+        clock=lambda: 0.0,
+    )
+    bridge = Bridge(api, worker_loop)
+    assert bridge.call("window_minimize", {}) == {
+        "ok": False,
+        "data": None,
+        "error": "unknown_command",
+    }
+
+    seen: list[tuple[str, int]] = []
+
+    def controls(name: str) -> bool:
+        seen.append((name, threading.get_ident()))
+        if name == "window_drag":
+            raise RuntimeError("native failure")
+        return name != "window_toggle_maximize"
+
+    attach_window_controls(bridge, controls)
+    assert bridge.call("window_close", {})["ok"] is True
+    assert bridge.call("window_toggle_maximize", {})["ok"] is False
+    assert bridge.call("window_drag", {}) == {
+        "ok": False,
+        "data": None,
+        "error": "validation",
+    }
+    assert [name for name, _ in seen] == [
+        "window_close",
+        "window_toggle_maximize",
+        "window_drag",
+    ]
+    assert {ident for _, ident in seen} == {threading.get_ident()}

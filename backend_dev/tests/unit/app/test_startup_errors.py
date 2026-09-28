@@ -28,8 +28,10 @@ def test_T_APP_042_window_creation_failure_reports_one_safe_line(
     monkeypatch.setattr(boundaries.webview, "create_window", broken_window)
     app_instances: list[App] = []
 
-    def make_app(factories: AppFactories, *, data_dir: Path, debug: bool) -> App:
-        app = App(factories, data_dir=data_dir, debug=debug)
+    def make_app(
+        factories: AppFactories, *, data_dir: Path, debug: bool, start_hidden: bool
+    ) -> App:
+        app = App(factories, data_dir=data_dir, debug=debug, start_hidden=start_hidden)
         app_instances.append(app)
         return app
 

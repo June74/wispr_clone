@@ -24,8 +24,11 @@ settings, runs and recovery now use backend commands/events. The cleanup compari
 static illustrative example, labelled “Example.” The bundled presentation keeps the reference
 markup and classes; inline styles were moved into equivalent CSS classes for the CSP.
 
-Some reference preferences have no backend command/schema field and are disabled: launch at login,
-sound cues, floating-indicator preference, history enablement, and retention selection. The backend
+Launch at login uses `autostart_get`/`autostart_set`; the Windows Run key is its only record, and
+a source checkout reports it as unavailable (see packaging/install_windows.py). The page draws the window's title bar: `bridge.window()`
+sends `window_drag`, `window_minimize`, `window_toggle_maximize` and `window_close` without a session
+token, and the host removes the native caption. Some reference preferences have no backend
+command/schema field and are disabled: floating-indicator preference, history enablement, and retention selection. The backend
 reports only currently selected models, not a model catalog, so the reference's alternate-model
 picker is disabled and displays the selected model. Recording-mode and shortcut values exist in
 settings, but the desktop hotkey service owns those interactions; the web runtime does not capture

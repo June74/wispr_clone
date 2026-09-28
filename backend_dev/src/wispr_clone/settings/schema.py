@@ -43,6 +43,7 @@ class Settings(BaseModel):
     cleanup_instructions: str = Field(default="", max_length=2000)
     local_only: bool = False
     theme: Literal["system", "light", "dark"] = "light"
+    sound_cues: bool = False
     idle_jump_seconds: float = Field(default=config.IDLE_JUMP_SECONDS, ge=0.5, le=10.0)
     return_settle_seconds: float = Field(
         default=config.RETURN_SETTLE_SECONDS, ge=0.1, le=2.0

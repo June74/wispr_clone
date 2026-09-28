@@ -149,7 +149,7 @@ backend_dev/
 ├── scripts/
 │   └── check_local_models.py           readiness report: LM Studio answers
 │                                        on 127.0.0.1:1234 with the pinned model loaded and not on the LAN IP
-├── packaging/wispr_clone.spec          proposed Windows executable packaging
+├── packaging/install_windows.py        per-user install: wheel into a signed python.org venv
 └── tests/
     ├── unit/                          transitions, retention, matching, guard and validation
     ├── integration/                   fake adapters, recovery, crash boundaries and bridge

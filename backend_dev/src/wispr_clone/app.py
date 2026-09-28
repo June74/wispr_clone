@@ -23,8 +23,10 @@ from wispr_clone.application.commands.history_commands import HistoryCommands
 from wispr_clone.application.commands.model_commands import ModelCommands
 from wispr_clone.application.commands.run_commands import RunCommands
 from wispr_clone.application.commands.settings_commands import SettingsCommands
+from wispr_clone.application.commands.system_commands import SystemCommands
 from wispr_clone.application.model_service import ModelService
 from wispr_clone.audio.capture import AudioCapture
+from wispr_clone.audio.cues import SoundCues
 from wispr_clone.audio.device_lease import DeviceLease, LeaseOwner
 from wispr_clone.audio.devices import InputDevice, list_input_devices
 from wispr_clone.audio.wav_writer import WavWriter
@@ -52,11 +54,13 @@ from wispr_clone.settings.secret_store import (
 from wispr_clone.settings.store import SettingsStore
 from wispr_clone.storage.db import Database
 from wispr_clone.stt.base import SttEngine
+from wispr_clone.ui import autostart
 from wispr_clone.ui.bridge import Bridge
 from wispr_clone.ui.events import WebviewEventSink
 from wispr_clone.ui.native_hud import NativeHud
 from wispr_clone.ui.overlay import open_hud
-from wispr_clone.ui.windows import open_settings
+from wispr_clone.ui.tray import Tray
+from wispr_clone.ui.windows import WindowControls, open_settings
 from wispr_clone.ui.windows import start as start_webview
 
 logger = logging.getLogger(__name__)
@@ -95,6 +99,12 @@ class AppFactories:
     native_hud: Callable[..., Any] | None = None
     insertion_thread_init: Callable[[], None] = _noop
     insertion_thread_exit: Callable[[], None] = _noop
+    tray: Callable[..., Any] | None = None
+    autostart_status: Callable[[], dict[str, bool]] = lambda: {
+        "available": False,
+        "enabled": False,
+    }
+    autostart_set: Callable[[bool], dict[str, bool]] | None = None
 
 
 def real_factories() -> AppFactories:
@@ -174,6 +184,9 @@ def real_factories() -> AppFactories:
         native_hud=NativeHud if sys.platform == "win32" else None,
         insertion_thread_init=init_insertion_thread,
         insertion_thread_exit=exit_insertion_thread,
+        tray=Tray if sys.platform == "win32" else None,
+        autostart_status=autostart.status,
+        autostart_set=autostart.set_enabled,
     )
 
 
@@ -191,9 +204,13 @@ class EventRouter(EventSink):
     def __init__(self) -> None:
         self.target: EventSink = MemoryEvents()
         self.hud: Any = None
+        self.cue: Callable[[str], None] | None = None
+        self._recording_run: str | None = None
 
     def publish(self, event: EventPayload) -> None:
         self.target.publish(event)
+        if event["name"] == "run:state":
+            self._cue_for(event)
         if self.hud is None or event["name"] != "run:state":
             return
         if event.get("status") in {
@@ -208,6 +225,20 @@ class EventRouter(EventSink):
                 asyncio.get_running_loop().call_later(1.5, self.hud.hide)
             except RuntimeError:
                 pass
+
+    def _cue_for(self, event: EventPayload) -> None:
+        """Tick once when a run starts recording and once when it stops."""
+        run_id, recording = event.get("run_id"), event.get("status") == "recording"
+        if recording and self._recording_run != run_id:
+            self._recording_run = run_id if isinstance(run_id, str) else None
+            cue = "start"
+        elif not recording and run_id is not None and run_id == self._recording_run:
+            self._recording_run = None
+            cue = "stop"
+        else:
+            return
+        if self.cue is not None:
+            self.cue(cue)
 
 
 class SingleInstance:
@@ -290,11 +321,18 @@ def acquire_single_instance(
 
 class App:
     def __init__(
-        self, factories: AppFactories, *, data_dir: Path, debug: bool = False
+        self,
+        factories: AppFactories,
+        *,
+        data_dir: Path,
+        debug: bool = False,
+        start_hidden: bool = False,
     ) -> None:
         self.factories = factories
         self.data_dir = data_dir
         self.debug = debug
+        self.start_hidden = start_hidden
+        self._tray: Any = None
         self.startup_log: list[str] = []
         self.failure: tuple[str, str] | None = None
         self.shutdown_log: list[str] = []
@@ -340,6 +378,8 @@ class App:
         self._audio_commands: AudioCommands | None = None
         self._model_service: ModelService | None = None
         self._events = EventRouter()
+        self._cues = SoundCues(data_dir / "cues")
+        self._events.cue = self._play_cue
         self._run_ids: set[str] = set()
 
     @property
@@ -511,6 +551,17 @@ class App:
         commands.update(ModelCommands(self._model_service).specs())
         commands.update(settings_commands.specs())
         commands.update(DictionaryCommands(dictionary).specs())
+        autostart_set = self.factories.autostart_set
+        commands.update(
+            SystemCommands(
+                autostart_status=self.factories.autostart_status,
+                autostart_set=(
+                    autostart_set
+                    if autostart_set is not None
+                    else lambda _enabled: self.factories.autostart_status()
+                ),
+            ).specs()
+        )
         commands.update(
             HistoryCommands(
                 self._history,
@@ -578,6 +629,10 @@ class App:
         if self.factories.webview is None or self._worker is None:
             self.startup_log.append("windows")
         self._started = True
+
+    def _play_cue(self, cue: str) -> None:
+        if self._settings is not None and self._settings.sound_cues:
+            self._cues.play("start" if cue == "start" else "stop")
 
     async def _offload(self, operation: Callable[[], Any]) -> Any:
         loop = asyncio.get_running_loop()
@@ -816,8 +871,19 @@ class App:
             None, self._hud, clock=self.factories.monotonic
         )
         assert self._api is not None and self._loop is not None
+        controls = WindowControls()
+        if self.factories.tray is not None:
+            self._tray = self.factories.tray(
+                on_open=controls.show, on_quit=controls.quit
+            )
+            # Without a tray icon a hidden window could not be reopened.
+            controls.hide_on_close = bool(self._tray.start())
         settings_window = open_settings(
-            webview, Bridge(self._api, self._loop), debug=self.debug
+            webview,
+            Bridge(self._api, self._loop),
+            debug=self.debug,
+            controls=controls,
+            start_hidden=self.start_hidden and controls.hide_on_close,
         )
         self._windows = [settings_window, self._hud]
         cast(Any, settings_window).events.closed += lambda: self._schedule_shutdown()
@@ -837,6 +903,8 @@ class App:
                 self._listener.stop()
             except Exception:
                 pass
+        if self._tray is not None:
+            self._tray.stop()
         self.shutdown_log.append("hotkeys")
         for timer in self._timers:
             timer.cancel()
