@@ -1,4 +1,4 @@
-"""OpenRouter audio transcription adapter pinned to DeepInfra."""
+"""OpenRouter audio transcription adapter (Whisper pinned to DeepInfra)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,12 @@ import httpx
 from wispr_clone.contracts.common import ErrorCode, ThirdPartyError, WisprError
 
 from .base import SAMPLE_RATE, SttSession, TextCallback
+
+# Providers pinned per model (fallback disabled). Other models are routed by
+# OpenRouter to providers that do not collect data.
+PINNED_PROVIDERS: dict[str, tuple[str, ...]] = {
+    "openai/whisper-large-v3-turbo": ("deepinfra",),
+}
 
 
 class OpenRouterWhisper:
@@ -42,6 +48,15 @@ class OpenRouterWhisper:
         self._client: httpx.AsyncClient | None = None
         self._active: _BufferSession | None = None
         self._lock = Lock()
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    def use_model(self, model_id: str) -> None:
+        """Switch the transcription model; applies from the next request."""
+        self._model = model_id
+        self._provider_only = PINNED_PROVIDERS.get(model_id, ())
 
     @property
     def ready(self) -> bool:
@@ -72,7 +87,11 @@ class OpenRouterWhisper:
                 "data": base64.b64encode(wav_data).decode("ascii"),
                 "format": "wav",
             },
-            "provider": {"only": list(self._provider_only), "allow_fallbacks": False},
+            "provider": (
+                {"only": list(self._provider_only), "allow_fallbacks": False}
+                if self._provider_only
+                else {"data_collection": "deny"}
+            ),
         }
         if self._language:
             body["language"] = self._language

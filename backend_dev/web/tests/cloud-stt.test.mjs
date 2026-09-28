@@ -41,11 +41,10 @@ test('T-WEB-010: messages and privacy text describe cloud transcription', () => 
   assert.equal(messages.api_key_missing, 'Add your OpenRouter API key in Models to enable dictation.');
   assert.equal(messages.api_key_invalid, 'The OpenRouter API key was rejected. Check it in Models.');
   const privacy = html.split('id="page-privacy"')[1]?.split('id="page-')[0] ?? '';
-  assert.ok(privacy.includes('Your audio is sent to OpenRouter and transcribed by DeepInfra (Whisper Large v3 Turbo). Transcripts stay on this PC.'), 'privacy copy is missing');
+  assert.ok(privacy.includes('Your audio is sent to OpenRouter and transcribed by the speech model chosen in Models (by default Whisper Large v3 Turbo on DeepInfra; other models use only providers that don’t collect data). Transcripts stay on this PC.'), 'privacy copy is missing');
   assert.doesNotMatch(html, /nothing leaves this device/i);
   assert.doesNotMatch(html, /Everything stays on this computer/i);
   assert.doesNotMatch(html, /Audio is never saved/i);
-  assert.match(app, /Whisper Large v3 Turbo \(DeepInfra\)/);
 });
 
 test('T-WEB-011: Privacy page does not claim local-only mode is active by default', () => {

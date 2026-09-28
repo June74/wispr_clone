@@ -157,23 +157,31 @@ def parse_settings(
         }
     )
 
-    if catalog.role_of(settings.stt_model_id) != "stt":
-        raise WisprError(
-            ErrorCode.VALIDATION, "settings.schema", "stt_model_id"
-        ) from None
-    if catalog.role_of(settings.cleanup_model_id) != "cleanup":
-        raise WisprError(
-            ErrorCode.VALIDATION, "settings.schema", "cleanup_model_id"
-        ) from None
-    if settings.local_only and not catalog.is_local(settings.stt_model_id):
-        raise WisprError(
-            ErrorCode.CLOUD_MODEL_FORBIDDEN, "settings.schema", "stt_model_id"
-        ) from None
-    if settings.local_only and not catalog.is_local(settings.cleanup_model_id):
-        raise WisprError(
-            ErrorCode.CLOUD_MODEL_FORBIDDEN, "settings.schema", "cleanup_model_id"
-        ) from None
+    for role, field in (("stt", "stt_model_id"), ("cleanup", "cleanup_model_id")):
+        model_id = getattr(settings, field)
+        local = _model_locality(catalog, role, model_id)
+        if local is None:
+            raise WisprError(ErrorCode.VALIDATION, "settings.schema", field) from None
+        if settings.local_only and not local:
+            raise WisprError(
+                ErrorCode.CLOUD_MODEL_FORBIDDEN, "settings.schema", field
+            ) from None
     return settings
+
+
+def _model_locality(catalog: ModelCatalog, role: str, model_id: str) -> bool | None:
+    """Locality of a model usable in ``role``, or None when it is not usable.
+
+    Registered models must match their role. Other identifiers are accepted
+    when the catalog knows how to discover models for the role (``accepts``).
+    """
+    known = catalog.role_of(model_id)
+    if known is not None:
+        return catalog.is_local(model_id) if known == role else None
+    accepts = getattr(catalog, "accepts", None)
+    if callable(accepts) and accepts(role, model_id):
+        return bool(getattr(catalog, "is_local_role")(role))
+    return None
 
 
 def settings_to_data(settings: Settings) -> dict[str, object]:

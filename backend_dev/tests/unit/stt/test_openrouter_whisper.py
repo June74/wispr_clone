@@ -215,3 +215,24 @@ async def test_T_STT_024_replay_validation_https_and_no_redirect(
     with pytest.raises(WisprError) as caught:
         make_engine(respond, base_url="http://openrouter.ai/api/v1")
     assert caught.value.error_code == ErrorCode.VALIDATION
+
+
+@pytest.mark.asyncio
+async def test_T_STT_020_switching_model_changes_provider_routing() -> None:
+    bodies: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"text": "hello"})
+
+    engine = make_engine(handler)
+    engine.use_model("deepgram/nova-3")
+    assert engine.model == "deepgram/nova-3"
+    await engine._send(b"RIFF")
+    engine.use_model(MODEL)
+    await engine._send(b"RIFF")
+    assert [(b["model"], b["provider"]) for b in bodies] == [
+        ("deepgram/nova-3", {"data_collection": "deny"}),
+        (MODEL, {"only": ["deepinfra"], "allow_fallbacks": False}),
+    ]
+    await engine.close()

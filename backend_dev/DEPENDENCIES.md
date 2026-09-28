@@ -42,7 +42,7 @@ The simple host proposal is pywebview because the UI already exists as web asset
 
 | Role | Selected target | Host/interface | Status |
 |---|---|---|---|
-| Cloud STT | Whisper Large v3 Turbo through OpenRouter, pinned to DeepInfra with fallback disabled | OpenRouter audio transcription endpoint; no new package (`httpx` is already present) | Audio leaves the device; usage pricing applies; the real provider pin requires the manual probe |
+| Cloud STT | User-selectable OpenRouter transcription model (listed from `/models?output_modalities=transcription`); default Whisper Large v3 Turbo pinned to DeepInfra with fallback disabled, other models routed with `data_collection: "deny"` | OpenRouter audio transcription endpoint; no new package (`httpx` is already present) | Audio leaves the device; usage pricing applies; the real provider pin requires the manual probe |
 | Local cleanup | Llama 3.1 8B Instruct, Q4_K_S GGUF, loaded in LM Studio (model id `meta-llama-3.1-8b-instruct`, 8,192-token context) | LM Studio, `127.0.0.1:1234`, OpenAI-compatible chat API | Shared with Cognee, so cleanup can wait behind Cognee requests; deadlines apply. Checked 2026-09-24: temperature 0 deterministic, disconnect stops generation, loopback only, and request text no longer logged ("Redact Content" on). Low temperature is not a meaning-preservation guarantee |
 
 

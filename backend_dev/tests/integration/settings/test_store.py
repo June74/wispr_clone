@@ -73,9 +73,12 @@ async def test_T_SET_010_defaults_update_and_restart(tmp_path: Path) -> None:
         ("{broken", "invalid json"),
         ('["not an object"]', "invalid json"),
         ('{"schema_version":2,"theme":"violet"}', "invalid settings"),
-        ('{"schema_version":2,"cleanup_model_id":"cloud-cleanup"}', "invalid settings"),
+        (
+            '{"schema_version":2,"cleanup_model_id":"not a model id"}',
+            "invalid settings",
+        ),
     ],
-    ids=["malformed-json", "json-array", "bad-field", "cloud-default-registry"],
+    ids=["malformed-json", "json-array", "bad-field", "malformed-model-id"],
 )
 async def test_T_SET_011_recovers_only_settings_row(
     tmp_path: Path, raw: str, reason: str

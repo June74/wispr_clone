@@ -32,6 +32,9 @@ from wispr_clone.audio.devices import InputDevice, list_input_devices
 from wispr_clone.audio.wav_writer import WavWriter
 from wispr_clone.cleanup.base import CleanupEngine
 from wispr_clone.cleanup.lmstudio_cleanup import LmStudioCleanup
+from wispr_clone.cleanup.lmstudio_models import (
+    default_models as default_lmstudio_models,
+)
 from wispr_clone.contracts.events import EventPayload, EventSink
 from wispr_clone.contracts.run import RunStatus
 from wispr_clone.dictionary.repo import DictionaryRepo
@@ -54,6 +57,7 @@ from wispr_clone.settings.secret_store import (
 from wispr_clone.settings.store import SettingsStore
 from wispr_clone.storage.db import Database
 from wispr_clone.stt.base import SttEngine
+from wispr_clone.stt.openrouter_catalog import OpenRouterCatalog
 from wispr_clone.ui import autostart
 from wispr_clone.ui.bridge import Bridge
 from wispr_clone.ui.events import WebviewEventSink
@@ -100,6 +104,9 @@ class AppFactories:
     insertion_thread_init: Callable[[], None] = _noop
     insertion_thread_exit: Callable[[], None] = _noop
     tray: Callable[..., Any] | None = None
+    # Live model lists and LM Studio loading; None keeps tests offline.
+    stt_catalog: Callable[[], Any] | None = None
+    lmstudio_models: Callable[[], Any] | None = None
     autostart_status: Callable[[], dict[str, bool]] = lambda: {
         "available": False,
         "enabled": False,
@@ -119,12 +126,13 @@ def real_factories() -> AppFactories:
     )
 
     def stt(settings: Settings) -> SttEngine:
-        del settings
         from wispr_clone.stt.openrouter_whisper import OpenRouterWhisper
 
-        return OpenRouterWhisper(
+        engine = OpenRouterWhisper(
             api_key=lambda: secrets_store.get("openrouter_api_key")
         )
+        engine.use_model(settings.stt_model_id)
+        return engine
 
     def cleanup(model_id: str) -> CleanupEngine:
         return LmStudioCleanup(model_id=model_id, base_url=config.LM_STUDIO_ENDPOINT)
@@ -185,6 +193,8 @@ def real_factories() -> AppFactories:
         insertion_thread_init=init_insertion_thread,
         insertion_thread_exit=exit_insertion_thread,
         tray=Tray if sys.platform == "win32" else None,
+        stt_catalog=OpenRouterCatalog,
+        lmstudio_models=default_lmstudio_models,
         autostart_status=autostart.status,
         autostart_set=autostart.set_enabled,
     )
@@ -333,6 +343,8 @@ class App:
         self.debug = debug
         self.start_hidden = start_hidden
         self._tray: Any = None
+        self._load_task: asyncio.Task[None] | None = None
+        self._load_again = False
         self.startup_log: list[str] = []
         self.failure: tuple[str, str] | None = None
         self.shutdown_log: list[str] = []
@@ -454,6 +466,12 @@ class App:
         self.startup_log.append("settings")
         self._stt = self.factories.stt_engine(self._settings)
         lease = DeviceLease()
+        stt_catalog = (
+            self.factories.stt_catalog() if self.factories.stt_catalog else None
+        )
+        lmstudio = (
+            self.factories.lmstudio_models() if self.factories.lmstudio_models else None
+        )
         self._model_service = ModelService(
             registry,
             store,
@@ -464,6 +482,9 @@ class App:
             ),
             cleanup_for=self._cleanup,
             events=self._events,
+            list_stt=stt_catalog.list_models if stt_catalog else None,
+            list_cleanup=lmstudio.list_chat_models if lmstudio else None,
+            load_cleanup=lmstudio.ensure_loaded if lmstudio else None,
         )
         insertion = InsertionProtocol(
             self._history,
@@ -601,12 +622,22 @@ class App:
 
         async def update_and_rebuild(payload: Any) -> Any:
             result = await original_update.handler(payload)
-            self._settings = store.current()
+            self._apply_settings(store.current())
             self._rebuild_hotkey()
             return result
 
         commands["settings_update"] = CommandSpec(
             update_and_rebuild, original_update.mutating, original_update.needs_session
+        )
+        original_select = commands["models_select"]
+
+        async def select_and_apply(payload: Any) -> Any:
+            result = await original_select.handler(payload)
+            self._apply_settings(store.current())
+            return result
+
+        commands["models_select"] = CommandSpec(
+            select_and_apply, original_select.mutating, original_select.needs_session
         )
         self._api = Api(
             commands,
@@ -773,6 +804,40 @@ class App:
     async def _poll_models(self) -> None:
         if self._model_service:
             await self._model_service.poll()
+            self._schedule_cleanup_load()
+
+    def _apply_settings(self, settings: Settings) -> None:
+        """Make a saved settings change take effect without a restart."""
+        previous, self._settings = self._settings, settings
+        use_model = getattr(self._stt, "use_model", None)
+        if callable(use_model) and getattr(self._stt, "model", None) != (
+            settings.stt_model_id
+        ):
+            use_model(settings.stt_model_id)
+        if previous is None or (
+            previous.cleanup_model_id,
+            previous.cleanup_enabled,
+        ) != (settings.cleanup_model_id, settings.cleanup_enabled):
+            # A new cleanup choice loads now, even inside a failed-load backoff.
+            self._schedule_cleanup_load(force=True)
+
+    def _schedule_cleanup_load(self, *, force: bool = False) -> None:
+        """Keep the selected cleanup model loaded in LM Studio (background)."""
+        if self._model_service is None or self._stopping:
+            return
+        if self._load_task is not None and not self._load_task.done():
+            # One load at a time; a forced request runs right after this one.
+            self._load_again = self._load_again or force
+            return
+        self._load_again = False
+        self._load_task = asyncio.get_running_loop().create_task(
+            self._model_service.keep_cleanup_loaded(force=force)
+        )
+        self._load_task.add_done_callback(self._after_cleanup_load)
+
+    def _after_cleanup_load(self, _task: asyncio.Task[None]) -> None:
+        if self._load_again and not self._stopping:
+            self._schedule_cleanup_load(force=True)
 
     async def _track_destination(self) -> None:
         if self._insertion_thread_error:
@@ -906,9 +971,10 @@ class App:
         if self._tray is not None:
             self._tray.stop()
         self.shutdown_log.append("hotkeys")
-        for timer in self._timers:
+        loading = [self._load_task] if self._load_task is not None else []
+        for timer in (*self._timers, *loading):
             timer.cancel()
-        await asyncio.gather(*self._timers, return_exceptions=True)
+        await asyncio.gather(*self._timers, *loading, return_exceptions=True)
         self.shutdown_log.append("timers")
         if self._controller is not None:
             try:

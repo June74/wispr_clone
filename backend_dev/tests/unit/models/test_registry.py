@@ -152,3 +152,42 @@ def test_T_REG_002_local_model_rejects_invalid_port_or_user_info(
 )
 def test_T_REG_002_rejects_url_with_control_characters(url: str) -> None:
     assert registry().is_loopback_endpoint(url) is False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("role", "model_id", "accepted"),
+    [
+        ("stt", "deepgram/nova-3", True),
+        ("stt", "qwen/qwen3-asr-flash-2026-02-10", True),
+        ("stt", "no-vendor-prefix", False),
+        ("stt", "Upper/Case", False),
+        ("cleanup", "meta-llama-3.1-8b-instruct", True),
+        ("cleanup", "qwen/qwen3-8b@q4_k_m", True),
+        ("cleanup", "has space", False),
+        ("cleanup", "../escape", False),
+        ("cleanup", "a" * 201, False),
+        ("other", "deepgram/nova-3", False),
+    ],
+)
+def test_T_REG_004_discovered_ids_are_accepted_by_shape_per_role(
+    role: str, model_id: str, accepted: bool
+) -> None:
+    from wispr_clone.models.registry import default_registry
+
+    models = default_registry()
+    assert models.accepts(role, model_id) is accepted
+    resolved = models.resolve(role, model_id)
+    assert (resolved is not None) is accepted
+    if resolved is not None:
+        assert resolved.role == role
+        assert resolved.local is (role == "cleanup")
+
+
+@pytest.mark.unit
+def test_T_REG_004_registered_ids_keep_their_role() -> None:
+    from wispr_clone.models.registry import default_registry
+
+    models = default_registry()
+    assert models.resolve("cleanup", "openai/whisper-large-v3-turbo") is None
+    assert models.resolve("stt", "openai/whisper-large-v3-turbo") is not None

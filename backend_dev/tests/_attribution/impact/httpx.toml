@@ -1,6 +1,6 @@
 dependency = "httpx"
 kind = "library"
-modules = ["cleanup.lmstudio_cleanup", "stt.openrouter_whisper"]
+modules = ["cleanup.lmstudio_cleanup", "cleanup.lmstudio_models", "stt.openrouter_whisper", "stt.openrouter_catalog"]
 features = ["cleanup after dictation", "retry cleanup", "model readiness", "cloud speech transcription", "retry_stt"]
 error_codes = ["cleanup_unavailable", "cleanup_timeout", "stt_unavailable", "stt_timeout"]
 action = "Check the httpx pin in uv.lock"
