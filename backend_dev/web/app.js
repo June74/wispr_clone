@@ -2,6 +2,7 @@ import { createBridge, whenHostReady } from './lib/bridge.js';
 import { catalogNote, modelBadge, pickerOptions } from './lib/models.js';
 import { createStore, applyEvent, acceptsEvent } from './lib/store.js';
 import { shouldToastInserted, recoveryButtons } from './lib/view.js';
+import { termSaveEnabled, instructionsDirty } from './lib/forms.js';
 import { messageFor } from './lib/messages.js';
 import { createWaveform } from './waveform.js';
 import { normalizeSecret } from './lib/secrets.js';
@@ -13,6 +14,7 @@ let state = createStore();
 let currentRun = null;
 let historyFilter = 'all';
 let editingTermId = null;
+let lastSavedInstructions = null;
 // The bridge handles previous_session_token by fetching a fresh snapshot; onSnapshot installs it here.
 const bridge = createBridge(window, { onSnapshot(snapshot) { state = { ...createStore(snapshot), secrets: snapshot.secrets }; currentRun = snapshot.active_run_id; render(); } });
 const icon = (name) => `<svg class="i"><use href="#i-${name}"/></svg>`;
@@ -118,7 +120,12 @@ function renderSettings() {
   const settings = state.settings;
   $('#cleanup-switch')?.setAttribute('aria-checked', String(Boolean(settings.cleanup_enabled)));
   $('#sound-switch')?.setAttribute('aria-checked', String(Boolean(settings.sound_cues)));
-  if ($('#instructions')) $('#instructions').value = settings.cleanup_instructions ?? '';
+  const instructions = $('#instructions');
+  const savedInstructions = settings.cleanup_instructions ?? '';
+  if (instructions && (lastSavedInstructions === null || instructions.value === lastSavedInstructions)) instructions.value = savedInstructions;
+  lastSavedInstructions = savedInstructions;
+  const saveInstructions = $('#save-instructions');
+  if (saveInstructions) saveInstructions.disabled = !instructionsDirty(instructions?.value ?? '', savedInstructions);
   const localOnly = Boolean(settings.local_only);
   $('#local-switch')?.setAttribute('aria-checked', String(localOnly));
   $('#privacy-local-switch')?.setAttribute('aria-checked', String(localOnly));
@@ -167,7 +174,7 @@ document.addEventListener('click', async (event) => {
   if (recover) { if (recover.dataset.recover === 'cancel') { await $('#dictate-cancel').click(); return; } const active = run(); const result = await bridge.call('run_recover', { run_id: active.run_id, expected_version: active.version, action: recover.dataset.recover }); if (!failed(result)) { recover.remove(); render(); } return; }
   const copy = event.target.closest('[data-copy]'); if (copy) { const result = await bridge.call('history_copy', { run_id: copy.dataset.copy }); if (!failed(result)) toast('success', 'Copied', ''); return; }
   const del = event.target.closest('[data-delete]'); if (del) { const result = await bridge.call('history_delete', { run_id: del.dataset.delete }); if (!failed(result)) await refreshLists(); return; }
-  const termEdit = event.target.closest('[data-edit-term]'); if (termEdit) { const item = state.dictionary.find((entry) => entry.id === Number(termEdit.dataset.editTerm)); if (!item) return; editingTermId = item.id; $('#term-input').value = item.spelling; $('#alias-input').value = (item.aliases ?? []).join(', '); $('#term-modal').classList.add('is-open'); return; }
+  const termEdit = event.target.closest('[data-edit-term]'); if (termEdit) { const item = state.dictionary.find((entry) => entry.id === Number(termEdit.dataset.editTerm)); if (!item) return; editingTermId = item.id; $('#term-input').value = item.spelling; $('#alias-input').value = (item.aliases ?? []).join(', '); $('#save-term').disabled = !termSaveEnabled(item.spelling); $('#term-modal').classList.add('is-open'); return; }
   const termDelete = event.target.closest('[data-delete-term]'); if (termDelete) { const result = await bridge.call('dict_delete', { id: Number(termDelete.dataset.deleteTerm) }); if (!failed(result)) await refreshLists(); }
 });
 $('#history-search')?.addEventListener('input', () => { const query = $('#history-search').value.toLowerCase(); $$('#history-list .item').forEach((item) => { item.hidden = !item.textContent.toLowerCase().includes(query); }); });
@@ -210,7 +217,8 @@ $('#shortcut-change')?.addEventListener('click', () => {
 });
 $('#sound-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { sound_cues: $('#sound-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#cleanup-switch')?.addEventListener('click', async () => { const enabled = $('#cleanup-switch').getAttribute('aria-checked') !== 'true'; const result = await bridge.call('settings_update', { patch: { cleanup_enabled: enabled } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
-$('#save-instructions')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { cleanup_instructions: $('#instructions').value } }); if (failed(result)) return; state.settings = result.data; $('#save-instructions').disabled = true; $('#save-note').textContent = 'Saved'; });
+$('#instructions')?.addEventListener('input', () => { $('#save-instructions').disabled = !instructionsDirty($('#instructions').value, state.settings.cleanup_instructions ?? ''); });
+$('#save-instructions')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { cleanup_instructions: $('#instructions').value } }); if (failed(result)) return; state.settings = result.data; lastSavedInstructions = result.data.cleanup_instructions ?? ''; $('#save-instructions').disabled = true; $('#save-note').textContent = 'Saved'; });
 $('#autostart-switch')?.addEventListener('click', async () => { const result = await bridge.call('autostart_set', { enabled: $('#autostart-switch').getAttribute('aria-checked') !== 'true' }); if (failed(result)) return; renderAutostart(result.data); });
 $('#local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#privacy-local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#privacy-local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
@@ -219,7 +227,8 @@ $('#clear-openrouter-key')?.addEventListener('click', async () => { $('#openrout
 $('#mic-test')?.addEventListener('click', async () => { const result = $('#mic-test').dataset.running === 'true' ? await bridge.call('mic_test_stop') : await bridge.call('mic_test_start', { device_id: Number($('#mic-select').value) || null }); if (failed(result)) return; const running = result.data.stopped === false || result.data.started === true; $('#mic-test').dataset.running = String(running); $('#mic-test').innerHTML = `${icon(running ? 'stop' : 'mic')}${running ? 'Stop test' : 'Test microphone'}`; });
 $('#delete-all')?.addEventListener('click', () => $('#delete-modal').classList.add('is-open'));
 $('#confirm-delete')?.addEventListener('click', async () => { const result = await bridge.call('history_delete_all'); if (failed(result)) return; $('#delete-modal').classList.remove('is-open'); await refreshLists(); });
-$('#add-term')?.addEventListener('click', () => { editingTermId = null; $('#term-input').value = ''; $('#alias-input').value = ''; $('#term-modal').classList.add('is-open'); });
+$('#term-input')?.addEventListener('input', () => { $('#save-term').disabled = !termSaveEnabled($('#term-input').value); });
+$('#add-term')?.addEventListener('click', () => { editingTermId = null; $('#term-input').value = ''; $('#alias-input').value = ''; $('#save-term').disabled = true; $('#term-modal').classList.add('is-open'); });
 $('#save-term')?.addEventListener('click', async () => { const entry = { spelling: $('#term-input').value.trim(), aliases: $('#alias-input').value.split(',').map((item) => item.trim()).filter(Boolean) }; const result = await bridge.call(editingTermId === null ? 'dict_add' : 'dict_update', editingTermId === null ? { entry } : { id: editingTermId, entry }); if (failed(result)) return; $('#term-modal').classList.remove('is-open'); await refreshLists(); });
 $('#dict-import')?.addEventListener('click', () => { const input = document.createElement('input'); input.type = 'file'; input.accept = '.txt,.csv,text/plain,text/csv'; input.addEventListener('change', async () => { const file = input.files?.[0]; if (!file) return; const result = await bridge.call('dict_import', { text: await file.text() }); if (failed(result)) return; toast('success', 'Dictionary imported', `${result.data.added} added`); await refreshLists(); }); input.click(); });
 $('#dict-export')?.addEventListener('click', async () => { const result = await bridge.call('dict_export'); if (failed(result)) return; let output = $('#dict-export-content'); if (!output) { output = document.createElement('textarea'); output.id = 'dict-export-content'; output.className = 'textarea'; output.setAttribute('aria-label', 'Dictionary export'); $('#page-dictionary .toolbar').after(output); } output.value = result.data.text ?? ''; output.hidden = false; output.focus(); output.select(); });
