@@ -74,7 +74,6 @@ def test_T_CON_002_required_failure_behaviors_have_error_codes() -> None:
         "cleanup_unavailable",
         "cleanup_timeout",
         "cleanup_rejected",
-        "cloud_model_forbidden",
         "non_loopback_endpoint",
         "destination_unverifiable",
         "destination_closed",
@@ -85,6 +84,7 @@ def test_T_CON_002_required_failure_behaviors_have_error_codes() -> None:
         "deletion_failed",
     }
     assert required <= {code.value for code in ErrorCode}
+    assert "cloud_model_forbidden" not in {code.value for code in ErrorCode}
 
 
 @pytest.mark.unit

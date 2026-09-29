@@ -218,11 +218,4 @@ class ModelService:
         )
         if model is None:
             raise WisprError(ErrorCode.VALIDATION, "models", "model_id") from None
-        self._enforce_local_only(model.local)
         return model
-
-    def _enforce_local_only(self, local: bool) -> None:
-        if self._store.current().local_only and not local:
-            raise WisprError(
-                ErrorCode.CLOUD_MODEL_FORBIDDEN, "models", "model_id"
-            ) from None

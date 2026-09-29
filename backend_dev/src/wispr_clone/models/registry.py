@@ -74,11 +74,6 @@ class ModelRegistry:
         model = self.get(model_id)
         return model.role if model is not None else None
 
-    def is_local(self, model_id: str) -> bool:
-        """Return whether a known model is local; unknown identifiers are false."""
-        model = self.get(model_id)
-        return model.local if model is not None else False
-
     def accepts(self, role: str, model_id: str) -> bool:
         """Whether an unregistered identifier is well-formed for a role."""
         pattern = _DISCOVERED_ID.get(role)

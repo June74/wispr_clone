@@ -251,13 +251,6 @@
       <section class="page" id="page-models" data-title="Voice · Models">
         <div class="page-head"><div><h1>Models</h1><p>Two small steps between your voice and the right words.</p></div></div>
 
-        <div class="card group">
-          <div class="row">
-            <div class="row-text"><div class="row-title plain">Keep processing local</div><div class="row-desc">Block cloud models. Dictation needs cloud speech recognition.</div></div>
-            <div class="row-control"><button class="switch" role="switch" aria-checked="false" aria-label="Keep processing local" id="local-switch"></button></div>
-          </div>
-        </div>
-
         <h2 class="group-label">Your voice pipeline</h2>
         <div class="card model-card" data-model="stt">
           <div class="model-head">
@@ -372,12 +365,7 @@
             <div class="row-text"><div class="row-title">Delete after</div><div class="row-desc">Older transcripts are removed automatically.</div></div>
             <div class="row-control"><label class="field select inline-style-6"><select aria-label="Retention" disabled><option selected>Configured by retention policy</option></select><svg class="i"><use href="#i-chevron"/></svg></label></div>
           </div>
-          <div class="row">
-            <div class="row-text"><div class="row-title">Local-only mode</div><div class="row-desc">Block every network request, including remote cleanup models.</div></div>
-            <div class="row-control"><button class="switch" role="switch" aria-checked="false" aria-label="Local-only mode" id="privacy-local-switch"></button></div>
-          </div>
         </div>
-        <div class="callout warning" id="local-only-warning" hidden><svg class="i"><use href="#i-alert"/></svg><div>Dictation needs cloud speech-to-text; it is disabled while local-only is on.</div></div>
 
         <div class="section">
           <h3 class="section-title inline-style-3">Danger zone</h3>

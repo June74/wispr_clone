@@ -12,25 +12,20 @@ from wispr_clone.contracts.common import ErrorCode, WisprError
 
 
 class TestCatalog:
-    """Small catalog with role and locality only; schema must use this protocol."""
+    """Small catalog with model roles; schema must use this protocol."""
 
     __test__ = False
 
     def __init__(self) -> None:
         self.models = {
-            "openai/whisper-large-v3-turbo": ("stt", False),
-            "local-stt": ("stt", True),
-            "meta-llama-3.1-8b-instruct": ("cleanup", True),
-            "cloud-cleanup": ("cleanup", False),
+            "openai/whisper-large-v3-turbo": "stt",
+            "local-stt": "stt",
+            "meta-llama-3.1-8b-instruct": "cleanup",
+            "cloud-cleanup": "cleanup",
         }
 
     def role_of(self, model_id: str) -> str | None:
-        item = self.models.get(model_id)
-        return item[0] if item else None
-
-    def is_local(self, model_id: str) -> bool:
-        item = self.models.get(model_id)
-        return item[1] if item else False
+        return self.models.get(model_id)
 
 
 def schema():
@@ -38,7 +33,7 @@ def schema():
 
 
 def valid_data() -> dict[str, object]:
-    return {"schema_version": 2}
+    return {"schema_version": schema().SETTINGS_SCHEMA_VERSION}
 
 
 def assert_error(data: dict[str, object], code: ErrorCode) -> WisprError:
@@ -55,7 +50,7 @@ def test_T_SET_001_defaults_and_json_round_trip() -> None:
     from wispr_clone.models.registry import default_registry
 
     expected = {
-        "schema_version": 2,
+        "schema_version": 3,
         "recording_mode": "toggle",
         "dictation_shortcut": "ctrl+shift+space",
         "cancel_shortcut": "escape",
@@ -64,7 +59,6 @@ def test_T_SET_001_defaults_and_json_round_trip() -> None:
         "cleanup_model_id": "meta-llama-3.1-8b-instruct",
         "cleanup_enabled": True,
         "cleanup_instructions": "",
-        "local_only": False,
         "theme": "light",
         "sound_cues": False,
         "idle_jump_seconds": 1.0,
@@ -72,7 +66,7 @@ def test_T_SET_001_defaults_and_json_round_trip() -> None:
         "destination_wait_limit_seconds": 600,
     }
     settings = module.default_settings()
-    assert module.SETTINGS_SCHEMA_VERSION == 2
+    assert module.SETTINGS_SCHEMA_VERSION == 3
     assert settings.model_dump() == expected
     assert settings.idle_jump_seconds == config.IDLE_JUMP_SECONDS
     assert settings.return_settle_seconds == config.RETURN_SETTLE_SECONDS
@@ -85,7 +79,7 @@ def test_T_SET_001_defaults_and_json_round_trip() -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.invariant("local-only model selection")
+@pytest.mark.invariant("model selection is validated by role")
 @pytest.mark.parametrize(
     "field,cloud_id",
     [
@@ -93,17 +87,13 @@ def test_T_SET_001_defaults_and_json_round_trip() -> None:
         ("cleanup_model_id", "cloud-cleanup"),
     ],
 )
-def test_T_SET_003_cloud_selection_respects_local_only(
-    field: str, cloud_id: str
-) -> None:
+def test_T_SET_025_cloud_selection_validates_by_role(field: str, cloud_id: str) -> None:
     payload = {
         **valid_data(),
         "stt_model_id": "local-stt",
-        "local_only": True,
         field: cloud_id,
     }
-    assert_error(payload, ErrorCode.CLOUD_MODEL_FORBIDDEN)
-    accepted = schema().parse_settings({**payload, "local_only": False}, TestCatalog())
+    accepted = schema().parse_settings(payload, TestCatalog())
     assert getattr(accepted, field) == cloud_id
 
 
@@ -131,10 +121,16 @@ def test_T_SET_004_upgrade_version_zero_without_mutating_input() -> None:
         return {**old, "schema_version": 1, "recording_mode": "hold"}
 
     parsed = schema().parse_settings(
-        payload, TestCatalog(), upgrade_steps={0: upgrade, 1: schema().UPGRADE_STEPS[1]}
+        payload,
+        TestCatalog(),
+        upgrade_steps={
+            0: upgrade,
+            1: schema().UPGRADE_STEPS[1],
+            2: schema().UPGRADE_STEPS[2],
+        },
     )
     assert calls == [{"schema_version": 0, "theme": "dark"}]
-    assert parsed.schema_version == 2
+    assert parsed.schema_version == 3
     assert parsed.recording_mode == "hold"
     assert parsed.theme == "dark"
     assert payload == {"schema_version": 0, "theme": "dark"}
@@ -167,9 +163,15 @@ def test_T_SET_004_upgrade_cannot_mutate_nested_input_data() -> None:
         return {"schema_version": 1}
 
     parsed = schema().parse_settings(
-        payload, TestCatalog(), upgrade_steps={0: upgrade, 1: schema().UPGRADE_STEPS[1]}
+        payload,
+        TestCatalog(),
+        upgrade_steps={
+            0: upgrade,
+            1: schema().UPGRADE_STEPS[1],
+            2: schema().UPGRADE_STEPS[2],
+        },
     )
-    assert parsed.schema_version == 2
+    assert parsed.schema_version == 3
     assert payload == {"schema_version": 0, "legacy": {"private": "original"}}
 
 
@@ -178,7 +180,7 @@ def test_T_SET_004_upgrade_cannot_mutate_nested_input_data() -> None:
     "payload",
     [
         {"schema_version": 0},
-        {"schema_version": 3},
+        {"schema_version": 4},
         {},
         {"schema_version": "1"},
         {"schema_version": True},
@@ -272,7 +274,7 @@ def test_T_SET_005_microphone_id_length_boundaries_are_valid(
 
 
 @pytest.mark.unit
-def test_T_SET_020_discovered_models_validate_by_role_and_locality() -> None:
+def test_T_SET_020_discovered_models_validate_by_role() -> None:
     from wispr_clone.models.registry import default_registry
 
     parse = schema().parse_settings
@@ -292,10 +294,9 @@ def test_T_SET_020_discovered_models_validate_by_role_and_locality() -> None:
     with pytest.raises(WisprError) as caught:
         parse({**valid_data(), "stt_model_id": "no-vendor"}, registry)
     assert caught.value.error_code == ErrorCode.VALIDATION
-    # Speech is always a cloud model, so local-only still refuses it.
     with pytest.raises(WisprError) as caught:
         parse(
-            {**valid_data(), "local_only": True, "stt_model_id": "deepgram/nova-3"},
+            {**valid_data(), "cleanup_model_id": "openai/whisper-large-v3-turbo"},
             registry,
         )
-    assert caught.value.error_code == ErrorCode.CLOUD_MODEL_FORBIDDEN
+    assert caught.value.error_code == ErrorCode.VALIDATION

@@ -68,6 +68,6 @@ OpenRouter credentials are encrypted with Windows DPAPI user scope. The UI recei
 
 The cleanup model is served by LM Studio. No cloud package was added; OpenRouter is an external service and usage charges apply.
 
-The app stores the OpenRouter key with Windows DPAPI and never returns or logs it. Audio is sent to OpenRouter / DeepInfra. Local-only settings reject cloud model selection; there is no fallback provider.
+The app stores the OpenRouter key with Windows DPAPI and never returns or logs it. Audio is sent to OpenRouter / DeepInfra. Local-only mode was removed 2026-09-28 (speech recognition is cloud-only); there is no fallback provider.
 
 Transcript/audio retention belongs to the codemap's history contract. Per-user storage does not mean encrypted storage. Optional encryption requires a separate decision covering key storage, recovery and deletion; do not quietly add an encryption package or permanent backup of temporary data.

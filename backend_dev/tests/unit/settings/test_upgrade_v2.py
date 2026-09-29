@@ -1,4 +1,4 @@
-"""Schema v2 adopts cloud STT without losing unrelated preferences."""
+"""Schema v3 removes the obsolete local-only preference without resetting settings."""
 
 import json
 from pathlib import Path
@@ -21,19 +21,13 @@ WHISPER = "openai/whisper-large-v3-turbo"
 @pytest.mark.unit
 def test_T_SET_021_defaults_and_registry() -> None:
     settings = default_settings()
-    assert SETTINGS_SCHEMA_VERSION == 2
-    assert (settings.stt_model_id, settings.local_only) == (WHISPER, False)
+    assert SETTINGS_SCHEMA_VERSION == 3
+    assert settings.stt_model_id == WHISPER
+    assert "local_only" not in settings.model_dump()
     stt, cleanup = default_registry().list_models()
-    assert (
-        stt.model_id,
-        stt.role,
-        stt.display_name,
-        stt.local,
-        stt.endpoint,
-    ) == (
+    assert (stt.model_id, stt.role, stt.local, stt.endpoint) == (
         WHISPER,
         "stt",
-        "Whisper Large v3 Turbo (DeepInfra)",
         False,
         "https://openrouter.ai/api/v1",
     )
@@ -52,34 +46,45 @@ def test_T_SET_021_v1_upgrade_preserves_other_preferences() -> None:
         "cleanup_instructions": "Keep medical terms",
     }
     upgraded = parse_settings(old, default_registry())
-    assert (upgraded.schema_version, upgraded.stt_model_id, upgraded.local_only) == (
-        2,
-        WHISPER,
-        False,
+    assert (upgraded.schema_version, upgraded.stt_model_id) == (3, WHISPER)
+    assert "local_only" not in upgraded.model_dump()
+    assert (upgraded.recording_mode, upgraded.theme, upgraded.cleanup_instructions) == (
+        "hold",
+        "dark",
+        "Keep medical terms",
     )
-    assert upgraded.recording_mode == "hold"
-    assert upgraded.theme == "dark"
-    assert upgraded.cleanup_instructions == "Keep medical terms"
     assert old["schema_version"] == 1
     assert old["stt_model_id"] == "voxtral-mini-4b-realtime-2602"
 
 
 @pytest.mark.unit
-def test_T_SET_021_explicit_local_only_rejects_cloud_stt() -> None:
-    with pytest.raises(WisprError) as caught:
-        parse_settings(
-            {**default_settings().model_dump(), "local_only": True},
-            default_registry(),
-        )
-    assert caught.value.error_code == ErrorCode.CLOUD_MODEL_FORBIDDEN
-    assert caught.value.why == "stt_model_id"
+@pytest.mark.parametrize("old_value", [True, False])
+def test_T_SET_023_v2_upgrade_removes_local_only(old_value: bool) -> None:
+    old: dict[str, object] = {
+        "schema_version": 2,
+        "local_only": old_value,
+        "recording_mode": "hold",
+        "theme": "dark",
+        "cleanup_instructions": "Keep medical terms",
+        "microphone_id": "2",
+    }
+    parsed = parse_settings(old, default_registry())
+    assert parsed.schema_version == 3
+    assert "local_only" not in parsed.model_dump()
+    assert (parsed.recording_mode, parsed.theme, parsed.cleanup_instructions) == (
+        "hold",
+        "dark",
+        "Keep medical terms",
+    )
+    assert parsed.microphone_id == "2"
+    assert old["schema_version"] == 2 and old["local_only"] is old_value
+    defaults = default_settings().model_dump()
+    assert defaults["schema_version"] == 3 and "local_only" not in defaults
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_T_SET_022_real_v1_row_upgrade_and_local_only_update(
-    tmp_path: Path,
-) -> None:
+async def test_T_SET_022_real_v1_row_upgrade(tmp_path: Path) -> None:
     old = {
         "schema_version": 1,
         "stt_model_id": "voxtral-mini-4b-realtime-2602",
@@ -91,28 +96,17 @@ async def test_T_SET_022_real_v1_row_upgrade_and_local_only_update(
     async with Database(tmp_path / "upgrade-v1.db") as db:
         await db.write(
             lambda conn: conn.execute(
-                "INSERT INTO settings (id, data) VALUES (1, ?)",
-                (json.dumps(old),),
+                "INSERT INTO settings (id, data) VALUES (1, ?)", (json.dumps(old),)
             )
         )
         store = SettingsStore(db, default_registry())
         upgraded = await store.load()
-        upgraded_selection = (
-            upgraded.schema_version,
-            upgraded.stt_model_id,
-            upgraded.local_only,
-        )
-        assert upgraded_selection == (
-            2,
-            WHISPER,
-            False,
-        )
-        upgraded_preferences = (
+        assert (upgraded.schema_version, upgraded.stt_model_id) == (3, WHISPER)
+        assert (
             upgraded.recording_mode,
             upgraded.theme,
             upgraded.cleanup_instructions,
-        )
-        assert upgraded_preferences == (
+        ) == (
             "hold",
             "dark",
             "Keep medical terms",
@@ -124,7 +118,49 @@ async def test_T_SET_022_real_v1_row_upgrade_and_local_only_update(
         )
         assert persisted is not None
         assert json.loads(persisted[0]) == upgraded.model_dump(mode="json")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("old_value", [True, False])
+async def test_T_SET_024_real_v2_row_and_patch_rejection(
+    tmp_path: Path, old_value: bool
+) -> None:
+    old = {
+        "schema_version": 2,
+        "local_only": old_value,
+        "recording_mode": "hold",
+        "theme": "dark",
+        "cleanup_instructions": "Keep medical terms",
+        "microphone_id": "0",
+    }
+    async with Database(tmp_path / "upgrade-v2.db") as db:
+        await db.write(
+            lambda conn: conn.execute(
+                "INSERT INTO settings (id, data) VALUES (1, ?)", (json.dumps(old),)
+            )
+        )
+        store = SettingsStore(db, default_registry())
+        loaded = await store.load()
+        assert loaded.schema_version == 3
+        assert "local_only" not in loaded.model_dump()
+        assert (loaded.recording_mode, loaded.theme, loaded.microphone_id) == (
+            "hold",
+            "dark",
+            "0",
+        )
+        assert loaded.cleanup_instructions == "Keep medical terms"
+        row = await db.read(
+            lambda conn: conn.execute(
+                "SELECT data FROM settings WHERE id = 1"
+            ).fetchone()
+        )
+        assert row is not None and json.loads(row[0]) == loaded.model_dump(mode="json")
+        backups = await db.read(
+            lambda conn: conn.execute("SELECT COUNT(*) FROM settings_backup").fetchone()
+        )
+        assert backups == (0,)
         with pytest.raises(WisprError) as caught:
-            await store.update({"local_only": True})
-        assert caught.value.error_code == ErrorCode.CLOUD_MODEL_FORBIDDEN
-        assert store.current() == upgraded
+            await store.update({"local_only": old_value})
+        assert caught.value.error_code == ErrorCode.VALIDATION
+        assert store.current() == loaded

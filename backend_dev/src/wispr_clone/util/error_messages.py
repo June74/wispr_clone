@@ -34,7 +34,6 @@ _MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.CLEANUP_UNAVAILABLE: "Text cleanup is unavailable.",
     ErrorCode.CLEANUP_TIMEOUT: "Text cleanup took too long.",
     ErrorCode.CLEANUP_REJECTED: "The cleanup result did not pass safety checks.",
-    ErrorCode.CLOUD_MODEL_FORBIDDEN: "Cloud models are disabled in local-only mode.",
     ErrorCode.NON_LOOPBACK_ENDPOINT: "The model endpoint must use this computer only.",
     ErrorCode.DESTINATION_UNVERIFIABLE: "The original field could not be confirmed.",
     ErrorCode.DESTINATION_CLOSED: "The original destination is no longer open.",

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from wispr_clone.contracts.common import ErrorCode
+
 from ._support import Boundaries
 
 
@@ -97,5 +99,34 @@ async def test_T_APP_054_saved_microphone_is_used_for_next_run(tmp_path: Path) -
             )
             cancelled = await command(app, "run_cancel", run_id=started.data["run_id"])  # type: ignore[attr-defined]
             assert cancelled.ok  # type: ignore[attr-defined]
+    finally:
+        await app.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_T_APP_017_removed_local_only_patch_returns_validation(
+    tmp_path: Path,
+) -> None:
+    from wispr_clone.app import App
+
+    app = App(Boundaries().factories(), data_dir=tmp_path)
+    try:
+        await app.startup()
+        selected = await command(
+            app,
+            "models_select",
+            role="stt",
+            model_id="deepgram/nova-3",
+        )
+        assert selected.ok  # type: ignore[attr-defined]
+        tested = await command(
+            app,
+            "models_test",
+            role="cleanup",
+            model_id="meta-llama-3.1-8b-instruct",
+        )
+        assert tested.ok  # type: ignore[attr-defined]
+        result = await command(app, "settings_update", patch={"local_only": True})
+        assert result.error == ErrorCode.VALIDATION  # type: ignore[attr-defined]
     finally:
         await app.shutdown()

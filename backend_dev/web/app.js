@@ -78,8 +78,7 @@ function renderModels() {
     const select = $('[data-select]', card);
     if (select && document.activeElement !== select) {
       select.replaceChildren(...pickerOptions(role, modelCatalog, current).map((item) => { const option = document.createElement('option'); option.value = item.value; option.textContent = item.label; option.selected = item.selected; return option; }));
-      // Speech recognition is always a cloud model, so local-only mode locks its picker.
-      select.disabled = !modelCatalog || (role === 'stt' && Boolean(state.settings?.local_only));
+      select.disabled = !modelCatalog;
     }
     const modelId = $('[data-model-id]', card); if (modelId) modelId.textContent = current ?? '';
     const where = $('[data-where]', card); if (where) where.textContent = role === 'stt' ? 'Leaves this device' : 'On this device (LM Studio)';
@@ -125,10 +124,6 @@ function renderSettings() {
   const devices = state.microphones ?? [];
   const micSelect = $('#mic-select');
   if (micSelect && document.activeElement !== micSelect) micSelect.value = micSelection(settings, devices);
-  const localOnly = Boolean(settings.local_only);
-  $('#local-switch')?.setAttribute('aria-checked', String(localOnly));
-  $('#privacy-local-switch')?.setAttribute('aria-checked', String(localOnly));
-  const localWarning = $('#local-only-warning'); if (localWarning) localWarning.hidden = !localOnly;
   const keyConfigured = state.secrets?.openrouter_api_key?.configured;
   const keyStatus = $('#openrouter-key-status'); if (keyStatus) keyStatus.textContent = keyConfigured ? 'Key saved' : 'No key saved';
   $$('#mode-seg [data-mode]').forEach((button) => button.setAttribute('aria-checked', String(button.dataset.mode === settings.recording_mode)));
@@ -219,8 +214,6 @@ $('#cleanup-switch')?.addEventListener('click', async () => { const enabled = $(
 $('#instructions')?.addEventListener('input', () => { $('#save-instructions').disabled = !instructionsDirty($('#instructions').value, state.settings.cleanup_instructions ?? ''); });
 $('#save-instructions')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { cleanup_instructions: $('#instructions').value } }); if (failed(result)) return; state.settings = result.data; lastSavedInstructions = result.data.cleanup_instructions ?? ''; $('#save-instructions').disabled = true; $('#save-note').textContent = 'Saved'; });
 $('#autostart-switch')?.addEventListener('click', async () => { const result = await bridge.call('autostart_set', { enabled: $('#autostart-switch').getAttribute('aria-checked') !== 'true' }); if (failed(result)) return; renderAutostart(result.data); });
-$('#local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
-$('#privacy-local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#privacy-local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#save-openrouter-key')?.addEventListener('click', async () => { const input = $('#openrouter-key'); const value = normalizeSecret(input.value); input.value = ''; const result = await bridge.call('secret_set', { name: 'openrouter_api_key', value }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
 $('#clear-openrouter-key')?.addEventListener('click', async () => { $('#openrouter-key').value = ''; const result = await bridge.call('secret_clear', { name: 'openrouter_api_key' }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
 $('#mic-select')?.addEventListener('change', async () => { const microphone_id = $('#mic-select').value === '' ? null : $('#mic-select').value; const result = await bridge.call('settings_update', { patch: { microphone_id: microphone_id } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });

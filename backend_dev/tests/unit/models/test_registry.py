@@ -49,10 +49,8 @@ def test_T_REG_001_defaults_order_filters_and_lookups() -> None:
     for item in (stt, cleanup):
         assert models.get(item.model_id) == item
         assert models.role_of(item.model_id) == item.role
-        assert models.is_local(item.model_id) is item.local
     assert models.get("missing") is None
     assert models.role_of("missing") is None
-    assert models.is_local("missing") is False
 
 
 @pytest.mark.unit
@@ -112,7 +110,6 @@ def test_T_REG_002_local_remote_endpoint_rejected_cloud_accepted() -> None:
     cloud = module.ModelInfo("cloud", "cleanup", "Cloud", False, remote)
     models = module.ModelRegistry([cloud])
     assert models.list_models() == (cloud,)
-    assert models.is_local("cloud") is False
 
 
 @pytest.mark.unit

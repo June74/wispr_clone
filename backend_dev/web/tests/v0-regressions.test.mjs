@@ -5,6 +5,7 @@ import { acceptsEvent, applyEvent, createStore } from '../lib/store.js';
 
 const app = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const messages = readFileSync(new URL('../lib/messages.js', import.meta.url), 'utf8');
 const forms = await import('../lib/forms.js').catch(() => ({}));
 
 test('T-WEB-023: term eligibility and Add/Edit modal wiring', () => {
@@ -76,4 +77,13 @@ test('T-WEB-026: recovery controls render from the active run and clear otherwis
   assert.match(renderRun, /#dictate-recovery['"]\)\.(?:innerHTML\s*=|replaceChildren\()/);
   assert.doesNotMatch(app, /lastRecovery/);
   assert.match(app, /bridge\.call\('run_recover',\s*\{\s*run_id:\s*active\.run_id,\s*expected_version:\s*active\.version,\s*action:\s*recover\.dataset\.recover\s*\}\)/);
+});
+
+test('T-WEB-027: local-only UI and error message are removed', () => {
+  for (const [name, source] of [['index.html', html], ['app.js', app]]) {
+    for (const token of ['Local-only mode', 'privacy-local-switch', 'local-switch', 'local-only-warning', 'local_only']) {
+      assert.equal(source.includes(token), false, `${name} still contains ${token}`);
+    }
+  }
+  assert.doesNotMatch(messages, /cloud_model_forbidden/);
 });
