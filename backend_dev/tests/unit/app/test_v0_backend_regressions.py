@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 
 from wispr_clone.contracts.common import ErrorCode
+from wispr_clone.hotkeys.hotkey_service import KeyAction
 
 from ._support import Boundaries
 
@@ -21,6 +23,36 @@ async def command(app: object, name: str, **fields: object) -> object:
             **fields,
         },  # type: ignore[attr-defined]
     )
+
+
+def press(listener: object) -> None:
+    service = listener.service  # type: ignore[attr-defined]
+    for key in ("ctrl", "shift", "space"):
+        service.handle(KeyAction.DOWN, key)
+    service.handle(KeyAction.UP, "space")
+
+
+async def wait_for_active(app: object, *, previous: str | None = None) -> str | None:
+    try:
+        async with asyncio.timeout(0.5):
+            while True:
+                controller = app._controller  # type: ignore[attr-defined]
+                active = controller.active_run_id if controller else None
+                if active is not None and active != previous:
+                    return active
+                await asyncio.sleep(0)
+    except TimeoutError:
+        return None
+
+
+async def wait_for_stopped(app: object) -> bool:
+    try:
+        async with asyncio.timeout(0.5):
+            while app._controller.active_run_id is not None:  # type: ignore[attr-defined]
+                await asyncio.sleep(0)
+        return True
+    except TimeoutError:
+        return False
 
 
 async def waiting_run(app: object, boundaries: Boundaries) -> str:
@@ -99,6 +131,101 @@ async def test_T_APP_054_saved_microphone_is_used_for_next_run(tmp_path: Path) -
             )
             cancelled = await command(app, "run_cancel", run_id=started.data["run_id"])  # type: ignore[attr-defined]
             assert cancelled.ok  # type: ignore[attr-defined]
+    finally:
+        await app.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_T_APP_055a_cancel_resets_toggle_press(tmp_path: Path) -> None:
+    from wispr_clone.app import App
+
+    boundaries = Boundaries()
+    app = App(boundaries.factories(), data_dir=tmp_path)
+    app._loop = asyncio.get_running_loop()
+    try:
+        await app.startup()
+        listener = boundaries.listeners[-1]
+        press(listener)
+        first = await wait_for_active(app)
+        assert first is not None
+        listener.service.handle(KeyAction.DOWN, "escape")
+        assert await wait_for_stopped(app)
+        await app._controller.settled(first)
+        press(listener)
+        second = await wait_for_active(app, previous=first)
+        assert second is not None and second != first
+    finally:
+        await app.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_T_APP_055b_hotkey_stops_api_started_recording(tmp_path: Path) -> None:
+    from wispr_clone.app import App
+
+    boundaries = Boundaries()
+    app = App(boundaries.factories(), data_dir=tmp_path)
+    app._loop = asyncio.get_running_loop()
+    try:
+        await app.startup()
+        started = await command(app, "run_start", request_id="api-start")
+        assert started.ok and started.data is not None  # type: ignore[attr-defined]
+        run_id = started.data["run_id"]  # type: ignore[attr-defined]
+        press(boundaries.listeners[-1])
+        assert await wait_for_stopped(app)
+        await app._controller.settled(run_id)
+        record = await app._history.get(run_id)
+        assert record.status.value != "recording"
+    finally:
+        await app.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_T_APP_055c_api_stop_resets_toggle_press(tmp_path: Path) -> None:
+    from wispr_clone.app import App
+
+    boundaries = Boundaries()
+    app = App(boundaries.factories(), data_dir=tmp_path)
+    app._loop = asyncio.get_running_loop()
+    try:
+        await app.startup()
+        listener = boundaries.listeners[-1]
+        press(listener)
+        first = await wait_for_active(app)
+        assert first is not None
+        stopped = await command(app, "run_stop", run_id=first)
+        assert stopped.ok  # type: ignore[attr-defined]
+        assert await wait_for_stopped(app)
+        await app._controller.settled(first)
+        press(listener)
+        second = await wait_for_active(app, previous=first)
+        assert second is not None and second != first
+    finally:
+        await app.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_T_APP_055d_hold_starts_on_down_stops_on_up(tmp_path: Path) -> None:
+    from wispr_clone.app import App
+
+    boundaries = Boundaries()
+    app = App(boundaries.factories(), data_dir=tmp_path)
+    app._loop = asyncio.get_running_loop()
+    try:
+        await app.startup()
+        updated = await command(
+            app, "settings_update", patch={"recording_mode": "hold"}
+        )
+        assert updated.ok  # type: ignore[attr-defined]
+        listener = boundaries.listeners[-1]
+        for key in ("ctrl", "shift", "space"):
+            listener.service.handle(KeyAction.DOWN, key)
+        active = await wait_for_active(app)
+        assert active is not None
+        listener.service.handle(KeyAction.UP, "space")
+        assert await wait_for_stopped(app)
+        await app._controller.settled(active)
+        record = await app._history.get(active)
+        assert record.status.value != "recording"
     finally:
         await app.shutdown()
 

@@ -740,17 +740,42 @@ class App:
                 lambda done: done.exception() if not done.cancelled() else None
             )
 
+        async def toggle_dictation() -> None:
+            active_run_id = (
+                self._controller.active_run_id if self._controller is not None else None
+            )
+            if active_run_id is None:
+                await invoke("run_start", {"request_id": secrets.token_urlsafe(18)})
+            else:
+                await invoke("run_stop", {"run_id": active_run_id})
+
+        def schedule_toggle_dictation() -> None:
+            loop = self._loop or asyncio.get_running_loop()
+            task = loop.create_task(toggle_dictation())
+            task.add_done_callback(
+                lambda done: done.exception() if not done.cancelled() else None
+            )
+
+        toggle_mode = self._settings.recording_mode == "toggle"
         service = HotkeyService(
             dictation=parse_binding(self._settings.dictation_shortcut),
             cancel=parse_binding(self._settings.cancel_shortcut),
             mode=self._settings.recording_mode,
-            on_start=lambda: schedule(
-                "run_start", {"request_id": secrets.token_urlsafe(18)}
+            on_start=(
+                schedule_toggle_dictation
+                if toggle_mode
+                else lambda: schedule(
+                    "run_start", {"request_id": secrets.token_urlsafe(18)}
+                )
             ),
-            on_stop=lambda: (
-                schedule("run_stop", {"run_id": self._controller.active_run_id})
-                if self._controller and self._controller.active_run_id
-                else None
+            on_stop=(
+                schedule_toggle_dictation
+                if toggle_mode
+                else lambda: (
+                    schedule("run_stop", {"run_id": self._controller.active_run_id})
+                    if self._controller and self._controller.active_run_id
+                    else None
+                )
             ),
             on_cancel=lambda: schedule("run_cancel"),
             post=self._post_hotkey,
