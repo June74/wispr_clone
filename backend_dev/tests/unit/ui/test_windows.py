@@ -1,4 +1,4 @@
-"""T-UI-003/004/005: native window creation, navigation, and release settings."""
+"""T-UI-003/004/005/007/018/019: windows, navigation, frame, release settings."""
 
 from __future__ import annotations
 
@@ -134,7 +134,7 @@ def test_T_UI_004_hud_navigation_is_restricted_to_its_bundled_file(
 def test_T_UI_004_navigation_is_restricted_to_bundled_file() -> None:
     webview = FakeWebview()
     bridge = object()
-    open_settings(webview, bridge, debug=False)
+    open_settings(webview, bridge)
     webview.start()
     settings = webview.windows[0]
     allowed = settings.url
@@ -177,7 +177,7 @@ def test_T_UI_004_navigation_handler_exception_does_not_escape_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     webview = FakeWebview()
-    settings = open_settings(webview, object(), debug=False)
+    settings = open_settings(webview, object())
     webview.start()
     calls = 0
 
@@ -231,7 +231,7 @@ def test_T_UI_018_settings_starts_hidden_and_shows_once_frame_is_prepared(
         "_install_frame",
         lambda window, _controls: installs.append(window) or 4321,
     )
-    settings = open_settings(webview, object(), debug=False)
+    settings = open_settings(webview, object())
     assert settings.options["hidden"] is True
 
     webview.start()
@@ -255,7 +255,7 @@ def test_T_UI_018_frame_failure_still_shows_window_with_native_caption(
 
     monkeypatch.setattr(windows.sys, "platform", "win32")
     monkeypatch.setattr(windows, "_install_frame", fail)
-    settings = open_settings(webview, object(), debug=False)
+    settings = open_settings(webview, object())
     webview.start()
 
     assert [name for name, _ in settings.calls].count("show") == 1

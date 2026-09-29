@@ -28,10 +28,8 @@ def _catalog_with_cloud() -> ModelRegistry:
     return ModelRegistry(
         (
             *default_registry().list_models(),
-            ModelInfo(
-                "cloud-cleanup", "cleanup", "Synthetic cloud model", False, "test", None
-            ),
-            ModelInfo("local-stt", "stt", "Synthetic local STT", True, "test", None),
+            ModelInfo("cloud-cleanup", "cleanup", "Synthetic cloud model", False, None),
+            ModelInfo("local-stt", "stt", "Synthetic local STT", True, None),
         )
     )
 

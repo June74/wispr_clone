@@ -29,14 +29,12 @@ def test_T_SET_021_defaults_and_registry() -> None:
         stt.role,
         stt.display_name,
         stt.local,
-        stt.runtime,
         stt.endpoint,
     ) == (
         WHISPER,
         "stt",
         "Whisper Large v3 Turbo (DeepInfra)",
         False,
-        "openrouter",
         "https://openrouter.ai/api/v1",
     )
     assert cleanup.model_id == "meta-llama-3.1-8b-instruct"

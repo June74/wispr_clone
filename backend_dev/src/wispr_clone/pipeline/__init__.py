@@ -1,1 +1,1 @@
-"""Pure state-machine logic for pipeline run lifecycle decisions."""
+"""Run pipeline: pure state machine, run controller and insertion protocol."""

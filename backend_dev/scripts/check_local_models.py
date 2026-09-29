@@ -47,7 +47,7 @@ def check_lmstudio(
     opener: Callable[..., Any] = urllib.request.urlopen,
     timeout: float = 3.0,
 ) -> Check:
-    """GET the LM Studio model list and check that the pinned model is loaded."""
+    """GET the LM Studio model list; check the default cleanup model is loaded."""
     url = f"{base.rstrip('/')}/api/v0/models"
     request = urllib.request.Request(url, method="GET")
     # urllib's default opener follows redirects. Preserve injected callables for

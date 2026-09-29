@@ -1,1 +1,1 @@
-"""Pure personal-dictionary matching and import/export helpers."""
+"""Personal dictionary: matching, import/export and the SQLite repository."""

@@ -249,7 +249,6 @@ async def test_T_RUN_003_cancel_while_finish_pending_discards_text(
 ) -> None:
     async with scenario(tmp_path) as rig:
         entered, release = asyncio.Event(), asyncio.Event()
-        session = None
         run_id = await rig.controller.start(start_request_id="one")
         session = rig.stt.sessions[0]
 
@@ -376,21 +375,6 @@ async def test_T_RUN_008_cancel_unknown_finished_and_current(tmp_path: Path) -> 
         await rig.controller.cancel(third)
         assert await rig.controller.cancel_current() is None
         assert len(rig.events.events) == count
-
-
-@pytest.mark.asyncio
-async def test_T_RUN_009a_late_stt_callback_changes_nothing(tmp_path: Path) -> None:
-    async with scenario(tmp_path) as rig:
-        run_id = await rig.controller.start(start_request_id="one")
-        session = rig.stt.sessions[0]
-        await rig.controller.cancel(run_id)
-        record = await rig.controller.settled(run_id)
-        before = list(rig.events.events)
-        session.emit_text("private late text", "private tentative")
-        assert record.status == RunStatus.CANCELLED
-        assert record.original_text is None and record.adjusted_text is None
-        assert await rig.history.get(run_id) == record
-        assert rig.events.events == before
 
 
 @pytest.mark.asyncio

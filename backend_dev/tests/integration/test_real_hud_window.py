@@ -1,4 +1,4 @@
-"""T-UI-011: opt-in native HUD style, geometry, and focus check."""
+"""T-UI-011: opt-in pywebview fallback HUD style, geometry, and focus check."""
 
 from __future__ import annotations
 

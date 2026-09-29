@@ -15,7 +15,7 @@ import httpx
 
 from wispr_clone.contracts.common import ErrorCode, ThirdPartyError, WisprError
 
-from .base import SAMPLE_RATE, SttSession, TextCallback
+from .base import SAMPLE_RATE, SttSession
 from .speech_gate import drop_hallucination, find_speech
 
 # Providers pinned per model (fallback disabled). Other models are routed by
@@ -35,7 +35,6 @@ class OpenRouterWhisper:
         provider_only: tuple[str, ...] = ("deepinfra",),
         timeout_s: float = 30.0,
         transport: httpx.AsyncBaseTransport | None = None,
-        language: str | None = None,
     ) -> None:
         if not base_url.startswith("https://"):
             raise WisprError(ErrorCode.VALIDATION, "stt", "base_url")
@@ -45,7 +44,6 @@ class OpenRouterWhisper:
         self._provider_only = provider_only
         self._timeout_s = timeout_s
         self._transport = transport
-        self._language = language
         self._client: httpx.AsyncClient | None = None
         self._active: _BufferSession | None = None
         self._lock = Lock()
@@ -94,8 +92,6 @@ class OpenRouterWhisper:
                 else {"data_collection": "deny"}
             ),
         }
-        if self._language:
-            body["language"] = self._language
         request_error: ErrorCode | None = None
         try:
             response = await self._http().post(
@@ -128,11 +124,7 @@ class OpenRouterWhisper:
                 "credentials rejected",
                 ErrorCode.API_KEY_INVALID,
             )
-        if (
-            response.status_code in (402, 429)
-            or response.status_code >= 500
-            or response.status_code != 200
-        ):
+        if response.status_code != 200:
             raise ThirdPartyError(
                 "openrouter",
                 "transcribe",
@@ -172,8 +164,7 @@ class OpenRouterWhisper:
         text = await self._transcribe_wav(_wav_bytes(speech.pcm))
         return drop_hallucination(text, speech.speech_s)
 
-    def start_session(self, on_text: TextCallback | None = None) -> SttSession:
-        del on_text
+    def start_session(self) -> SttSession:
         with self._lock:
             if self._active is not None:
                 raise WisprError(ErrorCode.STT_UNAVAILABLE, "stt", "session active")

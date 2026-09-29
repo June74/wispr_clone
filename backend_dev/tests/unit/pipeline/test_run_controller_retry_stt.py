@@ -45,8 +45,8 @@ class ReplayEngine(FakeSttEngine):
         self.replay_release = asyncio.Event()
         self.replay_release.set()
 
-    def start_session(self, on_text: Any = None) -> FakeSttSession:
-        session = super().start_session(on_text)
+    def start_session(self) -> FakeSttSession:
+        session = super().start_session()
         if self.transcribed:
             finish = session.finish
 
@@ -73,11 +73,10 @@ class Rig:
         stt: ReplayEngine,
         win: FakeWin32Api,
         captures: list[FakeCapture],
-        uia: FakeUiaApi,
     ) -> None:
         self.controller, self.history, self.dictionary = controller, history, dictionary
         self.events, self.clock, self.stt = events, clock, stt
-        self.win, self.captures, self.uia = win, captures, uia
+        self.win, self.captures = win, captures
 
     def sends(self) -> int:
         return sum(name == "send_inputs" for name, _, _ in self.win.calls)
@@ -175,9 +174,7 @@ async def scenario(
                 clock=clock.now,
             )
         )
-        yield Rig(
-            controller, history, dictionary, events, clock, stt, win, captures, uia
-        )
+        yield Rig(controller, history, dictionary, events, clock, stt, win, captures)
 
 
 async def rejects(

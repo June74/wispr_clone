@@ -31,17 +31,14 @@ class FakeInputStream:
             raise module.open_error
         self.module = module
         self.kwargs = kwargs
-        self.started = False
         self.stopped = False
         self.closed = False
         self.audio_thread_ident = None
-        self.finished = False
         module.streams.append(self)
 
     def start(self):
         if self.module.start_error is not None:
             raise self.module.start_error
-        self.started = True
         return self
 
     def stop(self):
@@ -52,13 +49,12 @@ class FakeInputStream:
 
     def finish_on_its_own(self):
         """Simulate PortAudio ending a stream without an application stop."""
-        self.finished = True
         callback = self.kwargs.get("finished_callback")
         if callback is not None:
             callback()
 
     def fire(self, data, status=None):
-        """Deliver one copied test buffer synchronously via a bounded audio thread."""
+        """Deliver the caller's buffer (a view, not a copy) via a bounded thread."""
         finished = threading.Event()
         errors = []
         frames = np.asarray(data, dtype=np.float32).reshape(-1, 1)
@@ -90,7 +86,6 @@ def make_fake_sounddevice():
     module.streams = []
     module.open_error = None
     module.start_error = None
-    module.query_error = None
     module.default = SimpleNamespace(device=(1, 0))
     module.devices = [
         {
@@ -109,8 +104,6 @@ def make_fake_sounddevice():
         return FakeInputStream(module, **kwargs)
 
     def query_devices(device=None, kind=None):
-        if module.query_error is not None:
-            raise module.query_error
         if device is not None:
             return module.devices[1]
         return module.devices

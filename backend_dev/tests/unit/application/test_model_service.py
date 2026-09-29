@@ -1,4 +1,4 @@
-"""WO-M4b model readiness and command contracts (RED until modules exist)."""
+"""WO-M4b model readiness and command contracts."""
 
 from __future__ import annotations
 
@@ -87,7 +87,6 @@ class Rig:
             OTHER_LOCAL_ID: self.other_cleanup,
             CLOUD_ID: self.cloud_cleanup,
         }
-        self.stt_contacts: list[str] = []
         self.cleanup_contacts: list[str] = []
         self.service = ModelService(
             registry,
@@ -99,7 +98,6 @@ class Rig:
         )
 
     def stt_for(self, model_id: str) -> RecordingStt | None:
-        self.stt_contacts.append(model_id)
         return self.stt_engines.get(model_id)
 
     def cleanup_for(self, model_id: str) -> RecordingCleanup | None:
@@ -112,9 +110,9 @@ async def scenario(path: Path) -> AsyncIterator[Rig]:
     registry = ModelRegistry(
         (
             *default_registry().list_models(),
-            ModelInfo(OTHER_LOCAL_ID, "cleanup", "Other local", True, "test", None),
-            ModelInfo(OTHER_STT_ID, "stt", "Other STT", True, "test", None),
-            ModelInfo(CLOUD_ID, "cleanup", "Cloud", False, "cloud", None),
+            ModelInfo(OTHER_LOCAL_ID, "cleanup", "Other local", True, None),
+            ModelInfo(OTHER_STT_ID, "stt", "Other STT", True, None),
+            ModelInfo(CLOUD_ID, "cleanup", "Cloud", False, None),
         )
     )
     migrations = [
@@ -319,10 +317,10 @@ async def test_T_APP_016_model_commands_session_deadline_and_error_codes(
             "models_test", {"session_token": "session-1", "model_id": "missing"}
         )
         assert invalid.error == ErrorCode.VALIDATION
-        forbidden = await api.call(
+        allowed = await api.call(
             "models_test", {"session_token": "session-1", "model_id": CLOUD_ID}
         )
-        assert forbidden.ok and forbidden.data == item(CLOUD_ID, "cleanup", True)
+        assert allowed.ok and allowed.data == item(CLOUD_ID, "cleanup", True)
         await rig.store.update({"stt_model_id": OTHER_STT_ID, "local_only": True})
         forbidden = await api.call(
             "models_test", {"session_token": "session-1", "model_id": CLOUD_ID}

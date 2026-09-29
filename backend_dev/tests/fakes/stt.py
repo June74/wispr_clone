@@ -8,19 +8,15 @@ import wave
 from pathlib import Path
 
 from wispr_clone.contracts.common import ErrorCode, WisprError
-from wispr_clone.stt.base import (
-    CHUNK_SAMPLES,
-    SAMPLE_RATE,
-    SttEngine,
-    SttSession,
-    TextCallback,
-)
+from wispr_clone.stt.base import SAMPLE_RATE, SttEngine, SttSession
+
+# Replay a WAV in 80 ms blocks, the size live capture delivers.
+CHUNK_SAMPLES = 1_280
 
 
 class FakeSttSession:
-    def __init__(self, final_text: str, on_text: TextCallback | None = None) -> None:
+    def __init__(self, final_text: str) -> None:
         self.final_text = final_text
-        self.on_text = on_text
         self.pushed: list[array.array[float]] = []
         self.finished = False
         self.cancelled = False
@@ -43,11 +39,6 @@ class FakeSttSession:
             return
         self.cancelled = True
 
-    def emit_text(self, committed: str, tentative: str = "") -> None:
-        """Deliver a scripted callback while the session is active."""
-        if self.on_text is not None and not (self.finished or self.cancelled):
-            self.on_text(committed, tentative)
-
 
 class FakeSttEngine:
     def __init__(self, final_text: str) -> None:
@@ -65,12 +56,12 @@ class FakeSttEngine:
     async def start(self) -> None:
         self.started = True
 
-    def start_session(self, on_text: TextCallback | None = None) -> FakeSttSession:
+    def start_session(self) -> FakeSttSession:
         if self.sessions and not (
             self.sessions[-1].finished or self.sessions[-1].cancelled
         ):
             raise WisprError(ErrorCode.STT_UNAVAILABLE, "stt", "session active")
-        session = FakeSttSession(self.final_text, on_text)
+        session = FakeSttSession(self.final_text)
         self.sessions.append(session)
         return session
 

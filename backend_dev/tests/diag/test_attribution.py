@@ -10,13 +10,12 @@ import pytest
 
 TESTS_DIR = Path(__file__).resolve().parents[1]
 BACKEND_DIR = TESTS_DIR.parent
-PLUGIN = TESTS_DIR / "_attribution" / "plugin.py"
 CAPTURE_SECRET = "PRIVATE_CAPTURED_TRANSCRIPT_71"
 ASSERTION_SECRET = "PRIVATE_ASSERTION_SECOND_LINE_72"
 
 
 def _suite(pytester: pytest.Pytester) -> Path:
-    """Give a disposable suite the production plugin when it exists."""
+    """Give a disposable suite the production attribution plugin."""
     pytester.makeini(
         """[pytest]
 addopts = --strict-markers
@@ -31,15 +30,13 @@ markers =
         "import sys\n"
         f"sys.path.insert(0, {str(TESTS_DIR)!r})\n"
         f"sys.path.insert(0, {str(pytester.path / 'src')!r})\n"
-        + ("pytest_plugins = ('_attribution.plugin',)\n" if PLUGIN.is_file() else "")
+        + "pytest_plugins = ('_attribution.plugin',)\n"
     )
     return pytester.path / "attribution.json"
 
 
 def _run(pytester: pytest.Pytester, report: Path, *args: str) -> pytest.RunResult:
-    command = ["-q", *args]
-    if PLUGIN.is_file():
-        command.extend(["--attribution-json", str(report)])
+    command = ["-q", *args, "--attribution-json", str(report)]
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setenv("PYTHONUTF8", "1")
         return pytester.runpytest_subprocess(*command)

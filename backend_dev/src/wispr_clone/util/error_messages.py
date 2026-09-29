@@ -1,4 +1,4 @@
-"""Fixed, privacy-safe messages and recovery guidance for stable error codes."""
+"""Fixed, privacy-safe user-facing messages for stable error codes."""
 
 from wispr_clone.contracts.common import ErrorCode
 
@@ -45,49 +45,7 @@ _MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.DELETION_FAILED: "Some local dictation data could not be deleted yet.",
 }
 
-_ACTIONS: dict[ErrorCode, tuple[str, ...]] = {
-    ErrorCode.VALIDATION: ("review_settings",),
-    ErrorCode.UNKNOWN_COMMAND: ("dismiss",),
-    ErrorCode.STALE_VERSION: ("refresh_state",),
-    ErrorCode.EXPIRED_COMMAND: ("retry",),
-    ErrorCode.PREVIOUS_SESSION_TOKEN: ("refresh_state",),
-    ErrorCode.RUN_NOT_FOUND: ("dismiss",),
-    ErrorCode.RUN_EXPIRED: ("dismiss",),
-    ErrorCode.RUN_DELETED: ("dismiss",),
-    ErrorCode.DUPLICATE_REQUEST: ("refresh_state",),
-    ErrorCode.DEVICE_LEASE_CONFLICT: ("wait",),
-    ErrorCode.MICROPHONE_UNAVAILABLE: ("choose_mic", "open_settings"),
-    ErrorCode.MICROPHONE_PERMISSION_DENIED: ("open_settings", "choose_mic"),
-    ErrorCode.MICROPHONE_DISCONNECTED: ("choose_mic", "retry"),
-    ErrorCode.AUDIO_QUEUE_OVERFLOW: ("retry", "dismiss"),
-    ErrorCode.NO_SPEECH_DETECTED: ("retry_stt", "dismiss"),
-    ErrorCode.STT_UNAVAILABLE: ("open_settings", "retry_stt"),
-    ErrorCode.API_KEY_MISSING: ("open_settings",),
-    ErrorCode.API_KEY_INVALID: ("open_settings",),
-    ErrorCode.MODEL_LOAD_FAILED: ("open_settings", "retry"),
-    ErrorCode.MODEL_LOADING: ("wait",),
-    ErrorCode.STT_TIMEOUT: ("retry_stt", "use_original", "copy"),
-    ErrorCode.STT_STREAM_CLOSED: ("retry_stt", "use_original", "copy"),
-    ErrorCode.CLEANUP_UNAVAILABLE: ("retry_cleanup", "use_original", "copy"),
-    ErrorCode.CLEANUP_TIMEOUT: ("retry_cleanup", "use_original", "copy"),
-    ErrorCode.CLEANUP_REJECTED: ("retry_cleanup", "use_original", "copy"),
-    ErrorCode.CLOUD_MODEL_FORBIDDEN: ("open_settings",),
-    ErrorCode.NON_LOOPBACK_ENDPOINT: ("open_settings",),
-    ErrorCode.DESTINATION_UNVERIFIABLE: ("copy", "insert"),
-    ErrorCode.DESTINATION_CLOSED: ("copy", "insert"),
-    ErrorCode.DESTINATION_WAIT_LIMIT_EXCEEDED: ("copy", "insert"),
-    ErrorCode.INSERTION_FAILED: ("copy", "retry_insert"),
-    ErrorCode.INSERTION_UNCERTAIN: ("copy", "review_before_retry"),
-    ErrorCode.STORAGE_ERROR: ("retry", "open_settings"),
-    ErrorCode.DELETION_FAILED: ("retry_delete", "dismiss"),
-}
-
 
 def get_error_message(code: ErrorCode) -> str:
     """Return fixed user-facing text; never interpolate private content."""
     return _MESSAGES[code]
-
-
-def get_recovery_actions(code: ErrorCode) -> tuple[str, ...]:
-    """Return the actions appropriate to a stable error code."""
-    return _ACTIONS[code]

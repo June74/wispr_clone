@@ -19,7 +19,6 @@ class RunCommands:
         self,
         controller: RunController,
         *,
-        clock: Callable[[], float],
         copy_to_clipboard: Callable[[str], Awaitable[None]],
         last_external_destination: Callable[[], object | None],
     ) -> None:

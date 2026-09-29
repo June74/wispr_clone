@@ -31,7 +31,6 @@ class ModelInfo:
     role: ModelRole
     display_name: str
     local: bool
-    runtime: str
     endpoint: str | None
 
 
@@ -107,7 +106,6 @@ class ModelRegistry:
             cast(ModelRole, role),
             model_id,
             local,
-            "lmstudio" if local else "openrouter",
             config.LM_STUDIO_ENDPOINT if local else config.OPENROUTER_ENDPOINT,
         )
 
@@ -137,7 +135,7 @@ def is_loopback_endpoint(url: str) -> bool:
 
 
 def default_registry() -> ModelRegistry:
-    """Build the selected speech and cleanup models in stable UI order."""
+    """Build the registry of the default speech and cleanup models."""
     return ModelRegistry(
         (
             ModelInfo(
@@ -145,7 +143,6 @@ def default_registry() -> ModelRegistry:
                 "stt",
                 "Whisper Large v3 Turbo (DeepInfra)",
                 False,
-                "openrouter",
                 config.OPENROUTER_ENDPOINT,
             ),
             ModelInfo(
@@ -153,7 +150,6 @@ def default_registry() -> ModelRegistry:
                 "cleanup",
                 "Llama 3.1 8B Instruct",
                 True,
-                "lmstudio",
                 config.LM_STUDIO_ENDPOINT,
             ),
         )

@@ -113,7 +113,6 @@ class RunController:
         self._insertion_gate = asyncio.Lock()
         self._inserting_run_ids: set[str] = set()
         self._retry_transcribing: set[str] = set()
-        self._retry_reserving: str | None = None
 
     @property
     def active_run_id(self) -> str | None:
@@ -240,7 +239,7 @@ class RunController:
             raise
 
     def abort(self, run_id: str) -> None:
-        """Stop work for a run whose history record was evicted or expired."""
+        """Stop work for a run whose history record was evicted, expired or deleted."""
         task = self._tasks.get(run_id)
         was_starting = run_id in self._starting
         waiting = any(entry.run_id == run_id for entry in self._waiting)
@@ -383,7 +382,6 @@ class RunController:
                 raise WisprError(ErrorCode.DEVICE_LEASE_CONFLICT, "run", "busy")
             if not self._slot_reserved:
                 self._slot_reserved = True
-                self._retry_reserving = run_id
                 retry_slot_reserved = True
         try:
             await self._recover_impl(
@@ -396,7 +394,6 @@ class RunController:
         except BaseException:
             if retry_slot_reserved:
                 self._slot_reserved = False
-                self._retry_reserving = None
             raise
 
     async def _recover_impl(
@@ -447,7 +444,6 @@ class RunController:
             )
             self._cancel_flags[run_id] = False
             self._active_run_id = run_id
-            self._retry_reserving = None
             self._publish_updated(record)
             task = asyncio.create_task(self._retry_stt_task(run_id, record))
             self._tasks[run_id] = task
@@ -495,7 +491,7 @@ class RunController:
                 return
             assert record.audio_path is not None
             self._retry_transcribing.add(run_id)
-            if self._is_aborted(run_id) or self._cancel_flags.get(run_id, False):
+            if self._cancel_flags.get(run_id, False):
                 self._release_slot(run_id)
                 self._retry_transcribing.discard(run_id)
                 transcription_active = False
@@ -504,7 +500,8 @@ class RunController:
             try:
                 text = await self._services.stt.transcribe_file(Path(record.audio_path))
             finally:
-                # transcribe_file owns the engine's only STT session until it returns.
+                # Hold the recording slot until transcribe_file returns, so no new
+                # dictation starts during the retry.
                 self._release_slot(run_id)
                 self._retry_transcribing.discard(run_id)
                 transcription_active = False
@@ -781,10 +778,9 @@ class RunController:
                     break
                 session.push_audio(array.array("f", chunk.samples))
                 wav.write(chunk.samples)
-                if not self._cancel_flags.get(run_id, False):
-                    self._services.events.publish(
-                        {"name": "audio:level", "run_id": run_id, "bands": chunk.bands}
-                    )
+                self._services.events.publish(
+                    {"name": "audio:level", "run_id": run_id, "bands": chunk.bands}
+                )
             if self._cancel_flags.get(run_id, False):
                 await self._transition(run_id, RunEvent.CANCEL)
                 return
@@ -802,11 +798,6 @@ class RunController:
                 await self._transition(run_id, RunEvent.CANCEL)
                 return
             entries = self._dictionary_snapshots.get(run_id, ())
-            if self._is_aborted(run_id):
-                return
-            if self._cancel_flags.get(run_id, False):
-                await self._transition(run_id, RunEvent.CANCEL)
-                return
             await self._process_transcript(
                 record, text, entries, audio_duration=wav.frames_written / 16000
             )
@@ -943,10 +934,10 @@ class RunController:
         self._publish_updated(updated)
         return updated
 
-    async def _cleanup_and_select(self, record: RunRecord, *, retry: bool) -> bool:
+    async def _cleanup_and_select(self, record: RunRecord, *, retry: bool) -> None:
         run_id = record.id
         if self._is_aborted(run_id):
-            return False
+            return
         adjusted = record.adjusted_text or ""
         config = record.config
         enabled = config.get("cleanup_enabled") is True
@@ -959,9 +950,9 @@ class RunController:
             )
             if self._cancel_flags.get(run_id, False):
                 await self._transition(run_id, RunEvent.CANCEL)
-                return False
+                return
             await self._insert_selected(record, adjusted)
-            return True
+            return
         if retry or record.cleanup_status != CleanupStatus.PENDING:
             record = await self._services.history.update_run(
                 run_id,
@@ -977,10 +968,10 @@ class RunController:
             else self._dictionary_snapshots.get(run_id, ())
         )
         if self._is_aborted(run_id):
-            return False
+            return
         if self._cancel_flags.get(run_id, False):
             await self._transition(run_id, RunEvent.CANCEL)
-            return False
+            return
         model_id = config.get("cleanup_model_id")
         engine = (
             self._services.cleanup_for(model_id)
@@ -1001,33 +992,36 @@ class RunController:
                 )
             )
             if self._is_aborted(run_id):
-                return False
+                return
         except (ThirdPartyError, WisprError) as error:
             if self._is_aborted(run_id) or self._is_missing_run(error):
-                return False
+                return
             if self._cancel_flags.get(run_id, False):
                 await self._transition(run_id, RunEvent.CANCEL)
-                return False
-            return await self._cleanup_failure(
+                return
+            await self._cleanup_failure(
                 record, CleanupStatus.FAILED, error.error_code.value
             )
+            return
         except Exception:
             if self._is_aborted(run_id):
-                return False
+                return
             if self._cancel_flags.get(run_id, False):
                 await self._transition(run_id, RunEvent.CANCEL)
-                return False
-            return await self._cleanup_failure(
+                return
+            await self._cleanup_failure(
                 record, CleanupStatus.FAILED, "cleanup_unavailable"
             )
+            return
         if self._cancel_flags.get(run_id, False):
             await self._transition(run_id, RunEvent.CANCEL)
-            return False
+            return
         verdict = check_cleanup(adjusted, cleaned)
         if not verdict.accepted:
-            return await self._cleanup_failure(
+            await self._cleanup_failure(
                 record, CleanupStatus.REJECTED, ",".join(sorted(verdict.reasons))
             )
+            return
         record = await self._services.history.update_run(
             run_id,
             expected_version=record.version,
@@ -1038,19 +1032,18 @@ class RunController:
         )
         if self._cancel_flags.get(run_id, False):
             await self._transition(run_id, RunEvent.CANCEL)
-            return False
+            return
         await self._insert_selected(record, cleaned)
-        return True
 
     async def _cleanup_failure(
         self, record: RunRecord, status: CleanupStatus, reason: str
-    ) -> bool:
+    ) -> None:
         run_id = record.id
         if self._is_aborted(run_id):
-            return False
+            return
         if self._cancel_flags.get(run_id, False):
             await self._transition(run_id, RunEvent.CANCEL)
-            return False
+            return
         if status == CleanupStatus.FAILED and reason == "cleanup_unavailable":
             updated = await self._services.history.update_run(
                 run_id,
@@ -1061,7 +1054,7 @@ class RunController:
                 output_selection="original",
             )
             await self._insert_selected(updated, updated.original_text or "")
-            return True
+            return
         failed = transition(
             RunState(record.status, record.version), RunEvent.CLEANUP_FAILED
         )
@@ -1075,7 +1068,6 @@ class RunController:
             output_selection=None,
         )
         self._publish_updated(updated)
-        return False
 
     async def _insert_selected(self, record: RunRecord, text: str) -> None:
         async with self._insertion_gate:

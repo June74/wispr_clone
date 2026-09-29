@@ -1,7 +1,7 @@
 import { createBridge, whenHostReady } from './lib/bridge.js';
 import { catalogNote, modelBadge, pickerOptions } from './lib/models.js';
 import { createStore, applyEvent, acceptsEvent } from './lib/store.js';
-import { hudState, shouldToastInserted, recoveryButtons } from './lib/view.js';
+import { shouldToastInserted, recoveryButtons } from './lib/view.js';
 import { messageFor } from './lib/messages.js';
 import { createWaveform } from './waveform.js';
 import { normalizeSecret } from './lib/secrets.js';
@@ -13,6 +13,7 @@ let state = createStore();
 let currentRun = null;
 let historyFilter = 'all';
 let editingTermId = null;
+// The bridge handles previous_session_token by fetching a fresh snapshot; onSnapshot installs it here.
 const bridge = createBridge(window, { onSnapshot(snapshot) { state = { ...createStore(snapshot), secrets: snapshot.secrets }; currentRun = snapshot.active_run_id; render(); } });
 const icon = (name) => `<svg class="i"><use href="#i-${name}"/></svg>`;
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
@@ -43,10 +44,9 @@ function dateLabel(value) { if (!value) return ''; const date = new Date(value *
 function renderHistory() {
   const list = $('#history-list'); const recent = $('#recent-list');
   if (!list) return;
-  const rows = state.history.filter((item) => historyFilter === 'all' || (historyFilter === 'failed' ? item.status === 'awaiting_cleanup_choice' || item.status === 'error' : Boolean(item.cleaned_text || item.status === 'done')));
+  const rows = state.history.filter((item) => historyFilter === 'all' || (historyFilter === 'failed' ? item.status === 'awaiting_cleanup_choice' || item.status === 'error' : item.status === 'done'));
   const html = (items) => items.map((item) => {
     const status = item.status === 'awaiting_cleanup_choice' ? 'failed' : item.status === 'done' ? 'cleaned' : 'raw';
-    const actions = recoveryButtons({ actions: item.actions ?? [] });
     return `<div class="item ${status === 'failed' ? 'is-failed' : ''}" data-run-id="${esc(item.run_id)}"><span class="app-tile">W</span><div class="item-body"><div class="item-meta"><strong>Wispr Clone</strong><span>·</span><span>${esc(dateLabel(item.created_at))}</span><span class="badge ${status === 'failed' ? 'warning' : 'accent'}">${esc(status === 'failed' ? 'Needs attention' : status === 'cleaned' ? 'Complete' : 'Dictation')}</span></div><div class="item-text">${esc(item.text ?? '')}</div></div><div class="item-actions"><button class="btn btn-ghost btn-icon btn-sm" data-copy="${esc(item.run_id)}" title="Copy" aria-label="Copy">${icon('copy')}</button><button class="btn btn-ghost btn-icon btn-sm danger" data-delete="${esc(item.run_id)}" title="Delete" aria-label="Delete">${icon('trash')}</button></div></div>`;
   }).join('');
   list.innerHTML = html(rows) || '<div class="empty"><h3>No dictations yet</h3><p class="muted">Your dictations will appear here.</p></div>';
@@ -89,7 +89,7 @@ function renderModels() {
 }
 function renderRun() {
   const active = run(); const status = active?.status ?? 'idle';
-  const style = hudState(status); const card = $('#dictate');
+  const card = $('#dictate');
   if (!card) return;
   card.dataset.state = status === 'recording' ? 'recording' : status === 'processing' ? 'processing' : status === 'error' || status === 'uncertain' || status === 'awaiting_cleanup_choice' ? 'warning' : 'idle';
   const recording = status === 'recording'; const pending = ['processing', 'awaiting_destination'].includes(status);
@@ -100,7 +100,6 @@ function renderRun() {
   btn.innerHTML = recording ? `${icon('stop')}<span>Finish dictation</span>` : `${icon('mic')}<span>Start dictation</span>`;
   $('#dictate-hint').textContent = bridge.available() ? '' : 'Not connected';
   $('#dictate-cancel').hidden = !active || !['recording', 'processing', 'awaiting_cleanup_choice', 'awaiting_destination', 'held'].includes(status);
-  const inserted = $('#toasts');
   if (state.lastEvent && shouldToastInserted(state.lastEvent)) { toast('success', 'Dictation inserted', 'The backend confirmed delivery.'); state.lastEvent = null; }
   const recovery = state.lastRecovery;
   if (recovery?.status === 'awaiting_cleanup_choice' && recovery.run_id === active?.run_id) {
@@ -148,12 +147,6 @@ window.wisprEvent = (jsonText) => {
   try { const event = JSON.parse(jsonText); if (!event || typeof event !== 'object' || typeof event.name !== 'string') return; const accepted = acceptsEvent(state, event); state = applyEvent(state, event); if (event.name.startsWith('run:')) { if (!accepted) state.lastEvent = null; else state.lastEvent = event.name === 'run:state' ? event : null; if (event.name === 'run:recovery' && accepted) state.lastRecovery = event; currentRun = event.run_id; } if (event.name === 'history:changed') void refreshLists(); render(); }
   catch { /* Invalid event payloads are ignored. */ }
 };
-window.wisprReconnect = async () => {
-  // The bridge handles previous_session_token by fetching a fresh snapshot; its onSnapshot callback installs it here.
-  const result = await bridge.reconnect();
-  if (!result?.ok) { failed(result); return; }
-  state = createStore(result.data); currentRun = result.data.active_run_id; $('#title-status').innerHTML = '<span class="status-dot success"></span>Connected'; render(); await refreshLists();
-};
 
 // Title bar: the page draws the caption; the host moves and sizes the native window.
 $('.titlebar')?.addEventListener('mousedown', (event) => {
@@ -194,7 +187,7 @@ $('#shortcut-change')?.addEventListener('click', () => {
     window.removeEventListener('keydown', onKeyDown, true);
     window.removeEventListener('blur', onBlur);
     button.textContent = 'Change'; button.classList.remove('is-capturing');
-    description.textContent = message || 'Managed by the desktop app.';
+    description.textContent = message || 'Press Change, then the keys you want.';
   };
   const onBlur = () => endCapture();
   const onKeyDown = async (event) => {
@@ -231,10 +224,9 @@ $('#save-term')?.addEventListener('click', async () => { const entry = { spellin
 $('#dict-import')?.addEventListener('click', () => { const input = document.createElement('input'); input.type = 'file'; input.accept = '.txt,.csv,text/plain,text/csv'; input.addEventListener('change', async () => { const file = input.files?.[0]; if (!file) return; const result = await bridge.call('dict_import', { text: await file.text() }); if (failed(result)) return; toast('success', 'Dictionary imported', `${result.data.added} added`); await refreshLists(); }); input.click(); });
 $('#dict-export')?.addEventListener('click', async () => { const result = await bridge.call('dict_export'); if (failed(result)) return; let output = $('#dict-export-content'); if (!output) { output = document.createElement('textarea'); output.id = 'dict-export-content'; output.className = 'textarea'; output.setAttribute('aria-label', 'Dictionary export'); $('#page-dictionary .toolbar').after(output); } output.value = result.data.text ?? ''; output.hidden = false; output.focus(); output.select(); });
 $$('[data-close]').forEach((button) => button.addEventListener('click', () => button.closest('.backdrop').classList.remove('is-open')));
-$$('.nav-item[data-page]').forEach((button) => button.addEventListener('click', () => page(button.dataset.page)));
 $$('[data-goto]').forEach((button) => button.addEventListener('click', () => page(button.dataset.goto)));
-$('#sidebar-toggle')?.addEventListener('click', () => { document.documentElement.dataset.sidebar = 'collapsed'; localStorage.setItem('wc-sidebar', 'collapsed'); });
-$('#side-logo')?.addEventListener('click', () => { const open = document.documentElement.dataset.sidebar === 'collapsed'; document.documentElement.dataset.sidebar = open ? '' : 'collapsed'; localStorage.setItem('wc-sidebar', open ? 'open' : 'collapsed'); });
+$('#sidebar-toggle')?.addEventListener('click', () => { document.documentElement.dataset.sidebar = 'collapsed'; });
+$('#side-logo')?.addEventListener('click', () => { const open = document.documentElement.dataset.sidebar === 'collapsed'; document.documentElement.dataset.sidebar = open ? '' : 'collapsed'; });
 $$('[data-page]').forEach((button) => button.addEventListener('click', () => page(button.dataset.page)));
 $$('[data-model]').forEach((card) => {
   const role = card.dataset.model === 'cleanup' ? 'cleanup' : 'stt';
@@ -250,7 +242,6 @@ document.addEventListener('keydown', (event) => {
   if (event.ctrlKey && !event.altKey && !event.shiftKey && event.code === 'KeyB') { event.preventDefault(); $('#side-logo')?.click(); }
   if (event.key === 'Escape') $$('.backdrop.is-open').forEach((modal) => modal.classList.remove('is-open'));
 });
-window.addEventListener('storage', applyTheme);
 
 // Land on General; no page is marked active in the markup.
 page('home');

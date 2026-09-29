@@ -37,7 +37,6 @@ class HotkeyService:
         self._post = post
         self._pressed: set[str] = set()
         self._holding = False
-        self._start_pending = False
         self._toggled = False
         self._dictation_armed = True
 
@@ -74,14 +73,12 @@ class HotkeyService:
             self._pressed.remove(key)
             if key == self._dictation.key:
                 self._dictation_armed = True
-                self._start_pending = False
             if (
                 self._mode == "hold"
                 and self._holding
                 and (key == self._dictation.key or key in self._dictation.modifiers)
             ):
                 self._holding = False
-                self._start_pending = False
                 self._post(self._on_stop)
 
     def reset(self) -> None:
@@ -91,7 +88,6 @@ class HotkeyService:
             self._post(self._on_stop)
         self._pressed.clear()
         self._dictation_armed = True
-        self._start_pending = False
 
     def _matches(self, binding: KeyBinding) -> bool:
         held_modifiers = self._pressed.intersection(MODIFIERS)
@@ -101,7 +97,6 @@ class HotkeyService:
         if self._mode == "hold":
             if not self._holding:
                 self._holding = True
-                self._start_pending = True
                 self._post(self._on_start)
         elif self._toggled:
             self._toggled = False

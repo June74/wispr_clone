@@ -22,14 +22,12 @@ def test_T_REG_001_defaults_order_filters_and_lookups() -> None:
         stt.role,
         stt.display_name,
         stt.local,
-        stt.runtime,
         stt.endpoint,
     ) == (
         "openai/whisper-large-v3-turbo",
         "stt",
         "Whisper Large v3 Turbo (DeepInfra)",
         False,
-        "openrouter",
         "https://openrouter.ai/api/v1",
     )
     assert (
@@ -37,14 +35,12 @@ def test_T_REG_001_defaults_order_filters_and_lookups() -> None:
         cleanup.role,
         cleanup.display_name,
         cleanup.local,
-        cleanup.runtime,
         cleanup.endpoint,
     ) == (
         config.LM_STUDIO_MODEL_ID,
         "cleanup",
         "Llama 3.1 8B Instruct",
         True,
-        "lmstudio",
         config.LM_STUDIO_ENDPOINT,
     )
     assert len(models.list_models()) == 2
@@ -62,10 +58,10 @@ def test_T_REG_001_defaults_order_filters_and_lookups() -> None:
 @pytest.mark.unit
 def test_T_REG_001_duplicate_and_empty_ids_rejected() -> None:
     module = registry()
-    item = module.ModelInfo("one", "stt", "One", True, "transcribe-cpp", None)
+    item = module.ModelInfo("one", "stt", "One", True, None)
     for items in (
         (item, item),
-        (module.ModelInfo("", "stt", "Empty", True, "transcribe-cpp", None),),
+        (module.ModelInfo("", "stt", "Empty", True, None),),
     ):
         with pytest.raises(WisprError) as caught:
             module.ModelRegistry(items)
@@ -107,13 +103,13 @@ def test_T_REG_002_loopback_endpoint_truth_table(url: str, expected: bool) -> No
 def test_T_REG_002_local_remote_endpoint_rejected_cloud_accepted() -> None:
     module = registry()
     remote = "https://api.example.com/v1"
-    local = module.ModelInfo("local", "cleanup", "Local", True, "lmstudio", remote)
+    local = module.ModelInfo("local", "cleanup", "Local", True, remote)
     with pytest.raises(WisprError) as caught:
         module.ModelRegistry([local])
     assert caught.value.error_code == ErrorCode.NON_LOOPBACK_ENDPOINT
     assert caught.value.where == "models.registry"
 
-    cloud = module.ModelInfo("cloud", "cleanup", "Cloud", False, "provider", remote)
+    cloud = module.ModelInfo("cloud", "cleanup", "Cloud", False, remote)
     models = module.ModelRegistry([cloud])
     assert models.list_models() == (cloud,)
     assert models.is_local("cloud") is False
@@ -134,7 +130,7 @@ def test_T_REG_002_local_model_rejects_invalid_port_or_user_info(
     endpoint: str,
 ) -> None:
     module = registry()
-    local = module.ModelInfo("local", "cleanup", "Local", True, "lmstudio", endpoint)
+    local = module.ModelInfo("local", "cleanup", "Local", True, endpoint)
     with pytest.raises(WisprError) as caught:
         module.ModelRegistry([local])
     assert caught.value.error_code == ErrorCode.NON_LOOPBACK_ENDPOINT

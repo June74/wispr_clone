@@ -23,8 +23,8 @@ def normalize(text: str) -> str:
     return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
 
 
-def _validation(why: str, where: str = "dictionary") -> WisprError:
-    return WisprError(ErrorCode.VALIDATION, where=where, why=why)
+def _validation(why: str) -> WisprError:
+    return WisprError(ErrorCode.VALIDATION, where="dictionary", why=why)
 
 
 def _has_surrogate(text: str) -> bool:

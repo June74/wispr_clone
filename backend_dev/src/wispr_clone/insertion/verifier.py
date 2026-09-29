@@ -13,29 +13,28 @@ VerifyStatus = Literal["same", "changed", "closed", "unverifiable"]
 @dataclass(frozen=True, slots=True)
 class Verification:
     status: VerifyStatus
-    reason: str
 
 
 def verify(snapshot: DestinationSnapshot, win32: Win32Api, uia: UiaApi) -> Verification:
     try:
         if not win32.is_window(snapshot.hwnd):
-            return Verification("closed", "window")
+            return Verification("closed")
         if win32.foreground_window() != snapshot.hwnd:
-            return Verification("changed", "window")
+            return Verification("changed")
         pid, exe = win32.window_process(snapshot.hwnd)
         if pid != snapshot.pid or exe.lower() != snapshot.exe:
-            return Verification("changed", "process")
+            return Verification("changed")
     except Exception:
-        return Verification("unverifiable", "win32 error")
+        return Verification("unverifiable")
     if snapshot.field is None:
-        return Verification("unverifiable", "no field")
+        return Verification("unverifiable")
     try:
         if not uia.is_on_screen(snapshot.field):
-            return Verification("unverifiable", "off screen")
+            return Verification("unverifiable")
         if uia.selected_tab(snapshot.hwnd) != snapshot.tab:
-            return Verification("changed", "tab")
+            return Verification("changed")
         if uia.focused_element() != snapshot.field:
-            return Verification("changed", "field")
+            return Verification("changed")
     except Exception:
-        return Verification("unverifiable", "uia error")
-    return Verification("same", "field")
+        return Verification("unverifiable")
+    return Verification("same")

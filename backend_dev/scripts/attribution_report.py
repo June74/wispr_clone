@@ -68,19 +68,19 @@ def build_report(inputs: list[Path]) -> str:
         (job, row) for job, rows, status in reports if status == "ok" for row in rows
     ]
     # A test can fail on both operating systems; retain one row for its nodeid.
-    failures: dict[str, tuple[str, dict[str, Any]]] = {}
-    for job, row in evidence:
+    failures: dict[str, dict[str, Any]] = {}
+    for _job, row in evidence:
         nodeid = row.get("nodeid")
         verdict = row.get("verdict")
         if not isinstance(nodeid, str) or verdict not in _VERDICTS:
             continue
         current = failures.get(nodeid)
         if current is None or _VERDICTS.index(str(verdict)) < _VERDICTS.index(
-            str(current[1].get("verdict"))
+            str(current.get("verdict"))
         ):
-            failures[nodeid] = (job, dict(row))
+            failures[nodeid] = dict(row)
 
-    for job, row in failures.values():
+    for row in failures.values():
         dist = row.get("dist")
         if row.get("verdict") != "UNDETERMINED" or not isinstance(dist, str):
             continue
@@ -103,8 +103,8 @@ def build_report(inputs: list[Path]) -> str:
 
     for verdict in _VERDICTS:
         selected = sorted(
-            ((job, row) for job, row in failures.values() if row["verdict"] == verdict),
-            key=lambda pair: str(pair[1].get("nodeid", "")),
+            (row for row in failures.values() if row["verdict"] == verdict),
+            key=lambda row: str(row.get("nodeid", "")),
         )
         if not selected:
             continue
@@ -116,7 +116,7 @@ def build_report(inputs: list[Path]) -> str:
                 "| --- | --- | --- | --- |",
             ]
         )
-        for job, row in selected:
+        for row in selected:
             category = row.get("category") or "—"
             dist = row.get("dist")
             category_dist = (

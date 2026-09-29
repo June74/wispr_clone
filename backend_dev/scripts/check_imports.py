@@ -57,8 +57,7 @@ def resolve_from(module: str, level: int, name: str | None, is_package: bool) ->
     package_parts = module.split(".")
     if not is_package:
         package_parts.pop()
-    if level:
-        package_parts = package_parts[: len(package_parts) - level + 1]
+    package_parts = package_parts[: len(package_parts) - level + 1]
     prefix = ".".join(package_parts)
     if name:
         return f"{prefix}.{name}" if prefix else name
@@ -125,10 +124,6 @@ class ImportVisitor(ast.NodeVisitor):
             self.visit(statement)
 
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        # Decorators, defaults and annotations execute while defining the function.
-        for item in (*node.decorator_list, *node.args.defaults, *node.args.kw_defaults):
-            if item is not None:
-                self.visit(item)
         previous = self.in_function
         self.in_function = True
         for statement in node.body:

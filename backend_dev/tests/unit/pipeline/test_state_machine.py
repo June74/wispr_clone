@@ -102,7 +102,6 @@ EVENT_NAMES = (
 
 @pytest.fixture
 def sm():  # type: ignore[no-untyped-def]
-    # Import at execution time so pytest still collects every RED case before M1 exists.
     from wispr_clone.pipeline import state_machine
 
     return state_machine
@@ -203,8 +202,7 @@ def test_T_SM_004_dispatching_rejects_cancel(sm, status) -> None:
 
 @pytest.mark.unit
 def test_T_SM_005_path_increments_version_and_preserves_inputs(sm) -> None:
-    state = sm.initial_state()
-    assert state == sm.RunState(RunStatus.RECORDING, version=1, dispatching=False)
+    state = sm.RunState(RunStatus.RECORDING, version=1)
     with pytest.raises(FrozenInstanceError):
         state.version = 99
     steps = (
@@ -302,7 +300,7 @@ def test_T_SM_001_plain_string_cannot_begin_automatic_dispatch(sm) -> None:
 @pytest.mark.unit
 @pytest.mark.invariant("Boolean command versions cannot bypass stale-version rejection")
 def test_T_SM_006_boolean_expected_version_is_not_current_version(sm) -> None:
-    state = sm.initial_state()
+    state = sm.RunState(RunStatus.RECORDING, version=1)
     with pytest.raises(WisprError) as stale:
         sm.transition(state, sm.RunEvent.STOP, expected_version=True)
     assert stale.value.error_code is ErrorCode.STALE_VERSION

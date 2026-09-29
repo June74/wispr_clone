@@ -5,7 +5,6 @@ from __future__ import annotations
 import ctypes
 import importlib
 import logging
-import math
 import os
 import queue
 import shutil
@@ -40,7 +39,6 @@ _ULW_ALPHA = 2
 _WS_POPUP = 0x80000000
 _WS_EX_LAYERED = 0x00080000
 _WS_EX_TOOLWINDOW = 0x00000080
-_WS_EX_TRANSPARENT = 0x00000020
 _WS_EX_NOACTIVATE = 0x08000000
 _WS_EX_TOPMOST = 0x00000008
 _WM_NCCREATE = 0x0081
@@ -54,7 +52,6 @@ _HTCLIENT = 1
 _HTTRANSPARENT = -1
 _MA_NOACTIVATE = 3
 _TME_LEAVE = 0x00000002
-_MK_LBUTTON = 0x0001
 _WINDOW_CLASS = "WisprCloneNativeHud"
 
 # The class procedure and class registration outlive every NativeHud instance.
@@ -115,7 +112,6 @@ class NativeHud:
     def __init__(self, on_cancel: Any = None) -> None:
         self.available = False
         self._hwnd: int | None = None
-        self._thread_id = 0
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
         self._closed = threading.Event()
@@ -125,10 +121,7 @@ class NativeHud:
         self._on_cancel = on_cancel
         self._status = "idle"
         self._timer = HudTimer(time.monotonic)
-        self._bands = [0.0] * 12
         self._shown = False
-        self._last_tick = 0.0
-        self._last_audio = 0.0
         self._last_draw = 0.0
         self._scale = 1.0
         self._apis: tuple[Any, Any, Any] | None = None
@@ -171,16 +164,6 @@ class NativeHud:
                 status = event.get("status")
                 if isinstance(status, str):
                     self._post("state", status=status)
-            elif name == "audio:level":
-                bands = event.get("bands")
-                if isinstance(bands, (list, tuple)) and len(bands) == 12:
-                    safe = [
-                        float(value)
-                        if isinstance(value, (int, float)) and math.isfinite(value)
-                        else 0.0
-                        for value in bands
-                    ]
-                    self._post("audio", bands=safe)
         except Exception:
             logger.warning("NATIVE_HUD_EVENT_FAILED")
 
@@ -198,7 +181,6 @@ class NativeHud:
 
     def _run(self) -> None:
         try:
-            self._thread_id = int(threading.get_native_id())
             win_dll = cast(Any, getattr(ctypes, "WinDLL"))
             user32 = win_dll("user32", use_last_error=True)
             gdi32 = win_dll("gdi32", use_last_error=True)
@@ -430,16 +412,7 @@ class NativeHud:
                 status = payload["status"]
                 self._status = status
                 self._timer.set_status(status)
-                if self._status == "recording":
-                    self._last_audio = time.monotonic()
-                else:
-                    self._bands = [0.0] * 12
                 self._draw(hwnd)
-            elif name == "audio":
-                if self._status == "recording":
-                    self._bands = payload["bands"]
-                    self._last_audio = time.monotonic()
-                    self._last_tick = self._last_audio
             elif name == "destroy":
                 self._shown = False
                 apis[0].ShowWindow(hwnd, 0)
@@ -479,12 +452,9 @@ class NativeHud:
         apis = self._apis
         if apis is None:
             return
-        active = self._status == "recording"
-        if not active:
+        if self._status != "recording":
             return
         now = time.monotonic()
-        if active and now - self._last_audio >= 0.5 and any(self._bands):
-            self._bands = [0.0] * 12
         interval = 0.033
         try:
             reduced = wintypes.BOOL()
@@ -497,7 +467,6 @@ class NativeHud:
             pass
         if now - self._last_draw < interval:
             return
-        self._last_tick = now
         self._draw(hwnd)
 
     def _draw(self, hwnd: int) -> None:
@@ -541,7 +510,7 @@ class NativeHud:
             graphics.SmoothingMode = SmoothingMode.AntiAlias
             graphics.Clear(Color.Transparent)
 
-            def pill(x: float, y: float, w: float, h: float, radius: float) -> Any:
+            def pill(x: float, y: float, w: float, radius: float) -> Any:
                 path = track(GraphicsPath())
                 diameter = radius * 2
                 path.AddArc(x, y, diameter, diameter, 90, 180)
@@ -551,7 +520,7 @@ class NativeHud:
 
             pill_rect = spec.pill_rect
             px, py = pill_rect.left, pill_rect.top
-            pw, ph = pill_rect.right - px, pill_rect.bottom - py
+            pw = pill_rect.right - px
             for i in range(10, 0, -1):
                 grow = i * 1.1 * self._scale
                 alpha = int(10 * (1 - i / 11))
@@ -561,13 +530,12 @@ class NativeHud:
                         px - grow,
                         py - grow + 5 * self._scale,
                         pw + 2 * grow,
-                        ph + 2 * grow,
                         HUD_SPEC["radius"] * self._scale + grow,
                     ),
                 )
             graphics.FillPath(
                 track(SolidBrush(Color.FromArgb(242, 27, 22, 29))),
-                pill(px, py, pw, ph, HUD_SPEC["radius"] * self._scale),
+                pill(px, py, pw, HUD_SPEC["radius"] * self._scale),
             )
             graphics.DrawPath(
                 track(Pen(Color.FromArgb(22, 255, 255, 255), self._scale)),
@@ -575,7 +543,6 @@ class NativeHud:
                     px + 0.5 * self._scale,
                     py + 0.5 * self._scale,
                     pw - self._scale,
-                    ph - self._scale,
                     HUD_SPEC["radius"] * self._scale - 0.5 * self._scale,
                 ),
             )
@@ -606,11 +573,7 @@ class NativeHud:
 
             font = self._font(PrivateFontCollection, FontFamily)
             graphics.TextRenderingHint = TextRenderingHint.AntiAliasGridFit
-            label = {
-                "recording": "Listening",
-                "processing": "Working",
-                "awaiting_destination": "Working",
-            }.get(self._status, STATUS_LABELS.get(self._status, "Ready"))
+            label = STATUS_LABELS.get(self._status, "Ready")
             text_font = track(
                 Font(
                     font,

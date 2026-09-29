@@ -7,7 +7,6 @@ import pytest
 from wispr_clone.ui.hud_model import (
     HUD_SPEC,
     STATUS_LABELS,
-    hud_visible,
     layout,
     status_color,
 )
@@ -32,9 +31,6 @@ def test_T_UI_012_pill_content_and_layout() -> None:
     assert status_color("processing") == "#d4a954"
     assert status_color("awaiting_destination") == "#d4a954"
     assert status_color("awaiting_cleanup_choice") == "#e0848b"
-    assert not hud_visible("idle")
-    for status in ("recording", "processing", "awaiting_destination"):
-        assert hud_visible(status)
 
     for scale in (1, 1.5):
         result = layout(scale)

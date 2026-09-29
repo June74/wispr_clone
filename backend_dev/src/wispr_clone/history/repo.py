@@ -144,16 +144,14 @@ class HistoryRepo:
 
         def create(
             conn: Connection,
-        ) -> tuple[
-            RunRecord, list[tuple[str, tuple[str, ...]]], list[str], list[str], bool
-        ]:
+        ) -> tuple[RunRecord, list[tuple[str, tuple[str, ...]]], list[str], list[str]]:
             expired = _expire(conn, now)
             existing = conn.execute(
                 "SELECT * FROM runs WHERE start_request_id = ?", (start_request_id,)
             ).fetchone()
             if existing is not None:
                 expiry_groups = [("expired", tuple(expired))] if expired else []
-                return _run(existing), expiry_groups, expired, [], True
+                return _run(existing), expiry_groups, expired, []
             rows = conn.execute(
                 "SELECT r.id, r.created_at FROM runs r WHERE NOT EXISTS "
                 "(SELECT 1 FROM insertion_attempts a "
@@ -190,17 +188,15 @@ class HistoryRepo:
             if evicted:
                 groups.append(("evicted", tuple(evicted)))
             groups.append(("created", (run_id,)))
-            return _run(row), groups, expired, evicted, False
+            return _run(row), groups, expired, evicted
 
-        record, groups, expired, evicted, duplicate = await self._db.write(create)
+        record, groups, expired, evicted = await self._db.write(create)
         self._publish(groups)
         await self._remove_paths(
             await self._pending_paths_for_ids((*expired, *evicted))
         )
         await self._refresh_next_expiry()
         self._defer_evictions((*expired, *evicted))
-        if duplicate:
-            return record
         return record
 
     async def get(self, run_id: str) -> RunRecord:
@@ -242,11 +238,6 @@ class HistoryRepo:
         if not fields:
             return await self.get(run_id)
         values = dict(fields)
-        for key in ("status", "cleanup_status"):
-            if key == "status" and isinstance(values.get(key), RunStatus):
-                values[key] = cast(RunStatus, values[key]).value
-            if key == "cleanup_status" and isinstance(values.get(key), CleanupStatus):
-                values[key] = cast(CleanupStatus, values[key]).value
         for key, enum_type in (
             ("status", RunStatus),
             ("cleanup_status", CleanupStatus),

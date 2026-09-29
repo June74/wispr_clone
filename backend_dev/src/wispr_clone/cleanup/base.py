@@ -20,4 +20,4 @@ class CleanupEngine(Protocol):
         """Return cleaned text, raising a normalized dependency error on failure."""
 
     async def health(self) -> bool:
-        """Report whether the pinned model is ready."""
+        """Report whether this engine's model is loaded and ready."""

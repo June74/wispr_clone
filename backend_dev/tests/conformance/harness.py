@@ -1,6 +1,7 @@
 """Shared parametrization for fake and real adapter conformance cases.
 
-Each suite calls ``implementation_params`` in ``pytest.mark.parametrize``.
+A suite calls ``implementation_params`` in ``pytest.mark.parametrize`` (today only
+the T-FAKE-004 and T-DIAG-008 meta-tests do).
 The value is a zero-argument factory, so every case gets a fresh adapter.
 """
 

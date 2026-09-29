@@ -7,7 +7,6 @@ from pathlib import Path
 BACKEND = Path(__file__).resolve().parents[2]
 REPO = BACKEND.parent
 TRANSCRIBE_CPP = re.compile(r"transcribe[_-]cpp")
-SCHEMA_UPGRADE = Path("src/wispr_clone/settings/schema.py")
 
 
 def test_T_DIAG_020_no_local_voxtral_path() -> None:
@@ -28,7 +27,7 @@ def test_T_DIAG_020_no_local_voxtral_path() -> None:
             if path.is_relative_to(BACKEND)
             else path.relative_to(REPO)
         )
-        if relative == SCHEMA_UPGRADE or "__pycache__" in path.parts:
+        if "__pycache__" in path.parts:
             continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if TRANSCRIBE_CPP.search(line):

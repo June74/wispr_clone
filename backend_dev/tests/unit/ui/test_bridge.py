@@ -1,4 +1,4 @@
-"""T-UI-001: the only exposed bridge method validates before worker dispatch."""
+"""T-UI-001/019: bridge validates before worker dispatch; window commands stay local."""
 
 from __future__ import annotations
 

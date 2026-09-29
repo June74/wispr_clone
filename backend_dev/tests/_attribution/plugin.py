@@ -198,7 +198,6 @@ def _classify(
             "probes": [],
             "verdict": "OURS",
             "category": "logic",
-            "phase": report.when,
         }
         if frames:
             path, line, function = frames[-1]
@@ -213,8 +212,8 @@ def _classify(
     if test_index is not None:
         frames = frames[test_index:]
     else:
-        # Setup and teardown failures have no executing test frame. Keep the
-        # fixture frames while dropping the runner and interpreter frames.
+        # No frame carries the test's name (e.g. a parametrized item, whose name
+        # includes its [id]). Drop the runner and interpreter frames.
         frames = [
             frame
             for frame in frames
@@ -324,8 +323,6 @@ def _classify(
     invariant = _invariant(item)
     if invariant:
         base["invariant"] = invariant
-    base["symptom"] = _symptom(call, report)
-    base["phase"] = report.when
     return base
 
 

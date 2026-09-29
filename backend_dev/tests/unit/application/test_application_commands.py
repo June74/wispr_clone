@@ -1,4 +1,4 @@
-"""WO-M4a application command contracts (RED until application exists)."""
+"""WO-M4a application command contracts."""
 
 from __future__ import annotations
 
@@ -61,7 +61,6 @@ class Rig:
         self.readiness = [{"model_id": "ready-stt", "ready": True}]
         self.runs = RunCommands(
             controller,
-            clock=clock.now,
             copy_to_clipboard=self.copy,
             last_external_destination=lambda: self.selected_destination,
         )
@@ -111,7 +110,6 @@ async def scenario(path: Path) -> AsyncIterator[Rig]:
         win.calls.clear()
         uia.calls.clear()
         stt = FakeSttEngine("private dictated words")
-        captures: list[FakeCapture] = []
         ids = iter(f"run-{index}" for index in range(20))
 
         async def inline(operation: Callable[[], Any]) -> Any:
@@ -119,11 +117,6 @@ async def scenario(path: Path) -> AsyncIterator[Rig]:
 
         async def capture_destination() -> Any:
             return destination
-
-        def new_capture() -> FakeCapture:
-            result = FakeCapture()
-            captures.append(result)
-            return result
 
         controller = RunController(
             RunServices(
@@ -141,7 +134,7 @@ async def scenario(path: Path) -> AsyncIterator[Rig]:
                 ),
                 events=events,
                 capture_destination=capture_destination,
-                new_capture=new_capture,
+                new_capture=FakeCapture,
                 new_wav=WavWriter,
                 new_id=lambda: next(ids),
                 audio_dir=path,

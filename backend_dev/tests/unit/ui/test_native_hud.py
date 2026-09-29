@@ -33,10 +33,7 @@ class _NativeReceiver:
 def test_T_UI_014_non_windows_construction_is_clean() -> None:
     if sys.platform == "win32":
         pytest.skip("non-Windows availability contract")
-    try:
-        hud = NativeHud()
-    except (OSError, RuntimeError, NotImplementedError):
-        return
+    hud = NativeHud()
     try:
         assert getattr(hud, "available", False) is False
         hud.show()

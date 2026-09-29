@@ -21,7 +21,6 @@ class TestCatalog:
             "openai/whisper-large-v3-turbo": ("stt", False),
             "local-stt": ("stt", True),
             "meta-llama-3.1-8b-instruct": ("cleanup", True),
-            "cloud-stt": ("stt", False),
             "cloud-cleanup": ("cleanup", False),
         }
 

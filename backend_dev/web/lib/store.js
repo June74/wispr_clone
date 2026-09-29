@@ -1,13 +1,12 @@
 export function createStore(snapshot = {}) {
   return {
-    session_token: snapshot.session_token ?? null,
     settings: snapshot.settings ?? {},
     models: snapshot.models ?? [],
     runs: snapshot.runs ?? [],
     active_run_id: snapshot.active_run_id ?? null,
-    history: snapshot.history ?? [],
-    dictionary: snapshot.dictionary ?? [],
-    microphones: snapshot.microphones ?? [],
+    history: [],
+    dictionary: [],
+    microphones: [],
     latestLevel: null,
   };
 }
@@ -23,12 +22,11 @@ export function applyEvent(state, event) {
     const index = next.runs.findIndex((item) => item.run_id === event.run_id);
     if (index < 0) next.runs.unshift(run); else next.runs[index] = run;
     if (event.status === 'recording' || event.status === 'processing' || event.status?.startsWith('awaiting_')) next.active_run_id = event.run_id;
-    if (['done', 'error', 'uncertain', 'held', 'idle', 'cancelled'].includes(event.status) && next.active_run_id === event.run_id) next.active_run_id = null;
+    if (['done', 'error', 'uncertain', 'held', 'cancelled'].includes(event.status) && next.active_run_id === event.run_id) next.active_run_id = null;
     return next;
   }
   if (event.name === 'models:status') return { ...state, models: event.models ?? [] };
-  if (event.name === 'history:changed') return { ...state, history: event.runs ?? state.history };
-  if (event.name === 'audio:level') return { ...state, latestLevel: { ...event, receivedAt: Date.now() } };
+  if (event.name === 'audio:level') return { ...state, latestLevel: event };
   return state;
 }
 
