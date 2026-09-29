@@ -222,6 +222,21 @@ def _classify(
             and "/python"
             not in frame[0].replace("\\", "/").split("site-packages", 1)[0]
         ]
+    node_path = item.nodeid.split("::", 1)[0].replace("\\", "/")
+    if node_path.startswith("tests/arch/"):
+        architecture_row: dict[str, Any] = {
+            "nodeid": item.nodeid,
+            "dist": None,
+            "version": None,
+            "where": None,
+            "probes": [],
+            "verdict": "OURS",
+            "category": "architecture",
+        }
+        if frames:
+            path, line, function = frames[-1]
+            architecture_row["where"] = f"{path}:{line} in {function}"
+        return architecture_row
     deepest_source = next(
         (
             frame
@@ -273,12 +288,6 @@ def _classify(
         "where": None,
         "probes": [],
     }
-    if "/tests/arch/" in item.nodeid.replace("\\", "/"):
-        base.update(verdict="OURS", category="architecture")
-        if frames:
-            path, line, function = frames[-1]
-            base["where"] = f"{path}:{line} in {function}"
-        return base
     if explicit_probe and dist:
         base.update(verdict="NOT OURS", category=_impact(dist).get("kind", "library"))
         return base
