@@ -33,7 +33,6 @@ from wispr_clone.storage.migrations import (
     m003_dictionary,
     m004_history,
 )
-from wispr_clone.stt.base import TextCallback
 
 
 async def _inline(call: Callable[[], Any]) -> Any:
@@ -139,12 +138,12 @@ class FailingStartStt(FakeSttEngine):
         super().__init__("text")
         self.fail_start = True
 
-    def start_session(self, on_text: TextCallback | None = None) -> FakeSttSession:
+    def start_session(self) -> FakeSttSession:
         if self.fail_start:
             raise ThirdPartyError(
                 "stt", "start_session", "failed", ErrorCode.STT_UNAVAILABLE
             )
-        return super().start_session(on_text)
+        return super().start_session()
 
 
 @pytest.mark.asyncio

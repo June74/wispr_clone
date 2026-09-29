@@ -161,11 +161,6 @@ _RECOVERY_ACTIONS: Mapping[RunStatus, frozenset[RecoveryAction]] = MappingProxyT
 )
 
 
-def initial_state() -> RunState:
-    """Return the first state of a newly recording run."""
-    return RunState(RunStatus.RECORDING, version=1)
-
-
 def transition(
     state: RunState,
     event: RunEvent,

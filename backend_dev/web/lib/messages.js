@@ -24,7 +24,6 @@ export const messages = Object.freeze({
   cleanup_unavailable: 'Text cleanup is unavailable.',
   cleanup_timeout: 'Text cleanup took too long.',
   cleanup_rejected: 'The cleanup result did not pass safety checks.',
-  cloud_model_forbidden: 'Cloud models are disabled in local-only mode.',
   non_loopback_endpoint: 'The model endpoint must use this computer only.',
   destination_unverifiable: 'The original field could not be confirmed.',
   destination_closed: 'The original destination is no longer open.',

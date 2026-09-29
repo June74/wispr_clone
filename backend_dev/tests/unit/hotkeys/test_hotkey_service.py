@@ -283,7 +283,7 @@ def test_T_KEY_007_draining_on_another_thread_never_changes_listener_state() -> 
 
     service, delivered, posted = _service(shortcuts, hotkeys, "hold")
     _emit(service, hotkeys.KeyAction.DOWN, "ctrl", "shift", "space")
-    before = (service.tracked_keys, service._holding, service._start_pending)
+    before = (service.tracked_keys, service._holding)
     assert len(posted) == 1
 
     worker = Thread(target=_drain, args=(posted,))
@@ -292,7 +292,7 @@ def test_T_KEY_007_draining_on_another_thread_never_changes_listener_state() -> 
 
     assert not worker.is_alive()
     assert delivered == ["start"]
-    assert (service.tracked_keys, service._holding, service._start_pending) == before
+    assert (service.tracked_keys, service._holding) == before
 
 
 @pytest.mark.unit

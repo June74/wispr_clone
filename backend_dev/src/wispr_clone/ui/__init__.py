@@ -1,1 +1,1 @@
-"""Native pywebview integration for the settings page and HUD."""
+"""Desktop UI: pywebview settings window, native HUD (web HUD fallback), tray, login."""

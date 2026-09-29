@@ -1,4 +1,4 @@
-"""T-APP-046/047: tray ownership, start-hidden, and launch-at-login commands."""
+"""T-APP-046/047/048: tray ownership, start-hidden, launch at login, sound cues."""
 
 from __future__ import annotations
 

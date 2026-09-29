@@ -1,1 +1,1 @@
-"""Microphone capture and audio processing adapters."""
+"""Microphone capture, audio processing and recording sound cues."""

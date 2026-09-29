@@ -29,18 +29,13 @@ def _normalized_url(url: str | None) -> tuple[str, str, str, str, str] | None:
 def _lock_navigation(window: object, allowed: str) -> None:
     """Keep a native window on its single bundled page."""
 
-    blocks = 0
-    failures = 0
-
     def check_navigation(*_args: object, **_kwargs: object) -> None:
-        nonlocal blocks, failures
         try:
             current = window.get_current_url()  # type: ignore[attr-defined]
             if _normalized_url(current) != _normalized_url(allowed):
-                blocks += 1
                 window.load_url(allowed)  # type: ignore[attr-defined]
         except Exception:
-            failures += 1
+            pass  # a failed check must never escape the pywebview event
 
     window.events.loaded += check_navigation  # type: ignore[attr-defined]
 
@@ -110,7 +105,6 @@ def open_settings(
     webview: object,
     api_bridge: object,
     *,
-    debug: bool,
     controls: WindowControls | None = None,
     start_hidden: bool = False,
 ) -> object:

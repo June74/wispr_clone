@@ -46,10 +46,3 @@ test('T-WEB-010: messages and privacy text describe cloud transcription', () => 
   assert.doesNotMatch(html, /Everything stays on this computer/i);
   assert.doesNotMatch(html, /Audio is never saved/i);
 });
-
-test('T-WEB-011: Privacy page does not claim local-only mode is active by default', () => {
-  const privacy = html.split('id="page-privacy"')[1]?.split('id="page-styleguide"')[0] ?? '';
-  const localOnlyRow = privacy.split('Local-only mode')[1]?.split('</button>')[0] ?? '';
-  assert.ok(localOnlyRow, 'local-only privacy row is missing');
-  assert.match(localOnlyRow, /aria-checked="false"/);
-});

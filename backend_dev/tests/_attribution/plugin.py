@@ -198,7 +198,6 @@ def _classify(
             "probes": [],
             "verdict": "OURS",
             "category": "logic",
-            "phase": report.when,
         }
         if frames:
             path, line, function = frames[-1]
@@ -213,8 +212,8 @@ def _classify(
     if test_index is not None:
         frames = frames[test_index:]
     else:
-        # Setup and teardown failures have no executing test frame. Keep the
-        # fixture frames while dropping the runner and interpreter frames.
+        # No frame carries the test's name (e.g. a parametrized item, whose name
+        # includes its [id]). Drop the runner and interpreter frames.
         frames = [
             frame
             for frame in frames
@@ -223,6 +222,21 @@ def _classify(
             and "/python"
             not in frame[0].replace("\\", "/").split("site-packages", 1)[0]
         ]
+    node_path = item.nodeid.split("::", 1)[0].replace("\\", "/")
+    if node_path.startswith("tests/arch/"):
+        architecture_row: dict[str, Any] = {
+            "nodeid": item.nodeid,
+            "dist": None,
+            "version": None,
+            "where": None,
+            "probes": [],
+            "verdict": "OURS",
+            "category": "architecture",
+        }
+        if frames:
+            path, line, function = frames[-1]
+            architecture_row["where"] = f"{path}:{line} in {function}"
+        return architecture_row
     deepest_source = next(
         (
             frame
@@ -274,12 +288,6 @@ def _classify(
         "where": None,
         "probes": [],
     }
-    if "/tests/arch/" in item.nodeid.replace("\\", "/"):
-        base.update(verdict="OURS", category="architecture")
-        if frames:
-            path, line, function = frames[-1]
-            base["where"] = f"{path}:{line} in {function}"
-        return base
     if explicit_probe and dist:
         base.update(verdict="NOT OURS", category=_impact(dist).get("kind", "library"))
         return base
@@ -324,8 +332,6 @@ def _classify(
     invariant = _invariant(item)
     if invariant:
         base["invariant"] = invariant
-    base["symptom"] = _symptom(call, report)
-    base["phase"] = report.when
     return base
 
 

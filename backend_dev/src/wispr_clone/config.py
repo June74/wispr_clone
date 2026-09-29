@@ -27,11 +27,6 @@ def app_data_dir() -> Path:
     return base / "WisprClone"
 
 
-def history_dir() -> Path:
-    """Resolve the temporary run-audio directory on demand."""
-    return app_data_dir() / "history"
-
-
 def resource_root() -> Path:
     """Directory holding resources such as ``web/``, installed or in a checkout."""
     package = Path(__file__).resolve().parent

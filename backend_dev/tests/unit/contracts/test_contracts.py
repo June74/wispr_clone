@@ -23,7 +23,7 @@ def test_T_CON_001_result_exclusivity() -> None:
     assert success.error is None
     assert failure.ok is False
     assert failure.data is None
-    assert failure.error == code or getattr(failure.error, "error_code", None) == code
+    assert failure.error == code
 
     for fields in (
         {"ok": True, "data": data, "error": code},
@@ -36,23 +36,15 @@ def test_T_CON_001_result_exclusivity() -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.invariant("Every ErrorCode has a message and recovery action")
+@pytest.mark.invariant("Every ErrorCode has a message")
 def test_T_CON_002_error_messages_cover_every_code() -> None:
     from wispr_clone.contracts.common import ErrorCode
-    from wispr_clone.util.error_messages import (
-        get_error_message,
-        get_recovery_actions,
-    )
+    from wispr_clone.util.error_messages import get_error_message
 
     assert list(ErrorCode), "ErrorCode must contain the application's error cases"
     for code in ErrorCode:
         message = get_error_message(code)
-        actions = get_recovery_actions(code)
         assert isinstance(message, str) and message.strip(), code
-        assert isinstance(actions, (tuple, list)) and actions, code
-        assert all(isinstance(action, str) and action.strip() for action in actions), (
-            code
-        )
 
 
 @pytest.mark.unit
@@ -82,7 +74,6 @@ def test_T_CON_002_required_failure_behaviors_have_error_codes() -> None:
         "cleanup_unavailable",
         "cleanup_timeout",
         "cleanup_rejected",
-        "cloud_model_forbidden",
         "non_loopback_endpoint",
         "destination_unverifiable",
         "destination_closed",
@@ -93,6 +84,7 @@ def test_T_CON_002_required_failure_behaviors_have_error_codes() -> None:
         "deletion_failed",
     }
     assert required <= {code.value for code in ErrorCode}
+    assert "cloud_model_forbidden" not in {code.value for code in ErrorCode}
 
 
 @pytest.mark.unit

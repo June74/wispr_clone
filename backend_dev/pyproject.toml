@@ -1,7 +1,7 @@
 [project]
 name = "wispr-clone"
 version = "0.1.0"
-description = "Local-first voice dictation application"
+description = "Personal Wispr Flow-style voice dictation app for Windows"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "httpx",
@@ -41,9 +41,6 @@ packages = ["src/wispr_clone"]
 "web/styles.css" = "wispr_clone/web/styles.css"
 "web/lib" = "wispr_clone/web/lib"
 "web/assets" = "wispr_clone/web/assets"
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.pytest.ini_options]
 addopts = "--strict-markers"

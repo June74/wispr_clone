@@ -1,6 +1,6 @@
 # Wispr Clone — Visual Code Map
 
-Status: **planning only**. These diagrams are drawn from the "Contracts and dependency direction" tables in [CODEMAP.md](CODEMAP.md) §3 and the webview/clipboard/local-model rules in §2, §4, §6 and §7. They do not describe working code.
+Status: **planning only**. These diagrams are drawn from the "Contracts and dependency direction" tables in [CODEMAP.md](CODEMAP.md) §3 and the webview/clipboard/local-model rules in §2, §4, §6 and §7. They do not describe working code; §3 was updated 2026-09-28 for the cloud STT (#35/#36) and the native HUD (#43).
 Solid arrows mean "imports / calls". Dashed arrows are **injected callbacks** wired by `app.py`: the producer calls an interface and never imports the consumer, so they add no import edge.
 
 ## 1. Module dependency graph (layers, top → bottom)
@@ -101,11 +101,12 @@ flowchart LR
     ClipHist["Clipboard history / cloud sync"]
     LocalProcs["Other local processes (incl. Cognee)"]
     LAN["LAN"]
+    Cloud["OpenRouter → DeepInfra Whisper<br/>(speech audio leaves the device)"]
   end
 
   subgraph Renderer["WebView2 renderer: bundled files only, CSP, no navigation"]
     SettingsUI["Settings UI JS"]
-    HudUI["HUD JS: no bridge"]
+    HudUI["Fallback HUD page (hud.html): no bridge"]
   end
 
   subgraph Core["Python core (trusted)"]
@@ -114,8 +115,8 @@ flowchart LR
     Hook["hotkey hook: discards non-binding keys"]
     Ins["insertion: exclusion-flagged clipboard or Unicode input"]
     Data[("SQLite + WAVs: transcripts, audio,<br/>title hashes only")]
-    Secrets[("Credential Manager: optional cloud keys")]
-    Vox["STT: transcribe.cpp in-process<br/>(audio never leaves the app)"]
+    Secrets[("DPAPI-encrypted file: OpenRouter key")]
+    Stt["STT: OpenRouter Whisper adapter<br/>(speech-only WAV over HTTPS)"]
   end
 
   subgraph LMS["LM Studio: 127.0.0.1:1234, no auth, shared with Cognee"]
@@ -127,9 +128,9 @@ flowchart LR
   Hook -->|start/stop/cancel only| Api
   Api --> Ins --> OtherApps
   Ins -. "blocked by exclusion formats (verify in G4)" .-> ClipHist
-  Api --> Vox
+  Api --> Stt -->|speech audio| Cloud
   Api -->|transcript text for cleanup| Llm
   LocalProcs -. "accepted local-only risk" .-> Llm
   LAN -. "blocked: serve-on-network off (verify in G2)" .-> Llm
-  Api -. "cloud mode only" .-> Secrets
+  Stt -. "key per request, readiness and state snapshot" .-> Secrets
 ```

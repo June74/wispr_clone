@@ -26,7 +26,7 @@ def test_T_CI_001_trivial_test_passes() -> None:
 def test_T_CI_002_pipeline_markers_are_registered_and_unknown_markers_fail(
     pytester: pytest.Pytester,
 ) -> None:
-    config_args = ["-c", str(PROJECT_CONFIG)] if PROJECT_CONFIG.exists() else []
+    config_args = ["-c", str(PROJECT_CONFIG)]
 
     known_test = pytester.makepyfile(
         test_known_markers="\n".join(

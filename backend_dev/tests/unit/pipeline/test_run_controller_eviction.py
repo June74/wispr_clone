@@ -51,7 +51,7 @@ class LateSession(FakeSttSession):
 
 
 class LateEngine(FakeSttEngine):
-    def start_session(self, on_text: Any = None) -> LateSession:
+    def start_session(self) -> LateSession:
         if self.sessions and not (
             self.sessions[-1].finished or self.sessions[-1].cancelled
         ):

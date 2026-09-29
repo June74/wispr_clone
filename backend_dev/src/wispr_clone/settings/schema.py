@@ -14,15 +14,13 @@ from wispr_clone.contracts.shortcuts import (
     validate_bindings,
 )
 
-SETTINGS_SCHEMA_VERSION: int = 2
+SETTINGS_SCHEMA_VERSION: int = 3
 
 
 class ModelCatalog(Protocol):
     """The model metadata needed to validate a settings selection."""
 
     def role_of(self, model_id: str) -> str | None: ...
-
-    def is_local(self, model_id: str) -> bool: ...
 
 
 class Settings(BaseModel):
@@ -41,7 +39,6 @@ class Settings(BaseModel):
     cleanup_model_id: str = "meta-llama-3.1-8b-instruct"
     cleanup_enabled: bool = True
     cleanup_instructions: str = Field(default="", max_length=2000)
-    local_only: bool = False
     theme: Literal["system", "light", "dark"] = "light"
     sound_cues: bool = False
     idle_jump_seconds: float = Field(default=config.IDLE_JUMP_SECONDS, ge=0.5, le=10.0)
@@ -64,7 +61,13 @@ def _upgrade_v1(data: dict[str, object]) -> dict[str, object]:
     return data
 
 
-UPGRADE_STEPS: Mapping[int, UpgradeStep] = {1: _upgrade_v1}
+def _upgrade_v2(data: dict[str, object]) -> dict[str, object]:
+    data.pop("local_only", None)
+    data["schema_version"] = 3
+    return data
+
+
+UPGRADE_STEPS: Mapping[int, UpgradeStep] = {1: _upgrade_v1, 2: _upgrade_v2}
 
 
 def default_settings() -> Settings:
@@ -159,29 +162,24 @@ def parse_settings(
 
     for role, field in (("stt", "stt_model_id"), ("cleanup", "cleanup_model_id")):
         model_id = getattr(settings, field)
-        local = _model_locality(catalog, role, model_id)
-        if local is None:
+        if not _model_is_usable(catalog, role, model_id):
             raise WisprError(ErrorCode.VALIDATION, "settings.schema", field) from None
-        if settings.local_only and not local:
-            raise WisprError(
-                ErrorCode.CLOUD_MODEL_FORBIDDEN, "settings.schema", field
-            ) from None
     return settings
 
 
-def _model_locality(catalog: ModelCatalog, role: str, model_id: str) -> bool | None:
-    """Locality of a model usable in ``role``, or None when it is not usable.
+def _model_is_usable(catalog: ModelCatalog, role: str, model_id: str) -> bool:
+    """Whether a registered or discovered identifier is valid for its role.
 
     Registered models must match their role. Other identifiers are accepted
     when the catalog knows how to discover models for the role (``accepts``).
     """
     known = catalog.role_of(model_id)
     if known is not None:
-        return catalog.is_local(model_id) if known == role else None
+        return known == role
     accepts = getattr(catalog, "accepts", None)
     if callable(accepts) and accepts(role, model_id):
-        return bool(getattr(catalog, "is_local_role")(role))
-    return None
+        return True
+    return False
 
 
 def settings_to_data(settings: Settings) -> dict[str, object]:

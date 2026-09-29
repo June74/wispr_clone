@@ -22,8 +22,8 @@ def _migrations(*, history: bool = False):
         m003_dictionary,
     )
 
-    # Migration runner requires contiguous versions. Settings' real migration is
-    # owned by another branch, so reserve its number without depending on it.
+    # The migration runner requires contiguous versions; a no-op version 2 keeps
+    # this suite independent of the settings migration (m002_settings).
     def reserved_settings(conn: Connection) -> None:
         pass
 

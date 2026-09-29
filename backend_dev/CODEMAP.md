@@ -1,6 +1,6 @@
 # Wispr Clone — Backend Codemap (Python)
 
-Status: **planning only**. This document specifies the proposed implementation; it does not report working backend code or completed runtime checks.
+Status: **planning document** written 2026-09-24 before implementation and amended with dated decision/evidence records (latest 2026-09-27). It does not describe the current code; see the root README.
 
 ## 1. Purpose, scope, and status
 
@@ -22,7 +22,7 @@ Use this map to find where a responsibility belongs, follow a dictation through 
 - [Feature specification](../research/voice-dictation-features.md): authority for product behavior and acceptance checks.
 - [Model notes](../research/notes_1.md): selected model targets. [Original prompts](../research/prompts_1.md) provide background; the feature specification resolves their behavior into requirements.
 - [UI prototype](../ui_development/code/README_final.md): existing HTML/CSS/JS, mock application data, and microphone-driven visualization. It is a visual reference, not a backend behavior contract.
-- `backend_dev/`: planning documents only. Every source file, manifest, script, migration, and test named below is **planned**.
+- `backend_dev/`: the v0 implementation. The files named in §3 were planned on 2026-09-24; the code is the authority for what exists.
 
 **Status vocabulary:** **selected** means recorded in the project requirements or model notes; **proposed** means a design choice in this plan; **unverified** means compatibility or behavior still requires evidence. A selected model can still have unverified runtime compatibility.
 
@@ -34,7 +34,7 @@ Use this map to find where a responsibility belongs, follow a dictation through 
 
 ## 2. Runtime diagram and ownership of state
 
-The Windows app owns desktop interaction and local data. OpenRouter sends captured audio to the DeepInfra Whisper endpoint for speech recognition; LM Studio, a separate Windows process the app does not own, serves optional cleanup. Windows and WSL use separate environments; packages are not shared. The STT key is held by Windows DPAPI and is read only when a transcription is requested. A network or provider failure leaves the WAV available for explicit retry under the recovery rules in §4 and §5.
+The Windows app owns desktop interaction and local data. OpenRouter sends captured audio to the DeepInfra Whisper endpoint for speech recognition; LM Studio, a separate Windows process the app does not own, serves optional cleanup. Windows and WSL use separate environments; packages are not shared. The STT key is held by Windows DPAPI; it is decrypted for each transcription request, the Models readiness check and the state snapshot's `configured` flag, and never enters SQLite, results or events. A network or provider failure leaves the WAV available for explicit retry under the recovery rules in §4 and §5.
 
 ```mermaid
 flowchart LR
@@ -141,11 +141,11 @@ backend_dev/
 │   ├── storage/
 │   │   └── db.py / migrations/        SQLite writer and ordered schema migrations
 │   └── util/
-│       └── logging_setup.py / error_messages.py   ErrorCode → user explanation and recovery actions
+│       └── error_messages.py          ErrorCode → fixed user-facing explanation
 ├── web/
 │   ├── index.html / styles.css / assets/   packaged presentation based on the prototype
 │   ├── app.js / waveform.js            render backend state and backend audio levels
-│   └── bridge-adapter.js               commands, subscriptions, initial snapshot and errors
+│   └── lib/bridge.js (+ lib/*.js)      commands, subscriptions, initial snapshot and errors
 ├── scripts/
 │   └── check_local_models.py           readiness report: LM Studio answers
 │                                        on 127.0.0.1:1234 with the pinned model loaded and not on the LAN IP
@@ -153,11 +153,10 @@ backend_dev/
 └── tests/
     ├── unit/                          transitions, retention, matching, guard and validation
     ├── integration/                   fake adapters, recovery, crash boundaries and bridge
-    ├── fixtures/                      short WAVs and deterministic service responses
-    └── eval/                          cleanup meaning-preservation examples
+    └── fakes/                         deterministic stand-ins for the adapters
 ```
 
-Optional later files, subject to §7: `stt/cloud_stt.py`, `settings/secrets.py`, and `models/lmstudio_launcher.py` (only if app-managed LM Studio startup is chosen, G7). No placeholder implementations are needed now.
+Optional later file, subject to §7: `models/lmstudio_launcher.py` (only if app-managed LM Studio startup is chosen, G7). The planned cloud STT and secret store landed 2026-09-27 as `stt/openrouter_whisper.py` and `settings/secret_store.py`.
 
 ### Contracts and dependency direction
 
@@ -234,6 +233,8 @@ Rules:
 
 The run lifecycle and insertion outcome are separate: run status lives on `runs`, and insertion outcome is derived from `insertion_attempts` (§5). `awaiting_cleanup_choice` must exist in the state machine even though it shares the red HUD presentation with errors. Idle uses blue stationary bars; only recording animates. Dismissing a notice changes presentation, never grants insertion permission.
 
+**Updated 2026-09-27 (#43/#45):** the HUD is a native-drawn, non-activating pill (`ui/native_hud.py`): a status dot (pulsing green while recording, yellow while working or waiting, red for errors and cleanup choices, grey otherwise), a Listening/Working label, an m:ss timer and a ✕ cancel. The bars/waveform described above were removed at the user's request; `web/hud.html` is only a fallback.
+
 ### Recovery rules
 
 | Situation/action | Required behavior |
@@ -271,7 +272,7 @@ Storage: stdlib SQLite in WAL mode with a single writer, plus retained WAV files
 
 | Entity/owner | Planned fields and invariants |
 |---|---|
-| `settings` / settings service | One validated JSON row: trigger modes/shortcuts, mic, model selections, cleanup toggle/instructions, local-only flag, theme, schema version. Persistent |
+| `settings` / settings service | One validated JSON row: trigger modes/shortcuts, mic, model selections, cleanup toggle/instructions, theme, schema version (the local-only flag was removed 2026-09-28, schema v3). Persistent |
 | `dictionary` / dictionary service | `id`, unique normalized preferred spelling, aliases, note, timestamps. Persistent; import validates the whole input before committing and reports skipped duplicates. Conflicting aliases are rejected |
 | `runs` / history service | UUID `id`, unique `start_request_id`, immutable `created_at`, version, run status (including `awaiting_destination` and `held`), `awaiting_since` for the wait limit, audio path/duration, immutable nullable `original_text`, dictionary-adjusted text, nullable `cleaned_text`, output selection, cleanup status/reason, destination snapshot, error code, minimal configuration snapshot for retries. **No insertion columns**; insertion outcome is derived from attempts |
 | `insertion_attempts` / history service | `attempt_id`, `run_id`, unique `request_id`, automatic/explicit kind, target snapshot, started/completed times, outcome (`in_flight`, `inserted`, `failed`, `uncertain`, `cancelled`). At most one automatic attempt per run; deleting the run cascades to its attempts. **Single source of truth for insertion** |
@@ -331,12 +332,12 @@ The proposed pywebview binding exposes a finite `window.pywebview.api` interface
 | `run_start`, `run_stop`, `run_cancel` (run) | Unique request ID; run ID/version where applicable; acknowledge accepted/rejected command |
 | `run_recover` (run) | Request ID, run ID, expected version, action (`retry_stt`, `retry_cleanup`, `use_original`, `copy`, `insert`), destination confirmation when applicable. `retry_stt` requires a retained WAV |
 | `mic_list`, `mic_test_start`, `mic_test_stop` (audio) | Device values and test ownership; a held device lease returns a conflict error |
-| `models_status`, `models_test`, `models_select` (model) | Model IDs/configuration validated against registry and local-only policy by `model_service` |
+| `models_status`, `models_test`, `models_select` (model) | Model IDs/configuration validated against the registry by role by `model_service` (the local-only policy was removed 2026-09-28) |
 | `settings_get`, `settings_update` (settings) | Validated preference snapshot/patch |
 | `dict_list/add/update/delete/import/export` (dictionary) | Validated entries or import content; structured errors and duplicate report |
 | `history_list/get/delete/delete_all/copy` (history) | Retention-checked records/actions; no implicit insertion. Copy follows §4 clipboard privacy |
 
-Results use `{ok, data, error}` from `contracts.common`; errors carry a stable `ErrorCode`, and `util/error_messages.py` supplies the explanation and allowed recovery actions without echoing private content into logs. Run-specific events include `run_id`, version, and status. `run:state`, `run:recovery`, `models:status`, `history:changed`, and `audio:level` update the UI; levels are throttled. A stale recovery version is rejected. On reload or an event gap, request a fresh snapshot. A command acknowledgment never means text was inserted.
+Results use `{ok, data, error}` from `contracts.common`; errors carry a stable `ErrorCode`, and `util/error_messages.py` supplies the fixed explanation (mirrored by `web/lib/messages.js`), and recovery actions come from the run state machine; neither echoes private content into logs. Run-specific events include `run_id`, version, and status. `run:state`, `run:recovery`, `models:status`, `history:changed`, and `audio:level` update the UI; levels are throttled. A stale recovery version is rejected. On reload or an event gap, request a fresh snapshot. A command acknowledgment never means text was inserted.
 
 Deduplicate `run_start` by its persisted `start_request_id`: repeated delivery returns the same retained run instead of starting another. Mutating commands carry a short validity deadline and a current application-session token; reject expired commands and commands from a previous process session. Reconnect fetches state rather than replaying mutations. Command validity must be shorter than history retention, and the application must invalidate a start request when its run is manually deleted or evicted, so it cannot recreate that run during the remaining validity window. Repeated stop/cancel requests have no additional side effects; recovery checks the run version and insertion request ID before acting.
 
@@ -344,17 +345,17 @@ Deduplicate `run_start` by its persisted `start_request_id`: repeated delivery r
 
 ## 7. Open decisions and validation gates
 
-All gates below are **unverified**. Record tested versions, platform, procedure, observed result, and decision here when experiments are actually run. No gate is satisfied by this document.
+Gates started **unverified**; the dated evidence records below show which were run and decided. Record tested versions, platform, procedure, observed result, and decision here when experiments are run. No gate is satisfied by this document alone.
 
 | Gate | Proposed choice or unresolved decision | Evidence required before dependent work |
 |---|---|---|
 | G1 — Runtime location | Windows Python 3.12 + `uv`. **Decided 2026-09-24: WSL repo + Windows-local venv** (venv on the Windows disk via `UV_PROJECT_ENVIRONMENT`; runtime data stays under `%LOCALAPPDATA%`). **Evidence 2026-09-24 (Phase −1.1): passed.** Windows Python 3.12.14 venv (uv 0.12.19) ran pytest 9.1.1 from the WSL checkout path `\\wsl.localhost\Ubuntu\…`: 3 passed in 1.3 s. Imports: pywin32 312, pynput 1.8.2, pywebview 6.2.1, sounddevice 0.5.6, transcribe-cpp 0.2.3 with a GPU backend; SQLite WAL mode on the Windows disk. Script: `experiments/g1_smoke/` | Launch on Windows, confirm paths, independent WSL environment, and package compatibility before slice 1 (pipeline Phase −1.1) |
-| G2 — Inference | Selected Whisper Large v3 Turbo through OpenRouter, pinned to DeepInfra, plus Llama. **Decided 2026-09-24:** cleanup uses Llama 3.1 8B through LM Studio (already loaded for Cognee). STT **updated 2026-09-27**: OpenRouter Whisper Large v3 Turbo pinned to DeepInfra. See the G2 evidence record below | Done: streaming, latency, cancel, memory on synthetic speech. Still required: real-microphone speech, STT running while LM Studio generates, LM Studio temperature-0 and cancel-on-disconnect behavior, offline use, and packaged build. LM Studio must serve on `127.0.0.1` only ("serve on local network" off); confirm it is unreachable from the LAN IP. It has no authentication, so any local process can call it: accepted as a known local-only risk, as before |
+| G2 — Inference | Selected Whisper Large v3 Turbo through OpenRouter, pinned to DeepInfra, plus Llama. **Decided 2026-09-24:** cleanup uses Llama 3.1 8B through LM Studio (already loaded for Cognee). STT **updated 2026-09-27**: OpenRouter Whisper Large v3 Turbo pinned to DeepInfra. See the G2 evidence record below | Voxtral-era evidence: see the 2026-09-24 record below. Cloud STT (2026-09-27): verify the DeepInfra pin and live transcription with the opt-in probe P-OPENROUTER-001; there is no offline mode. LM Studio must serve on `127.0.0.1` only ("serve on local network" off); confirm it is unreachable from the LAN IP. It has no authentication, so any local process can call it: accepted as a known local-only risk, as before |
 | G3 — Native UI | pywebview. **Evidence 2026-09-24 (Phase −1.3): focus test passed.** A frameless, always-on-top HUD created with `focus=False` was shown, updated 40 times and hidden 8 times per run while the user typed in Notepad and VS Code: 0 of about 1,440 foreground samples (every 20 ms) changed, and the user confirmed no typing was lost, for both pywebview's own show/hide and Win32 `SW_SHOWNOACTIVATE`. The HUD window exposed no JS API (`pywebview.api` empty). Script: `experiments/g34_desktop.py`. Still open: packaged-build behavior, CSP and navigation lock (M5/tier H) | HUD remains non-activating through show/update/hide; verify GUI/bridge thread behavior and packaged runtime. Confirm the HUD has no bridge, navigation to non-bundled URLs is blocked, CSP is enforced, no local HTTP server starts, and devtools are off in release. Decide whether any alternate HUD toolkit requires its own GUI integration |
 | G4 — Desktop insertion | Proposed per-app clipboard or Unicode strategy, plus **hybrid delivery** (§4): idle jump back to the original window/tab/field and return. Needs evidence that a background process can bring the window forward, reselect a Chrome/Edge tab, restore the field's focus by UI Automation identity, insert once and restore the user's window. Primary target app: **Devin desktop** (Electron). Win+V: not tested, because clipboard history is off on this PC (the user's choice); all 3 exclusion formats were confirmed present on written entries. **Evidence 2026-09-24 (Phase −1.4): hybrid delivery feasible.** Devin desktop → other app: idle jump, text inserted once, user returned, 0.3 s flash. Windows blocked plain `SetForegroundWindow` once; an unassigned-key input then allowed it. Devin → other Devin session: inserted once, 1.3 s. Chrome tab → other tab: tab reselected by UI Automation, inserted once, 1.0 s. Devin, user returned: inserted once after the settle. **Notepad: silent corruption.** Every check passed and all 38 Unicode key events were accepted, but Notepad showed a run of `]` characters. Likely cause (unconfirmed): the Korean IME installed on this PC mangles Unicode `SendInput` when active in the target. VS Code: the safety check held the text, because Monaco's real input box is deliberately invisible; the user does not use VS Code. Rules adopted from this: see §4 hybrid delivery | Target verification, focus changes, confirmation limits, clipboard restoration and concurrent clipboard edits in VS Code, Terminal, browsers, Office, and actual WSL GUI apps. Confirm transcript clipboard writes are excluded from Win+V history and cloud sync. Include privilege-boundary/hotkey behavior and confirm non-binding keys are discarded by the hook; hold unsupported targets |
 | G5 — Pipeline limits | Proposed bounded audio queue and request deadlines | Stream interruptions, mic unplug, long pauses, cancellation latency, buffer pressure and clean shutdown; set measured bounds before live end-to-end use |
 | G6 — Text preservation | Proposed alias matcher, glossary and cleanup guard | Overlapping aliases, unrelated phrases, meaningful “like/well,” negation, names, uncertainty, numbers, identifiers and paths. Verify any STT biasing support before relying on it |
-| G7 — Operations/scope | Cloud STT via OpenRouter / DeepInfra is selected; cleanup remains on LM Studio. | Verify provider pinning and live transcription with the opt-in probe. Windows secrets use DPAPI; local-only mode blocks cloud model selection. |
+| G7 — Operations/scope | Cloud STT via OpenRouter / DeepInfra is selected; cleanup remains on LM Studio. | Verify provider pinning and live transcription with the opt-in probe. Windows secrets use DPAPI; local-only mode was removed 2026-09-28 because speech recognition is cloud-only. |
 
 **G2 evidence record, 2026-09-24 (Phase −1.2, partial).** Script: `experiments/g2_stt_transcribe_cpp.py`; throwaway venv and audio under `%LOCALAPPDATA%\wispr_clone\experiments\g2`.
 
@@ -411,6 +412,6 @@ Each slice ends with evidence. Listed tests are **planned, not executed**. Use f
 | 4. Cleanup and recovery | Cleanup prompt/guard, waiting-state transitions | Meaning-preservation evals/G6; failure and rejection persist original and produce **zero insertion calls**; restart during `pending` cleanup lands in `awaiting_cleanup_choice`; only retry success or explicit use-original can advance; expired/stale recovery rejected |
 | 5. Insertion and crash recovery | `insertion_protocol`, insertion adapters, transactional attempt claim | Duplicate start/recovery delivery cannot duplicate dispatch; crash before/after OS dispatch leaves uncertainty with no automatic replay; cancel before dispatch suppresses input, cancel afterward makes no undo promise; destination change holds; no automatic fallback/retry; clipboard writes carry history/cloud exclusion formats |
 | 6. Runtime UI integration | Application router/commands/model service, bridge/events, `web/`, native windows/HUD | Remove simulated control paths; backend snapshots drive lists/readiness; failed cleanup shows real choices and no insertion toast; stale actions rejected; capture has one owner; HUD has no bridge and navigation is locked; green-only waveform motion and blue/yellow/red stationary states |
-| 7. Packaging and end-to-end acceptance | Packaging, startup/shutdown, setup documentation | Actual Windows run with LM Studio: hotkey → audio → STT → optional cleanup → verified insertion/recovery; offline inference after setup; privacy/retention checks; devtools off in release; install/run on target environment with pinned versions |
+| 7. Packaging and end-to-end acceptance | Packaging, startup/shutdown, setup documentation | Actual Windows run with LM Studio: hotkey → audio → STT → optional cleanup → verified insertion/recovery; cleanup works offline (LM Studio on loopback) while STT needs the network; privacy/retention checks; devtools off in release; install/run on target environment with pinned versions |
 
 **Design rationale:** prove platform risks early, implement behavioral rules with deterministic tests, and replace the mock UI only after those rules have a stable application interface. Packaging is the final integration check, not evidence that earlier requirements work.

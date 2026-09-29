@@ -22,7 +22,7 @@ CHUNK_SAMPLES = 1_280
 
 @dataclass(frozen=True, slots=True)
 class CaptureChunk:
-    """One STT-sized audio block and its waveform levels."""
+    """An audio block of up to 80 ms (1,280 samples) and its waveform levels."""
 
     samples: np.ndarray
     bands: list[float]

@@ -18,11 +18,12 @@ talking — even if you switched elsewhere while it was processing.
 - **Destination-safe insertion**: the target window and text field are captured when recording
   starts. If you've moved away, the text is delivered when you return or after 1 s of keyboard/mouse
   idle (the app jumps back, inserts once, and returns you). It never presses Enter or runs commands.
-- **Floating HUD** pill that never takes focus: blue idle, green live waveform while recording,
-  yellow while processing, red on error.
+- **Floating HUD** pill that never takes focus, shown while a dictation is active: a status dot
+  (pulsing green while listening, yellow while working, red when something needs attention), a
+  Listening/Working label, an m:ss timer and a ✕ that cancels like `Esc`.
 - **Settings window**: microphone selection and test, model selection and health checks, cleanup
   instructions, personal dictionary (add/edit/import/export), temporary history, theme, sound cues,
-  launch at login, tray icon.
+  launch at login. Closing the window keeps the app running in the tray (Open/Quit).
 - **Temporary history**: at most the 10 most recent runs, each deleted after 24 hours, with
   copy/retry/delete.
 
@@ -39,7 +40,7 @@ DPAPI; settings, dictionary and history live in `%LOCALAPPDATA%\WisprClone`.
 | `backend_dev/packaging/` | Windows per-user installer |
 | `backend_dev/scripts/` | Import-boundary check, local-model check, CI attribution report |
 | `backend_dev/design/` | HUD geometry preview tool |
-| `backend_dev/CODEMAP.md`, `CODEMAP_GRAPH.md`, `DEPENDENCIES.md` | Architecture and dependency plans written before implementation |
+| `backend_dev/CODEMAP.md`, `CODEMAP_GRAPH.md`, `DEPENDENCIES.md` | Architecture and dependency plans written before implementation, with dated decision records (not a description of the current code) |
 | `backend_dev/agents/`, `dev_pipeline.md` | Role specs and workflow used to build the backend |
 | `research/` | Feature specification ([voice-dictation-features.md](research/voice-dictation-features.md)) and model notes |
 | `ui_development/` | Original HTML/CSS/JS UI prototype and screenshots |
@@ -49,7 +50,7 @@ DPAPI; settings, dictionary and history live in `%LOCALAPPDATA%\WisprClone`.
 - Windows 10/11 for running the app
 - Python 3.12 (the python.org build for installing) and [uv](https://docs.astral.sh/uv/)
 - An OpenRouter API key
-- Optional: LM Studio serving `meta-llama-3.1-8b-instruct` for cleanup
+- Optional: LM Studio with a downloaded chat model for cleanup (default `meta-llama-3.1-8b-instruct`; the app loads it)
 - Node.js, only to run the web tests
 
 ## Install (Windows)
@@ -85,13 +86,14 @@ node --test "web/tests/*.test.mjs"
 ```
 
 Windows-only behavior (hotkeys, insertion, HUD, tray) is covered by fakes in the unit suite; real
-desktop checks are marked `windows`, `e2e` or `manual`.
+desktop checks are marked `windows` (interactive ones also `manual`).
 
 ## Known limitations in v0
 
 - Windows only; transcription requires the network (the local STT path was removed, so there is no
   fully offline mode).
-- Cleanup depends on LM Studio already running; the app doesn't start or manage it.
+- Cleanup depends on LM Studio already running; the app doesn't start it (it only loads the selected
+  cleanup model).
 - A few settings from the prototype are shown but disabled: floating-indicator preference, history
   on/off and retention choice, and usage statistics.
 - Not included: voice commands, spoken formatting, snippets, per-app styles, accounts or sync.

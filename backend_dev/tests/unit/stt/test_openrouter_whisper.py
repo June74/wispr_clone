@@ -45,15 +45,14 @@ TRIMMED_FRAMES = 16_000 + 4_800 + 6_400
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-@pytest.mark.parametrize("language", [None, "en"])
-async def test_T_STT_020_request_shape_and_wav(language: str | None) -> None:
+async def test_T_STT_020_request_shape_and_wav() -> None:
     requests: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         return httpx.Response(200, json={"text": "  dictated words  "})
 
-    engine = make_engine(respond, language=language)
+    engine = make_engine(respond)
     assert engine.ready is True
     await engine.start()
     session = engine.start_session()
@@ -66,13 +65,9 @@ async def test_T_STT_020_request_shape_and_wav(language: str | None) -> None:
     assert request.headers["authorization"] == f"Bearer {FAKE_KEY}"
     assert request.headers["content-type"] == "application/json"
     body = json.loads(request.content)
-    assert set(body) == {"model", "input_audio", "provider"} | (
-        {"language"} if language else set()
-    )
+    assert set(body) == {"model", "input_audio", "provider"}
     assert body["model"] == MODEL
     assert body["provider"] == {"only": ["deepinfra"], "allow_fallbacks": False}
-    if language:
-        assert body["language"] == language
     assert set(body["input_audio"]) == {"data", "format"}
     assert body["input_audio"]["format"] == "wav"
     wav_bytes = base64.b64decode(body["input_audio"]["data"], validate=True)

@@ -1,6 +1,6 @@
 dependency = "lmstudio"
 kind = "service"
 modules = []
-features = ["cleanup after dictation", "retry cleanup", "model readiness"]
-error_codes = ["cleanup_unavailable", "cleanup_timeout"]
-action = "Load the pinned model in LM Studio yourself or check its idle-unload setting; this is not a wispr_clone code fix"
+features = ["cleanup after dictation", "retry cleanup", "model readiness", "cleanup model loading"]
+error_codes = ["cleanup_unavailable", "cleanup_timeout", "model_load_failed"]
+action = "Check that LM Studio is running on 127.0.0.1:1234 and the selected cleanup model is downloaded; the app loads it itself and retries failed loads every 60 s"

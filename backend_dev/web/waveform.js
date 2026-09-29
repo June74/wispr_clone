@@ -135,5 +135,5 @@ export function createWaveform(canvas, color = () => '#745689') {
   }
 
   paint();
-  return { update, redraw: paint, heights: () => heights.slice() };
+  return { update, heights: () => heights.slice() };
 }

@@ -505,7 +505,7 @@ async def test_T_APP_016_stt_start_failure_keeps_app_available(tmp_path: Path) -
             self.available = False
             raise RuntimeError("model unavailable")
 
-        def start_session(self, on_text: object = None) -> None:
+        def start_session(self) -> None:
             raise WisprError(ErrorCode.STT_UNAVAILABLE, "stt", "not ready")
 
     boundaries = Boundaries(stt=BrokenStt("fixed text"))

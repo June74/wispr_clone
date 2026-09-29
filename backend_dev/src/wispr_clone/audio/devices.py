@@ -12,8 +12,6 @@ class InputDevice:
 
     device_id: int
     name: str
-    channels: int
-    default_samplerate: float
     is_default: bool
 
 
@@ -28,14 +26,11 @@ def list_input_devices(module: ModuleType | None = None) -> tuple[InputDevice, .
         default_device = sd.default.device[0]
         result = []
         for device_id, device in enumerate(devices):
-            channels = int(device["max_input_channels"])
-            if channels > 0:
+            if int(device["max_input_channels"]) > 0:
                 result.append(
                     InputDevice(
                         device_id=device_id,
                         name=str(device["name"]),
-                        channels=channels,
-                        default_samplerate=float(device["default_samplerate"]),
                         is_default=device_id == default_device,
                     )
                 )

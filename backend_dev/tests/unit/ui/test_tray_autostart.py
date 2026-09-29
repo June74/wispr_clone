@@ -105,24 +105,24 @@ class FakeWinreg:
         def __exit__(self, *_: object) -> None:
             return None
 
-    def OpenKey(self, root: str, path: str) -> Any:  # noqa: N802
+    def OpenKey(self, root: str, path: str) -> Any:
         assert (root, path) == ("HKCU", autostart.RUN_KEY)
         return self._Key()
 
-    def CreateKeyEx(self, root: str, path: str, reserved: int, access: int) -> Any:  # noqa: N802
+    def CreateKeyEx(self, root: str, path: str, reserved: int, access: int) -> Any:
         assert (root, path, access) == ("HKCU", autostart.RUN_KEY, 2)
         return self._Key()
 
-    def QueryValueEx(self, _key: None, name: str) -> tuple[str, int]:  # noqa: N802
+    def QueryValueEx(self, _key: None, name: str) -> tuple[str, int]:
         if name not in self.values:
             raise FileNotFoundError(name)
         return self.values[name], 1
 
-    def SetValueEx(self, _key: None, name: str, _r: int, kind: int, value: str) -> None:  # noqa: N802
+    def SetValueEx(self, _key: None, name: str, _r: int, kind: int, value: str) -> None:
         assert kind == 1
         self.values[name] = value
 
-    def DeleteValue(self, _key: None, name: str) -> None:  # noqa: N802
+    def DeleteValue(self, _key: None, name: str) -> None:
         if name not in self.values:
             raise FileNotFoundError(name)
         del self.values[name]
@@ -165,7 +165,7 @@ def test_T_UI_021_autostart_writes_and_removes_the_run_value(
 def test_T_UI_022_close_hides_while_tray_runs_and_quit_really_closes() -> None:
     webview = FakeWebview()
     controls = WindowControls()
-    window = open_settings(webview, object(), debug=False, controls=controls)
+    window = open_settings(webview, object(), controls=controls)
     webview.start()
     assert controls.window is window
 
@@ -196,7 +196,7 @@ def test_T_UI_022_close_hides_while_tray_runs_and_quit_really_closes() -> None:
 @pytest.mark.unit
 def test_T_UI_022_start_hidden_never_shows_the_window() -> None:
     webview = FakeWebview()
-    window = open_settings(webview, object(), debug=False, start_hidden=True)
+    window = open_settings(webview, object(), start_hidden=True)
     webview.start()
     assert ("show", ()) not in window.calls
 

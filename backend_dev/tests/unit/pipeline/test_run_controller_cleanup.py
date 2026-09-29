@@ -51,7 +51,6 @@ class Rig:
         events: FakeEventSink,
         win: FakeWin32Api,
         uia: FakeUiaApi,
-        cleanup: FakeCleanupEngine | None,
         config: dict[str, object],
         inserted: list[str],
     ) -> None:
@@ -60,7 +59,6 @@ class Rig:
         self.events = events
         self.win = win
         self.uia = uia
-        self.cleanup = cleanup
         self.config = config
         self.inserted = inserted
 
@@ -148,7 +146,7 @@ async def scenario(
         if cleanup_for is not None:
             services = replace(services, cleanup_for=cleanup_for)
         controller = RunController(services)
-        yield Rig(controller, history, events, win, uia, cleanup, config, inserted)
+        yield Rig(controller, history, events, win, uia, config, inserted)
 
 
 def timeout() -> ThirdPartyError:
@@ -797,9 +795,7 @@ async def test_T_RUN_017g_real_cleanup_and_guard_boundary(
             else:
                 assert record.cleaned_text is None
                 assert rig.sends() == 0 and await rig.history.attempts(run_id) == ()
-                assert record.cleanup_reason == (
-                    "negation" if loaded else "cleanup_unavailable"
-                )
+                assert record.cleanup_reason == "negation"
             assert paths == (
                 ["/api/v0/models", "/v1/chat/completions"]
                 if loaded

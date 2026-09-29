@@ -144,12 +144,11 @@ class Rig:
         )
         self.runs = RunCommands(
             self.controller,
-            clock=clock.now,
             copy_to_clipboard=self.copy,
             last_external_destination=lambda: None,
         )
         self.audio = AudioCommands(
-            list_devices=lambda: (InputDevice(2, "Test input", 1, 16000.0, True),),
+            list_devices=lambda: (InputDevice(2, "Test input", True),),
             new_test_capture=new_test_capture,
             events=events,
             max_test_s=0.02,

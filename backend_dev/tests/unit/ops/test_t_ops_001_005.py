@@ -58,7 +58,7 @@ def test_T_OPS_002_lan_exposure_fails_readiness(checker, monkeypatch, capsys):
     assert (safe.status, safe.ok) == ("not_exposed", True)
     assert calls[-1] == (("192.0.2.44", 1234), 1.0)
 
-    def fake_checks(**overrides):
+    def fake_checks():
         return [exposed]
 
     monkeypatch.setattr(checker, "run_checks", fake_checks)
@@ -172,16 +172,11 @@ def test_T_OPS_004_script_has_no_download_or_remote_control_paths():
     assert imports <= {
         "argparse",
         "dataclasses",
-        "hashlib",
         "json",
-        "pathlib",
         "socket",
-        "subprocess",
-        "urllib",
-        "typing",
-        "collections",
-        "contextlib",
         "sys",
+        "typing",
+        "urllib",
     }
     literals = [
         node.value

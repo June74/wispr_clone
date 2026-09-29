@@ -13,16 +13,11 @@ import numpy as np
 
 _app = importlib.import_module("wispr_clone.app")
 _capture = importlib.import_module("wispr_clone.audio.capture")
-_lease = importlib.import_module("wispr_clone.audio.device_lease")
-_cleanup = importlib.import_module("wispr_clone.cleanup.base")
 _common = importlib.import_module("wispr_clone.contracts.common")
 _storage = importlib.import_module("wispr_clone.storage.db")
 App = _app.App
 AppFactories = _app.AppFactories
 CaptureChunk = _capture.CaptureChunk
-DeviceLease = _lease.DeviceLease
-LeaseOwner = _lease.LeaseOwner
-CleanupRequest = _cleanup.CleanupRequest
 ErrorCode = _common.ErrorCode
 Database = _storage.Database
 
@@ -44,7 +39,7 @@ class _Stt:
     async def start(self) -> None:
         return
 
-    def start_session(self, on_text: Any = None) -> _Session:
+    def start_session(self) -> _Session:
         return _Session()
 
     async def transcribe_file(self, _path: Path) -> str:
@@ -71,7 +66,7 @@ class _Capture:
         return
 
     async def chunks(self) -> Any:
-        yield CaptureChunk(np.zeros(1280, dtype=np.float32), [0.0] * 8)
+        yield CaptureChunk(np.zeros(1280, dtype=np.float32), [0.0] * 12)
         while not self.stopped and not self.cancelled:
             await asyncio.sleep(0.005)
 
@@ -156,11 +151,6 @@ class _Listener:
         return
 
     def stop(self) -> None:
-        return
-
-
-class _NoopEvents:
-    def publish(self, _event: Any) -> None:
         return
 
 

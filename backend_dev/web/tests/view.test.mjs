@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hudState, shouldToastInserted, recoveryButtons, waveformActive } from '../lib/view.js';
+import { hudState, shouldToastInserted, recoveryButtons } from '../lib/view.js';
 
 test('T-WEB-004: insertion toast requires a confirmed done event', () => {
   assert.equal(shouldToastInserted({ name: 'run:state', run_id: 'r', version: 5, status: 'done' }), true);
@@ -20,23 +20,14 @@ test('T-WEB-005: cleanup recovery offers backend actions and cancel', () => {
   assert.deepEqual(recoveryButtons({ ...event, actions: ['copy'] }), ['copy', 'cancel']);
 });
 
-test('T-WEB-007: HUD colors and motion follow the run lifecycle', () => {
+test('T-WEB-007: HUD colors follow the run lifecycle', () => {
   const expected = {
-    recording: ['green', true], processing: ['yellow', false],
-    awaiting_destination: ['yellow', false], awaiting_cleanup_choice: ['red', false],
-    error: ['red', false], uncertain: ['red', false],
-    held: ['blue', false], idle: ['blue', false],
+    recording: 'green', processing: 'yellow', awaiting_destination: 'yellow',
+    awaiting_cleanup_choice: 'red', error: 'red', uncertain: 'red', held: 'blue', idle: 'blue',
   };
-  for (const [status, [color, animate]] of Object.entries(expected)) {
-    assert.deepEqual(hudState(status), { color, animate }, status);
+  for (const [status, color] of Object.entries(expected)) {
+    assert.deepEqual(hudState(status), { color }, status);
   }
-});
-
-test('waveform moves only for a recent recording level', () => {
-  assert.equal(waveformActive('recording', 900, 1000), true);
-  assert.equal(waveformActive('recording', null, 1000), false);
-  assert.equal(waveformActive('processing', 900, 1000), false);
-  assert.equal(waveformActive('awaiting_destination', 900, 1000), false);
 });
 
 test('T-WEB-022: the window opens on the General page', async () => {

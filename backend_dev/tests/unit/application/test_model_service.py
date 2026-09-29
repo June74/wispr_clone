@@ -1,4 +1,4 @@
-"""WO-M4b model readiness and command contracts (RED until modules exist)."""
+"""WO-M4b model readiness and command contracts."""
 
 from __future__ import annotations
 
@@ -87,7 +87,6 @@ class Rig:
             OTHER_LOCAL_ID: self.other_cleanup,
             CLOUD_ID: self.cloud_cleanup,
         }
-        self.stt_contacts: list[str] = []
         self.cleanup_contacts: list[str] = []
         self.service = ModelService(
             registry,
@@ -99,7 +98,6 @@ class Rig:
         )
 
     def stt_for(self, model_id: str) -> RecordingStt | None:
-        self.stt_contacts.append(model_id)
         return self.stt_engines.get(model_id)
 
     def cleanup_for(self, model_id: str) -> RecordingCleanup | None:
@@ -112,9 +110,9 @@ async def scenario(path: Path) -> AsyncIterator[Rig]:
     registry = ModelRegistry(
         (
             *default_registry().list_models(),
-            ModelInfo(OTHER_LOCAL_ID, "cleanup", "Other local", True, "test", None),
-            ModelInfo(OTHER_STT_ID, "stt", "Other STT", True, "test", None),
-            ModelInfo(CLOUD_ID, "cleanup", "Cloud", False, "cloud", None),
+            ModelInfo(OTHER_LOCAL_ID, "cleanup", "Other local", True, None),
+            ModelInfo(OTHER_STT_ID, "stt", "Other STT", True, None),
+            ModelInfo(CLOUD_ID, "cleanup", "Cloud", False, None),
         )
     )
     migrations = [
@@ -191,20 +189,13 @@ async def test_T_APP_005_poll_preserves_active_run_and_publishes_only_changes(
 
 
 @pytest.mark.asyncio
-async def test_T_APP_006_cloud_selection_and_test_are_blocked_without_contact(
-    tmp_path: Path,
-) -> None:
+async def test_T_APP_006_cloud_selection_and_test_are_allowed(tmp_path: Path) -> None:
     async with scenario(tmp_path) as rig:
-        await rig.store.update({"stt_model_id": OTHER_STT_ID, "local_only": True})
-        original = rig.store.current().model_dump(mode="json")
-        for operation in (rig.service.select, rig.service.test):
-            with pytest.raises(WisprError) as error:
-                await operation(CLOUD_ID)
-            assert error.value.error_code == ErrorCode.CLOUD_MODEL_FORBIDDEN
-        assert rig.store.current().model_dump(mode="json") == original
-        assert (await rig.store.load()).model_dump(mode="json") == original
-        assert rig.cleanup_contacts == []
-        assert rig.events.by_name("models:status") == []
+        assert await rig.service.test(CLOUD_ID) == item(CLOUD_ID, "cleanup", True)
+        selected = await rig.service.select(CLOUD_ID)
+        assert selected["settings"]["cleanup_model_id"] == CLOUD_ID
+        assert rig.store.current().cleanup_model_id == CLOUD_ID
+        assert rig.cleanup_contacts
 
 
 @pytest.mark.asyncio
@@ -319,15 +310,14 @@ async def test_T_APP_016_model_commands_session_deadline_and_error_codes(
             "models_test", {"session_token": "session-1", "model_id": "missing"}
         )
         assert invalid.error == ErrorCode.VALIDATION
-        forbidden = await api.call(
+        allowed = await api.call(
             "models_test", {"session_token": "session-1", "model_id": CLOUD_ID}
         )
-        assert forbidden.ok and forbidden.data == item(CLOUD_ID, "cleanup", True)
-        await rig.store.update({"stt_model_id": OTHER_STT_ID, "local_only": True})
-        forbidden = await api.call(
+        assert allowed.ok and allowed.data == item(CLOUD_ID, "cleanup", True)
+        repeated = await api.call(
             "models_test", {"session_token": "session-1", "model_id": CLOUD_ID}
         )
-        assert forbidden.error == ErrorCode.CLOUD_MODEL_FORBIDDEN
+        assert repeated.ok and repeated.data == item(CLOUD_ID, "cleanup", True)
 
 
 @pytest.mark.asyncio
@@ -386,25 +376,19 @@ async def test_T_APP_017_select_result_cannot_mutate_published_event(
 
 
 @pytest.mark.asyncio
-async def test_T_APP_017_local_only_toggle_and_registered_role(tmp_path: Path) -> None:
+async def test_T_APP_017_cloud_models_and_registered_role(tmp_path: Path) -> None:
     async with scenario(tmp_path) as rig:
         stt_result = await rig.service.select(OTHER_STT_ID)
         assert stt_result["settings"]["stt_model_id"] == OTHER_STT_ID
-        assert rig.store.current().cleanup_model_id == CLEANUP_ID
-        await rig.store.update({"local_only": True})
-        await rig.store.update({"local_only": False})
         selected = await rig.service.select(CLOUD_ID)
         assert selected["settings"]["cleanup_model_id"] == CLOUD_ID
-        assert rig.store.current().stt_model_id == OTHER_STT_ID
+        assert await rig.service.test(CLOUD_ID) == item(CLOUD_ID, "cleanup", True)
+        with pytest.raises(WisprError) as error:
+            await rig.service.select(STT_ID, role="cleanup")
+        assert error.value.error_code == ErrorCode.VALIDATION
         with pytest.raises(WisprError) as error:
             await rig.store.update({"local_only": True})
-        assert error.value.error_code == ErrorCode.CLOUD_MODEL_FORBIDDEN
-        await rig.service.select(OTHER_LOCAL_ID)
-        await rig.store.update({"local_only": True})
-        with pytest.raises(WisprError) as error:
-            await rig.service.select(CLOUD_ID)
-        assert error.value.error_code == ErrorCode.CLOUD_MODEL_FORBIDDEN
-        assert rig.store.current().cleanup_model_id == OTHER_LOCAL_ID
+        assert error.value.error_code == ErrorCode.VALIDATION
 
 
 @pytest.mark.asyncio

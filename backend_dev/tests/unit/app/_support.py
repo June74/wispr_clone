@@ -54,11 +54,13 @@ class ClosableCleanup(FakeCleanupEngine):
 class Boundaries:
     db_path: Path | None = None
     now: float = 1000.0
+    monotonic_now: float | None = None
     stt: FakeSttEngine = field(default_factory=lambda: FakeSttEngine("fixed text"))
     win32: FakeWin32Api = field(default_factory=FakeWin32Api)
     uia: FakeUiaApi = field(default_factory=FakeUiaApi)
     webview: FakeWebview = field(default_factory=FakeWebview)
     captures: list[FakeCapture] = field(default_factory=list)
+    capture_devices: list[int | None] = field(default_factory=list)
     listeners: list[Listener] = field(default_factory=list)
     databases: list[RecordingDatabase] = field(default_factory=list)
     cleanups: list[ClosableCleanup] = field(default_factory=list)
@@ -71,9 +73,10 @@ class Boundaries:
             self.databases.append(database)
             return database
 
-        def new_capture(_lease: Any, _device: int | None, _owner: Any) -> FakeCapture:
+        def new_capture(_lease: Any, device: int | None, _owner: Any) -> FakeCapture:
             capture = FakeCapture()
             self.captures.append(capture)
+            self.capture_devices.append(device)
             return capture
 
         def new_listener(service: Any) -> Listener:
@@ -97,5 +100,7 @@ class Boundaries:
             hotkey_listener=new_listener,
             webview=(lambda: self.webview) if gui else None,
             clock=lambda: self.now,
-            monotonic=lambda: self.now,
+            monotonic=lambda: (
+                self.now if self.monotonic_now is None else self.monotonic_now
+            ),
         )

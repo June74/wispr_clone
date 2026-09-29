@@ -7,6 +7,7 @@ import threading
 
 import numpy as np
 import pytest
+import soxr  # type: ignore[import-untyped]
 
 from wispr_clone.contracts.common import ErrorCode, ThirdPartyError, WisprError
 
@@ -196,8 +197,8 @@ async def test_T_AUD_007_callback_only_copies_and_enqueues(monkeypatch, caplog):
         raise AssertionError("processing or file I/O ran inside callback")
 
     with monkeypatch.context() as patch:
-        patch.setattr(capture_mod, "to_mono_16k", forbidden, raising=False)
-        patch.setattr(capture_mod, "band_levels", forbidden, raising=False)
+        patch.setattr(capture_mod, "streaming_resampler", forbidden)
+        patch.setattr(capture_mod, "band_levels", forbidden)
         writer_mod = importlib.import_module("wispr_clone.audio.wav_writer")
         patch.setattr(writer_mod, "WavWriter", forbidden)
         source = np.full(1280, 0.25, dtype=np.float32)
@@ -269,7 +270,6 @@ async def test_T_AUD_002_008_device_error_releases_lease_and_reports_disconnect(
 @pytest.mark.asyncio
 async def test_T_AUD_008_streaming_resampling_preserves_continuous_tone():
     capture_mod, lease_mod = audio_modules()
-    resample_mod = importlib.import_module("wispr_clone.audio.resample")
     fake = make_fake_sounddevice()
     capture = capture_mod.AudioCapture(lease_mod.DeviceLease(), module=fake)
     capture.start()
@@ -279,7 +279,7 @@ async def test_T_AUD_008_streaming_resampling_preserves_continuous_tone():
         fake.streams[0].fire(block)
     capture.stop()
     actual = np.concatenate([chunk.samples for chunk in await drain(capture)])
-    expected = resample_mod.to_mono_16k(source, rate)
+    expected = soxr.resample(source, rate, 16_000, quality="HQ")
     assert abs(len(actual) - len(expected)) <= 1
     # Leave the global filter startup/finish region out of the steady-state check.
     np.testing.assert_allclose(actual[256:-256], expected[256:-256], atol=1e-3)
@@ -350,12 +350,7 @@ def test_T_AUD_008_device_list_filters_inputs_and_import_failure(monkeypatch):
     fake = make_fake_sounddevice()
     result = devices.list_input_devices(module=fake)
     assert len(result) == 1
-    assert (result[0].device_id, result[0].name, result[0].channels) == (
-        1,
-        "synthetic mic",
-        1,
-    )
-    assert result[0].default_samplerate == 48_000
+    assert (result[0].device_id, result[0].name) == (1, "synthetic mic")
     assert result[0].is_default
 
     monkeypatch.setitem(sys.modules, "sounddevice", None)

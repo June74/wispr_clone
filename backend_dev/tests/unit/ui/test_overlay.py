@@ -1,4 +1,4 @@
-"""Regression tests for the native HUD pill window."""
+"""Regression tests for the pywebview HUD window, the fallback for the native HUD."""
 
 from __future__ import annotations
 

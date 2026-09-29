@@ -39,6 +39,7 @@ def test_P_WEBVIEW_001_real_module_supports_fake_surface() -> None:
         "load_url",
         "show",
         "hide",
+        "minimize",
         "destroy",
         "move",
         "resize",

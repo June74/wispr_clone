@@ -2,12 +2,9 @@
 
 import array
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Protocol
 
 SAMPLE_RATE = 16_000
-CHUNK_SAMPLES = 1_280
-
-TextCallback = Callable[[str, str], None]
 
 
 class SttSession(Protocol):
@@ -28,7 +25,7 @@ class SttEngine(Protocol):
 
     async def start(self) -> None: ...
 
-    def start_session(self, on_text: TextCallback | None = None) -> SttSession: ...
+    def start_session(self) -> SttSession: ...
 
     async def transcribe_file(self, path: Path) -> str: ...
 

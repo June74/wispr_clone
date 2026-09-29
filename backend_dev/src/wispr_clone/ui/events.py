@@ -1,4 +1,4 @@
-"""Serialize application events and deliver them as page data."""
+"""Deliver application events as page data, or as dicts to a native HUD."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from wispr_clone.contracts.events import EventPayload, EventSink
 
 
 class WebviewEventSink(EventSink):
-    """Publish JSON events to settings and HUD windows without evaluating code."""
+    """Publish JSON to the pages and dicts to a native HUD; never run event data."""
 
     def __init__(
         self,

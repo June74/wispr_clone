@@ -1,4 +1,4 @@
-"""T-PKG-001: resource paths work in a checkout and in an installed wheel."""
+"""T-PKG-001/002: resource paths work in a checkout and in an installed wheel."""
 
 import ast
 from pathlib import Path

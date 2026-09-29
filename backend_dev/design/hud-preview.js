@@ -13,7 +13,7 @@ const SLIDERS = [
   ['width', 'Window width (when not auto)', 60, 320, 2],
 ];
 const PRESETS = {
-  current: { height: 44, padL: 16, padR: 0, gap: 12, font: 12, weight: 500, dot: 8, waveW: 88, waveH: 28, width: 268, hideListeningLabel: false, radius: 8 },
+  current: { height: 44, padL: 16, padR: 6, gap: 12, font: 12, weight: 500, dot: 8, waveW: 88, waveH: 28, width: 272, hideListeningLabel: false, radius: 8 },
   compact: { height: 32, padL: 12, padR: 8, gap: 8, font: 11, weight: 500, dot: 6, waveW: 56, waveH: 18, width: 200, hideListeningLabel: false, radius: 8 },
   mini: { height: 26, padL: 10, padR: 8, gap: 6, font: 10.5, weight: 500, dot: 6, waveW: 44, waveH: 14, width: 120, hideListeningLabel: true, radius: 8 },
 };
@@ -95,7 +95,7 @@ function apply() {
     input.disabled = input.dataset.key === 'width' && $('#autoWidth').checked;
   }
   $('#hideListeningLabel').checked = config.hideListeningLabel;
-  $('#size').textContent = `Native window: ${width} × ${config.height} px (shipped: 268 × 44)`;
+  $('#size').textContent = `Native window: ${width} × ${config.height} px (shipped: 272 × 44)`;
   $('#out').value = JSON.stringify({ hud: {
     window: [width, config.height], padding: [config.padL, config.padR], gap: config.gap,
     label: { size: config.font, weight: config.weight, hideWhileListening: config.hideListeningLabel },

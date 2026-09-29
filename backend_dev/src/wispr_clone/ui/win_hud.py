@@ -1,4 +1,4 @@
-"""Native, non-activating visibility controls for the Windows HUD."""
+"""Native, non-activating visibility controls for the pywebview (fallback) HUD."""
 
 from __future__ import annotations
 

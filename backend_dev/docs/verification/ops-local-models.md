@@ -1,5 +1,11 @@
 # Tier G record — ops/local-models (2026-09-25)
 
+> **Update 2026-09-27 (#36):** the local Voxtral/transcribe.cpp STT was removed by user decision;
+> cloud Whisper through OpenRouter is the only STT. `scripts/check_local_models.py` no longer
+> reports `gguf` or `gpu`, and P-GPU-001, P-TCPP-001..003 and T-STT-A01 were deleted (the deferred P-TCPP-004 was dropped), so the
+> deferred runs below will not happen. `-m gpu` now selects only P-LMS-001..003 and P-NET-001/002.
+> The record below is kept as history.
+
 Run by the coordinator (the agent sandbox has no GPU access; agents/HARDWARE.md), from WSL through
 the Windows venv `C:\Users\2006i\AppData\Local\wispr_clone\venv` created with
 `uv.exe sync --locked` (uv 0.12.19, Python 3.12, locked baseline incl. transcribe-cpp 0.2.3 + cu12).

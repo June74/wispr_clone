@@ -85,25 +85,24 @@ class RealWin32:
     """Win32 implementation; imports pywin32 only when an operation is used."""
 
     @staticmethod
-    def _modules() -> tuple[object, object, object]:
+    def _modules() -> tuple[object, object]:
         if sys.platform != "win32":
             raise OSError("Win32 desktop APIs are available only on Windows")
         return (
             importlib.import_module("win32gui"),
             importlib.import_module("win32process"),
-            importlib.import_module("win32con"),
         )
 
     def foreground_window(self) -> int:
-        gui, _, _ = self._modules()
+        gui, _ = self._modules()
         return int(gui.GetForegroundWindow())  # type: ignore[attr-defined]
 
     def is_window(self, hwnd: int) -> bool:
-        gui, _, _ = self._modules()
+        gui, _ = self._modules()
         return bool(gui.IsWindow(hwnd))  # type: ignore[attr-defined]
 
     def window_process(self, hwnd: int) -> tuple[int, str]:
-        _, process, _ = self._modules()
+        _, process = self._modules()
         pid = int(process.GetWindowThreadProcessId(hwnd)[1])  # type: ignore[attr-defined]
         kernel32: Any = getattr(ctypes, "windll").kernel32
         handle = kernel32.OpenProcess(0x1000, False, pid)
@@ -116,17 +115,17 @@ class RealWin32:
         return pid, exe.rsplit("/", 1)[-1].lower()
 
     def window_title(self, hwnd: int) -> str:
-        gui, _, _ = self._modules()
+        gui, _ = self._modules()
         return str(gui.GetWindowText(hwnd))  # type: ignore[attr-defined]
 
     def keyboard_layout(self, hwnd: int) -> int:
-        _, process, _ = self._modules()
+        _, process = self._modules()
         thread_id = int(process.GetWindowThreadProcessId(hwnd)[0])  # type: ignore[attr-defined]
         windll = getattr(ctypes, "windll")
         return int(windll.user32.GetKeyboardLayout(thread_id)) & 0xFFFF
 
     def set_foreground(self, hwnd: int) -> bool:
-        gui, _, _ = self._modules()
+        gui, _ = self._modules()
         try:
             gui.SetForegroundWindow(hwnd)  # type: ignore[attr-defined]
             return self.foreground_window() == hwnd

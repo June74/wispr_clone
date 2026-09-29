@@ -37,14 +37,14 @@ def _loaded_model():
     return model
 
 
-def _chat(prompt, *, stream=False, max_tokens=40):
+def _chat(prompt):
     body = json.dumps(
         {
             "model": MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0,
-            "max_tokens": max_tokens,
-            "stream": stream,
+            "max_tokens": 40,
+            "stream": False,
         }
     ).encode()
     request = urllib.request.Request(

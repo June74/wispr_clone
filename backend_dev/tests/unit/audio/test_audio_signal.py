@@ -13,39 +13,6 @@ def tone(rate: int, seconds: float = 1.0, amplitude: float = 1.0) -> np.ndarray:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("rate", [48_000, 44_100])
-@pytest.mark.parametrize("stereo", [False, True])
-def test_T_AUD_003_resampling_preserves_duration_pitch_and_dtype(
-    rate, stereo, tmp_path
-):
-    resample = importlib.import_module("wispr_clone.audio.resample")
-    source = tone(rate)
-    if stereo:
-        source = np.column_stack((source, source * 0.5))
-    generated = tmp_path / "audio_tone.npy"
-    np.save(generated, source)
-    source = np.load(generated)
-    result = resample.to_mono_16k(source, rate)
-    assert result.dtype == np.float32 and result.flags.c_contiguous
-    assert result.ndim == 1
-    assert abs(len(result) - 16_000) <= 16
-    peak = np.argmax(abs(np.fft.rfft(result)))
-    assert abs(np.fft.rfftfreq(len(result), 1 / 16_000)[peak] - 1000) <= 20
-    if stereo:
-        rms = np.sqrt(np.mean(result[100:-100].astype(np.float64) ** 2))
-        assert rms == pytest.approx(0.75 / np.sqrt(2), abs=0.02)
-
-
-@pytest.mark.unit
-def test_T_AUD_003_native_rate_mono_keeps_samples():
-    resample = importlib.import_module("wispr_clone.audio.resample")
-    source = tone(16_000)
-    result = resample.to_mono_16k(source, 16_000)
-    np.testing.assert_array_equal(result, source)
-    assert result.dtype == np.float32 and result.flags.c_contiguous
-
-
-@pytest.mark.unit
 def test_T_AUD_004_fft_bands_track_level_and_silence():
     meter = importlib.import_module("wispr_clone.audio.level_meter")
     full = meter.band_levels(tone(16_000), 16_000)
@@ -101,14 +68,7 @@ def test_T_AUD_005_wav_writer_valid_after_normal_and_partial_close(tmp_path):
     writer = writer_module.WavWriter(empty_path)
     writer.close()
     writer.close()
-    if empty_path.exists():
-        with wave.open(str(empty_path), "rb") as wav:
-            assert wav.getnframes() == 0
-            assert (wav.getframerate(), wav.getnchannels(), wav.getsampwidth()) == (
-                16_000,
-                1,
-                2,
-            )
+    assert not empty_path.exists()
 
     clipped_path = tmp_path / "audio_clipped.wav"
     writer = writer_module.WavWriter(clipped_path)

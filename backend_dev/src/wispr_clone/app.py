@@ -118,9 +118,7 @@ def real_factories() -> AppFactories:
     """Create lazy adapters; platform libraries load only when a factory is used."""
 
     secrets_store: SecretStore = (
-        MemorySecretStore()
-        if "--self-test" in sys.argv
-        else DpapiSecretStore(config.app_data_dir() / "secrets")
+        DpapiSecretStore(config.app_data_dir() / "secrets")
         if os.name == "nt"
         else UnavailableSecretStore()
     )
@@ -200,19 +198,18 @@ def real_factories() -> AppFactories:
     )
 
 
-class MemoryEvents(EventSink):
-    def __init__(self) -> None:
-        self.events: list[EventPayload] = []
+class NullEvents(EventSink):
+    """Discard events until a UI sink is attached; headless runs never attach one."""
 
     def publish(self, event: EventPayload) -> None:
-        self.events.append(event)
+        del event
 
 
 class EventRouter(EventSink):
     """Keep service event references stable while selecting a UI sink."""
 
     def __init__(self) -> None:
-        self.target: EventSink = MemoryEvents()
+        self.target: EventSink = NullEvents()
         self.hud: Any = None
         self.cue: Callable[[str], None] | None = None
         self._recording_run: str | None = None
@@ -356,7 +353,6 @@ class App:
         )
         self._insertion_thread_error = False
         self._cleanup_cache: dict[str, CleanupEngine] = {}
-        self._tasks: list[asyncio.Task[None]] = []
         self._timers: list[asyncio.Task[None]] = []
         self._loop: asyncio.AbstractEventLoop | None = None
         self._worker: threading.Thread | None = None
@@ -365,7 +361,6 @@ class App:
         self._worker_error: BaseException | None = None
         self._shutdown_schedule_lock = threading.Lock()
         self._shutdown_scheduled = False
-        self._gui_thread_id: int | None = None
         self._instance: SingleInstance | None = None
         self._started = False
         self._closed = False
@@ -380,7 +375,6 @@ class App:
         self._settings: Settings | None = None
         self._secret_store: SecretStore | None = None
         self._api: Api | None = None
-        self._hotkey: HotkeyService | None = None
         self._listener: ListenerLike | None = None
         self._history: HistoryRepo | None = None
         self._db: Database | None = None
@@ -491,7 +485,7 @@ class App:
             cast(Win32Api, self._win32),
             cast(UiaApi, self._uia),
             offload=self._offload,
-            clock=self.factories.monotonic,
+            clock=self.factories.clock,
             new_id=lambda: secrets.token_urlsafe(18),
         )
         dictionary = DictionaryRepo(self._db, clock=self.factories.clock)
@@ -539,7 +533,6 @@ class App:
 
         self._run_commands = RunCommands(
             self._controller,
-            clock=self.factories.clock,
             copy_to_clipboard=copy_clipboard,
             last_external_destination=self.last_external_destination,
         )
@@ -747,22 +740,46 @@ class App:
                 lambda done: done.exception() if not done.cancelled() else None
             )
 
+        async def toggle_dictation() -> None:
+            active_run_id = (
+                self._controller.active_run_id if self._controller is not None else None
+            )
+            if active_run_id is None:
+                await invoke("run_start", {"request_id": secrets.token_urlsafe(18)})
+            else:
+                await invoke("run_stop", {"run_id": active_run_id})
+
+        def schedule_toggle_dictation() -> None:
+            loop = self._loop or asyncio.get_running_loop()
+            task = loop.create_task(toggle_dictation())
+            task.add_done_callback(
+                lambda done: done.exception() if not done.cancelled() else None
+            )
+
+        toggle_mode = self._settings.recording_mode == "toggle"
         service = HotkeyService(
             dictation=parse_binding(self._settings.dictation_shortcut),
             cancel=parse_binding(self._settings.cancel_shortcut),
             mode=self._settings.recording_mode,
-            on_start=lambda: schedule(
-                "run_start", {"request_id": secrets.token_urlsafe(18)}
+            on_start=(
+                schedule_toggle_dictation
+                if toggle_mode
+                else lambda: schedule(
+                    "run_start", {"request_id": secrets.token_urlsafe(18)}
+                )
             ),
-            on_stop=lambda: (
-                schedule("run_stop", {"run_id": self._controller.active_run_id})
-                if self._controller and self._controller.active_run_id
-                else None
+            on_stop=(
+                schedule_toggle_dictation
+                if toggle_mode
+                else lambda: (
+                    schedule("run_stop", {"run_id": self._controller.active_run_id})
+                    if self._controller and self._controller.active_run_id
+                    else None
+                )
             ),
             on_cancel=lambda: schedule("run_cancel"),
             post=self._post_hotkey,
         )
-        self._hotkey = service
         self._listener = self.factories.hotkey_listener(service)
         self._listener.start()
 
@@ -946,7 +963,6 @@ class App:
         settings_window = open_settings(
             webview,
             Bridge(self._api, self._loop),
-            debug=self.debug,
             controls=controls,
             start_hidden=self.start_hidden and controls.hide_on_close,
         )
@@ -1010,10 +1026,8 @@ class App:
         except TimeoutError:
             pass
         self.shutdown_log.append("live_tasks")
+        # The controller's cleanup adapter is one of these cached engines.
         engines = list(self._cleanup_cache.values())
-        if self._controller is not None:
-            # Controller uses one of the cached adapters when cleanup is enabled.
-            pass
         for engine in engines:
             close = getattr(engine, "aclose", None)
             if callable(close):
@@ -1063,7 +1077,6 @@ class App:
             return 1
         exit_code = 0
         if self.factories.webview is not None:
-            self._gui_thread_id = threading.get_ident()
             try:
                 self._create_windows()
                 if self._webview_module is None:
@@ -1075,8 +1088,6 @@ class App:
                 exit_code = 1
             finally:
                 self._schedule_shutdown()
-        else:
-            self._worker_done.wait()
         self._worker_done.wait()
         return exit_code
 

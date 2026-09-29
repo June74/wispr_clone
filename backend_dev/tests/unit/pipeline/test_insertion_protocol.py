@@ -383,7 +383,6 @@ async def test_T_PRO_014_oldest_only_per_tick(tmp_path: Path) -> None:
         newer = WaitingRun(s.run_id, "PRIVATE TRANSCRIPT", s.snapshot, "r1", 30)
         oldest = WaitingRun(second.id, "PRIVATE TRANSCRIPT", s.snapshot, "r2", 10)
         middle = WaitingRun(third.id, "PRIVATE TRANSCRIPT", s.snapshot, "r3", 20)
-        s.clock.advance(0)
         first = await s.protocol.deliver_next(
             [newer, middle, oldest], is_cancelled=lambda _: False
         )
@@ -731,7 +730,6 @@ async def test_T_PRO_027_waiting_run_overrides_protocol_limits(tmp_path: Path) -
         )
         assert s.sends() == 0
 
-        s.clock.advance(0)
         newer = WaitingRun(
             s.run_id,
             "PRIVATE TRANSCRIPT",

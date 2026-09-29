@@ -33,7 +33,6 @@ class ErrorCode(StrEnum):
     CLEANUP_UNAVAILABLE = "cleanup_unavailable"
     CLEANUP_TIMEOUT = "cleanup_timeout"
     CLEANUP_REJECTED = "cleanup_rejected"
-    CLOUD_MODEL_FORBIDDEN = "cloud_model_forbidden"
     NON_LOOPBACK_ENDPOINT = "non_loopback_endpoint"
     DESTINATION_UNVERIFIABLE = "destination_unverifiable"
     DESTINATION_CLOSED = "destination_closed"

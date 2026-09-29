@@ -10,13 +10,12 @@ import pytest
 
 TESTS_DIR = Path(__file__).resolve().parents[1]
 BACKEND_DIR = TESTS_DIR.parent
-PLUGIN = TESTS_DIR / "_attribution" / "plugin.py"
 CAPTURE_SECRET = "PRIVATE_CAPTURED_TRANSCRIPT_71"
 ASSERTION_SECRET = "PRIVATE_ASSERTION_SECOND_LINE_72"
 
 
 def _suite(pytester: pytest.Pytester) -> Path:
-    """Give a disposable suite the production plugin when it exists."""
+    """Give a disposable suite the production attribution plugin."""
     pytester.makeini(
         """[pytest]
 addopts = --strict-markers
@@ -31,15 +30,13 @@ markers =
         "import sys\n"
         f"sys.path.insert(0, {str(TESTS_DIR)!r})\n"
         f"sys.path.insert(0, {str(pytester.path / 'src')!r})\n"
-        + ("pytest_plugins = ('_attribution.plugin',)\n" if PLUGIN.is_file() else "")
+        + "pytest_plugins = ('_attribution.plugin',)\n"
     )
     return pytester.path / "attribution.json"
 
 
 def _run(pytester: pytest.Pytester, report: Path, *args: str) -> pytest.RunResult:
-    command = ["-q", *args]
-    if PLUGIN.is_file():
-        command.extend(["--attribution-json", str(report)])
+    command = ["-q", *args, "--attribution-json", str(report)]
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setenv("PYTHONUTF8", "1")
         return pytester.runpytest_subprocess(*command)
@@ -479,3 +476,31 @@ def test_T_DIAG_adapter_fails_after_xpass():
     assert adapter["verdict"] == "OURS"
     assert adapter["category"] == "adapter-misuse"
     assert "[XPASS(strict)]" in result.stdout.str()
+
+
+def test_T_DIAG_021_architecture_path_is_classified_separately(
+    pytester: pytest.Pytester,
+) -> None:
+    report = _suite(pytester)
+    arch = pytester.path / "tests" / "arch"
+    arch.mkdir(parents=True)
+    (arch / "test_boundary.py").write_text(
+        "def test_T_DIAG_021_arch():\n"
+        '    assert False, "synthetic architecture failure"\n',
+        encoding="utf-8",
+    )
+    pytester.makepyfile(
+        test_plain=(
+            "def test_T_DIAG_021_plain():\n"
+            '    assert False, "synthetic logic failure"\n'
+        )
+    )
+    result = _run(pytester, report, "tests/arch/test_boundary.py", "test_plain.py")
+    result.assert_outcomes(failed=2)
+    rows = _json(report)
+    assert len(rows) == 2
+    by_name = {str(row["nodeid"]).split("::")[-1]: row for row in rows}
+    assert by_name["test_T_DIAG_021_arch"]["verdict"] == "OURS"
+    assert by_name["test_T_DIAG_021_arch"]["category"] == "architecture"
+    assert by_name["test_T_DIAG_021_plain"]["verdict"] == "OURS"
+    assert by_name["test_T_DIAG_021_plain"]["category"] == "logic"

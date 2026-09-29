@@ -10,13 +10,9 @@ HUD_SPEC = {
     "height": 44,
     "padding_left": 16,
     "padding_right": 6,
-    "padding_y": 6,
     "gap": 12,
     "label_size": 12,
-    "label_weight": 500,
     "dot_size": 8,
-    "wave_width": 88,
-    "wave_height": 28,
     "radius": 22,
     "shadow_margin": 14,
 }
@@ -57,7 +53,6 @@ class HudLayout:
     pill_rect: Rect
     dot_center: tuple[float, float]
     dot_radius: float
-    label_x: float
     label_rect: Rect
     timer_rect: Rect
     cancel_rect: Rect
@@ -113,15 +108,6 @@ def status_color(status: str) -> str:
     return _COLORS.get(status, _IDLE_COLOR)
 
 
-def hud_visible(status: str) -> bool:
-    return status in {
-        "recording",
-        "processing",
-        "awaiting_destination",
-        "awaiting_cleanup_choice",
-    }
-
-
 def layout(scale: float) -> HudLayout:
     margin = HUD_SPEC["shadow_margin"] * scale
     x = y = margin
@@ -148,7 +134,6 @@ def layout(scale: float) -> HudLayout:
         pill_rect=Rect(x, y, x + width, y + height),
         dot_center=(dot_x, center_y),
         dot_radius=dot_radius,
-        label_x=label_x,
         label_rect=label_rect,
         timer_rect=timer_rect,
         cancel_rect=cancel_rect,

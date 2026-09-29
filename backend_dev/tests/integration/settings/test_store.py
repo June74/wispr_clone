@@ -28,10 +28,8 @@ def _catalog_with_cloud() -> ModelRegistry:
     return ModelRegistry(
         (
             *default_registry().list_models(),
-            ModelInfo(
-                "cloud-cleanup", "cleanup", "Synthetic cloud model", False, "test", None
-            ),
-            ModelInfo("local-stt", "stt", "Synthetic local STT", True, "test", None),
+            ModelInfo("cloud-cleanup", "cleanup", "Synthetic cloud model", False, None),
+            ModelInfo("local-stt", "stt", "Synthetic local STT", True, None),
         )
     )
 
@@ -124,10 +122,7 @@ async def test_T_SET_011_known_cloud_row_and_backup_limit(tmp_path: Path) -> Non
 
     path = tmp_path / "backup_limit.db"
     async with Database(path) as db:
-        cloud_raw = (
-            '{"schema_version":2,"stt_model_id":"local-stt",'
-            '"local_only":true,"cleanup_model_id":"cloud-cleanup"}'
-        )
+        cloud_raw = '{"schema_version":3,"cleanup_model_id":"not a model id"}'
         await db.write(
             lambda conn: conn.execute(
                 "INSERT INTO settings (id, data) VALUES (1, ?)", (cloud_raw,)
@@ -178,16 +173,8 @@ async def test_T_SET_012_patch_rollback_and_concurrent_merge(tmp_path: Path) -> 
         invalid = [
             ({"cleanup_enabled": "false"}, ErrorCode.VALIDATION, "cleanup_enabled"),
             ({"not_a_setting": True}, ErrorCode.VALIDATION, "not_a_setting"),
-            (
-                {
-                    "stt_model_id": "local-stt",
-                    "local_only": True,
-                    "cleanup_model_id": "cloud-cleanup",
-                },
-                ErrorCode.CLOUD_MODEL_FORBIDDEN,
-                "cleanup_model_id",
-            ),
-            ({"schema_version": 3}, ErrorCode.VALIDATION, "schema_version"),
+            ({"local_only": True}, ErrorCode.VALIDATION, "local_only"),
+            ({"schema_version": 4}, ErrorCode.VALIDATION, "schema_version"),
         ]
         for patch, code, why in invalid:
             with pytest.raises(WisprError) as caught:
@@ -250,11 +237,13 @@ async def test_T_SET_013_upgrade_is_rewritten(tmp_path: Path) -> None:
             return {**data, "schema_version": 1, "recording_mode": "hold"}
 
         store = SettingsStore(
-            db, default_registry(), upgrade_steps={0: upgrade, 1: UPGRADE_STEPS[1]}
+            db,
+            default_registry(),
+            upgrade_steps={0: upgrade, 1: UPGRADE_STEPS[1], 2: UPGRADE_STEPS[2]},
         )
         loaded = await store.load()
         assert (loaded.schema_version, loaded.theme, loaded.recording_mode) == (
-            2,
+            3,
             "dark",
             "hold",
         )

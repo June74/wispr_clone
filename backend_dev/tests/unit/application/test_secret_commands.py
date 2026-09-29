@@ -124,7 +124,7 @@ async def test_T_APP_030_secret_commands_and_readiness() -> None:
 
 @pytest.mark.unit
 @pytest.mark.skipif(os.name == "nt", reason="non-Windows development boundary")
-def test_T_APP_031_real_factory_never_uses_volatile_key_store_outside_self_test(
+def test_T_APP_031_real_factory_never_uses_volatile_key_store(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from wispr_clone.app import real_factories

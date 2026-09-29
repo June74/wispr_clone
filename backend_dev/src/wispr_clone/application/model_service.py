@@ -1,4 +1,4 @@
-"""Read-only model readiness and validated model selection."""
+"""Model readiness, provider model lists, validated selection and model loading."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ LOAD_RETRY_S = 60.0
 
 
 class ModelService:
-    """Aggregate selected-model health without changing engine lifecycle."""
+    """Aggregate model health, list pickable models, keep the cleanup model loaded."""
 
     def __init__(
         self,
@@ -68,7 +68,6 @@ class ModelService:
 
     async def test(self, model_id: str, role: str | None = None) -> dict[str, object]:
         model = self._known_model(model_id, role)
-        self._enforce_local_only(model_id, model.local)
         return dict(await self._readiness(model_id, model.role))
 
     async def catalog(self) -> dict[str, object]:
@@ -219,11 +218,4 @@ class ModelService:
         )
         if model is None:
             raise WisprError(ErrorCode.VALIDATION, "models", "model_id") from None
-        self._enforce_local_only(model_id, model.local)
         return model
-
-    def _enforce_local_only(self, model_id: str, local: bool) -> None:
-        if self._store.current().local_only and not local:
-            raise WisprError(
-                ErrorCode.CLOUD_MODEL_FORBIDDEN, "models", "model_id"
-            ) from None
