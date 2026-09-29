@@ -1,7 +1,7 @@
 import { createBridge, whenHostReady } from './lib/bridge.js';
 import { catalogNote, modelBadge, pickerOptions } from './lib/models.js';
 import { createStore, applyEvent, acceptsEvent } from './lib/store.js';
-import { shouldToastInserted, recoveryButtons } from './lib/view.js';
+import { shouldToastInserted, recoveryButtons, canDiscard } from './lib/view.js';
 import { termSaveEnabled, instructionsDirty, micDeviceId, micSelection } from './lib/forms.js';
 import { messageFor } from './lib/messages.js';
 import { createWaveform } from './waveform.js';
@@ -100,7 +100,7 @@ function renderRun() {
   const btn = $('#rec-btn'); btn.disabled = !bridge.available() || pending || ['awaiting_cleanup_choice', 'awaiting_destination'].includes(status);
   btn.innerHTML = recording ? `${icon('stop')}<span>Finish dictation</span>` : `${icon('mic')}<span>Start dictation</span>`;
   $('#dictate-hint').textContent = bridge.available() ? '' : 'Not connected';
-  $('#dictate-cancel').hidden = !active || !['recording', 'processing', 'awaiting_cleanup_choice', 'awaiting_destination', 'held'].includes(status);
+  $('#dictate-cancel').hidden = !canDiscard(status);
   if (state.lastEvent && shouldToastInserted(state.lastEvent)) { toast('success', 'Dictation inserted', 'The backend confirmed delivery.'); state.lastEvent = null; }
   if ($('#dictate-recovery')) $('#dictate-recovery').innerHTML = status === 'awaiting_cleanup_choice' && active
     ? recoveryButtons(active).map((action) => `<button class="btn btn-secondary btn-sm" data-recover="${esc(action)}">${esc(action.replaceAll('_', ' '))}</button>`).join('') : '';

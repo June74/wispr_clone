@@ -5,8 +5,10 @@ import { acceptsEvent, applyEvent, createStore } from '../lib/store.js';
 
 const app = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const css = readFileSync(new URL('../styles.css', import.meta.url), 'utf8');
 const messages = readFileSync(new URL('../lib/messages.js', import.meta.url), 'utf8');
 const forms = await import('../lib/forms.js').catch(() => ({}));
+const view = await import('../lib/view.js');
 
 test('T-WEB-023: term eligibility and Add/Edit modal wiring', () => {
   assert.equal(typeof forms.termSaveEnabled, 'function', 'termSaveEnabled must be exported');
@@ -86,4 +88,22 @@ test('T-WEB-027: local-only UI and error message are removed', () => {
     }
   }
   assert.doesNotMatch(messages, /cloud_model_forbidden/);
+});
+
+test('T-WEB-028: discard follows cancellable status and is clickable when visible', () => {
+  assert.equal(typeof view.canDiscard, 'function', 'canDiscard must be exported');
+  for (const status of ['recording', 'processing', 'awaiting_cleanup_choice', 'awaiting_destination']) assert.equal(view.canDiscard(status), true, status);
+  for (const status of ['held', 'idle', 'done', 'error', 'uncertain', 'cancelled', undefined]) assert.equal(view.canDiscard(status), false, String(status));
+  const baseRule = css.match(/\.dictate-cancel\s*\{([^}]*)\}/)?.[1] ?? '';
+  assert.ok(baseRule, 'discard base style is missing');
+  assert.doesNotMatch(baseRule, /opacity:\s*0\b|pointer-events:\s*none\b/);
+  assert.match(app, /#dictate-cancel['"]\)\.hidden\s*=\s*!canDiscard\(status\)/);
+});
+
+test('T-WEB-031: hidden controls and history rows override their display styles', () => {
+  assert.match(css, /(?:^|})\s*\[hidden\]\s*\{\s*display\s*:\s*none\s*!important\s*;?\s*\}/m);
+  assert.match(css, /\.btn\s*\{[^}]*display\s*:\s*inline-flex/s);
+  assert.match(css, /\.item\s*\{[^}]*display\s*:\s*flex/s);
+  assert.match(app, /#dictate-cancel['"]\)\.hidden\s*=\s*!canDiscard\(status\)/);
+  assert.match(app, /item\.hidden\s*=\s*!item\.textContent\.toLowerCase\(\)\.includes\(query\)/);
 });

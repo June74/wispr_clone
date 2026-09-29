@@ -14,7 +14,8 @@ run and audio events and cannot issue commands; the native HUD's cancel button a
 call `run_cancel`.
 
 `lib/store.js` reduces snapshots and versioned events (a `run:recovery` may share its `run:state`
-version). `lib/view.js` maps run status to HUD colors, recovery actions, and insertion confirmation. `lib/forms.js` holds the settings-form rules: Save-term and
+version). `lib/view.js` maps run status to HUD colors, recovery actions, insertion confirmation, and
+whether Discard is offered. `lib/forms.js` holds the settings-form rules: Save-term and
 cleanup-instruction enablement, and the saved microphone selection. `lib/models.js` builds the Models page pickers and
 badges, `lib/shortcuts.js` turns a key press into a shortcut binding, and `lib/secrets.js` trims a
 pasted API key. `lib/messages.js` mirrors the backend's stable error messages. The waveform renderer accepts the backend's twelve audio bands;

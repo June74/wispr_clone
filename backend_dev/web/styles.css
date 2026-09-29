@@ -143,6 +143,7 @@
 
 /* ---------- 2. Base ------------------------------------------------ */
 *, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; margin: 0; }
 body {
   font: var(--t-body);
@@ -538,12 +539,11 @@ kbd {
 .dictate .btn-record { --bh: 44px; min-width: 186px; padding: 0 var(--s-6); border-radius: 10px; font: 600 14px/20px var(--font-sans); gap: 10px; }
 .dictate .btn-record .i { width: 17px; height: 17px; }
 .dictate-hint { margin-top: var(--s-3); display: flex; align-items: center; gap: var(--s-2); font: var(--t-small); color: var(--text-2); }
-.dictate-cancel { position: absolute; right: var(--s-3); bottom: var(--s-3); opacity: 0; pointer-events: none; transition: opacity var(--t-base); }
+.dictate-cancel { position: absolute; right: var(--s-3); bottom: var(--s-3); }
 .dictate-recovery { display: flex; justify-content: center; flex-wrap: wrap; gap: var(--s-2); margin-top: var(--s-3); }
 
 /* states */
 .dictate[data-state="recording"] { border-color: color-mix(in srgb, var(--red) 45%, var(--hero-border)); box-shadow: var(--sh-2), 0 0 0 4px color-mix(in srgb, var(--red) 10%, transparent); }
-.dictate[data-state="recording"] .dictate-cancel { opacity: 1; pointer-events: auto; }
 .dictate[data-state="recording"] .btn-record { background: var(--text-1); color: var(--surface); box-shadow: var(--sh-2); }
 .dictate[data-state="recording"] .btn-record:hover { background: color-mix(in srgb, var(--text-1) 88%, var(--accent)); }
 .dictate[data-state="processing"]::before { opacity: .5; }
