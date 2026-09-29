@@ -100,6 +100,24 @@ test('T-WEB-028: discard follows cancellable status and is clickable when visibl
   assert.match(app, /#dictate-cancel['"]\)\.hidden\s*=\s*!canDiscard\(status\)/);
 });
 
+test('T-WEB-029: microphone test command and idle-time behavior', () => {
+  assert.equal(typeof forms.micTestRunningAfter, 'function', 'micTestRunningAfter must be exported');
+  assert.equal(forms.micTestRunningAfter('mic_test_start', { ok: true, data: { started: true } }, false), true);
+  assert.equal(forms.micTestRunningAfter('mic_test_start', { ok: true, data: { started: false } }, true), false);
+  for (const stopped of [true, false]) assert.equal(forms.micTestRunningAfter('mic_test_stop', { ok: true, data: { stopped } }, true), false);
+  assert.equal(forms.micTestRunningAfter('mic_test_stop', { ok: false }, true), true);
+  assert.equal(forms.micTestRunningAfter('mic_test_start', { ok: false }, false), false);
+  assert.equal(forms.MIC_TEST_IDLE_MS, 1500);
+  assert.equal(typeof forms.micTestEnded, 'function', 'micTestEnded must be exported');
+  for (const [now, expected] of [[1499, false], [1500, true], [1501, true]]) assert.equal(forms.micTestEnded(1000, 1000 + now), expected);
+  assert.match(app, /micTestRunningAfter\(/);
+  assert.match(app, /micTestEnded\(/);
+  assert.match(app, /setInterval\([\s\S]*?,\s*(?:[1-4]\d\d|500)\s*\)/);
+  assert.match(app, /audio:level[\s\S]*?run_id\s*===\s*null/);
+  assert.match(app, /lastMicLevelAt\s*=\s*Date\.now\(\)/);
+  assert.match(app, /Test microphone/);
+});
+
 test('T-WEB-031: hidden controls and history rows override their display styles', () => {
   assert.match(css, /(?:^|})\s*\[hidden\]\s*\{\s*display\s*:\s*none\s*!important\s*;?\s*\}/m);
   assert.match(css, /\.btn\s*\{[^}]*display\s*:\s*inline-flex/s);

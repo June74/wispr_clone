@@ -16,7 +16,7 @@ call `run_cancel`.
 `lib/store.js` reduces snapshots and versioned events (a `run:recovery` may share its `run:state`
 version). `lib/view.js` maps run status to HUD colors, recovery actions, insertion confirmation, and
 whether Discard is offered. `lib/forms.js` holds the settings-form rules: Save-term and
-cleanup-instruction enablement, and the saved microphone selection. `lib/models.js` builds the Models page pickers and
+cleanup-instruction enablement, the saved microphone selection, and the mic-test state. `lib/models.js` builds the Models page pickers and
 badges, `lib/shortcuts.js` turns a key press into a shortcut binding, and `lib/secrets.js` trims a
 pasted API key. `lib/messages.js` mirrors the backend's stable error messages. The waveform renderer accepts the backend's twelve audio bands;
 it does not open a browser microphone.

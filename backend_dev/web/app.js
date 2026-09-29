@@ -2,7 +2,7 @@ import { createBridge, whenHostReady } from './lib/bridge.js';
 import { catalogNote, modelBadge, pickerOptions } from './lib/models.js';
 import { createStore, applyEvent, acceptsEvent } from './lib/store.js';
 import { shouldToastInserted, recoveryButtons, canDiscard } from './lib/view.js';
-import { termSaveEnabled, instructionsDirty, micDeviceId, micSelection } from './lib/forms.js';
+import { termSaveEnabled, instructionsDirty, micDeviceId, micSelection, micTestRunningAfter, micTestEnded } from './lib/forms.js';
 import { messageFor } from './lib/messages.js';
 import { createWaveform } from './waveform.js';
 import { normalizeSecret } from './lib/secrets.js';
@@ -14,6 +14,7 @@ let state = createStore();
 let currentRun = null;
 let historyFilter = 'all';
 let editingTermId = null;
+let lastMicLevelAt = null;
 let lastSavedInstructions = null;
 // The bridge handles previous_session_token by fetching a fresh snapshot; onSnapshot installs it here.
 const bridge = createBridge(window, { onSnapshot(snapshot) { state = { ...createStore(snapshot), secrets: snapshot.secrets }; currentRun = snapshot.active_run_id; render(); } });
@@ -145,7 +146,7 @@ async function refreshLists() {
   render();
 }
 window.wisprEvent = (jsonText) => {
-  try { const event = JSON.parse(jsonText); if (!event || typeof event !== 'object' || typeof event.name !== 'string') return; const accepted = acceptsEvent(state, event); state = applyEvent(state, event); if (event.name.startsWith('run:')) { if (!accepted) state.lastEvent = null; else state.lastEvent = event.name === 'run:state' ? event : null; currentRun = event.run_id; } if (event.name === 'history:changed') void refreshLists(); render(); }
+  try { const event = JSON.parse(jsonText); if (!event || typeof event !== 'object' || typeof event.name !== 'string') return; const accepted = acceptsEvent(state, event); state = applyEvent(state, event); if (event.name.startsWith('run:')) { if (!accepted) state.lastEvent = null; else state.lastEvent = event.name === 'run:state' ? event : null; currentRun = event.run_id; } if (event.name === 'audio:level' && event.run_id === null && $('#mic-test')?.dataset.running === 'true') lastMicLevelAt = Date.now(); if (event.name === 'history:changed') void refreshLists(); render(); }
   catch { /* Invalid event payloads are ignored. */ }
 };
 
@@ -216,8 +217,11 @@ $('#save-instructions')?.addEventListener('click', async () => { const result = 
 $('#autostart-switch')?.addEventListener('click', async () => { const result = await bridge.call('autostart_set', { enabled: $('#autostart-switch').getAttribute('aria-checked') !== 'true' }); if (failed(result)) return; renderAutostart(result.data); });
 $('#save-openrouter-key')?.addEventListener('click', async () => { const input = $('#openrouter-key'); const value = normalizeSecret(input.value); input.value = ''; const result = await bridge.call('secret_set', { name: 'openrouter_api_key', value }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
 $('#clear-openrouter-key')?.addEventListener('click', async () => { $('#openrouter-key').value = ''; const result = await bridge.call('secret_clear', { name: 'openrouter_api_key' }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
+function setMicTestRunning(running) { const button = $('#mic-test'); button.dataset.running = String(running); button.innerHTML = `${icon(running ? 'stop' : 'mic')}${running ? 'Stop test' : 'Test microphone'}`; }
 $('#mic-select')?.addEventListener('change', async () => { const microphone_id = $('#mic-select').value === '' ? null : $('#mic-select').value; const result = await bridge.call('settings_update', { patch: { microphone_id: microphone_id } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
-$('#mic-test')?.addEventListener('click', async () => { const result = $('#mic-test').dataset.running === 'true' ? await bridge.call('mic_test_stop') : await bridge.call('mic_test_start', { device_id: micDeviceId($('#mic-select').value) }); if (failed(result)) return; const running = result.data.stopped === false || result.data.started === true; $('#mic-test').dataset.running = String(running); $('#mic-test').innerHTML = `${icon(running ? 'stop' : 'mic')}${running ? 'Stop test' : 'Test microphone'}`; });
+$('#mic-test')?.addEventListener('click', async () => { const button = $('#mic-test'); const wasRunning = button.dataset.running === 'true'; const command = wasRunning ? 'mic_test_stop' : 'mic_test_start'; const result = await bridge.call(command, wasRunning ? {} : { device_id: micDeviceId($('#mic-select').value) }); if (failed(result)) return; const running = micTestRunningAfter(command, result, wasRunning); setMicTestRunning(running); if (running) lastMicLevelAt = Date.now(); });
+// presentation-timer: return the microphone test button to idle after levels stop.
+setInterval(() => { if ($('#mic-test')?.dataset.running === 'true' && lastMicLevelAt !== null && micTestEnded(lastMicLevelAt, Date.now())) setMicTestRunning(false); }, 500);
 $('#delete-all')?.addEventListener('click', () => $('#delete-modal').classList.add('is-open'));
 $('#confirm-delete')?.addEventListener('click', async () => { const result = await bridge.call('history_delete_all'); if (failed(result)) return; $('#delete-modal').classList.remove('is-open'); await refreshLists(); });
 $('#term-input')?.addEventListener('input', () => { $('#save-term').disabled = !termSaveEnabled($('#term-input').value); });
