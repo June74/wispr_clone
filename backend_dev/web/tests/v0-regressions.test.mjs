@@ -29,3 +29,20 @@ test('T-WEB-024: instructions dirty state preserves edits and confirms save', ()
   assert.doesNotMatch(settings, /if\s*\(\$\(['"]#instructions['"]\)\)\s*\$\(['"]#instructions['"]\)\.value/, 'render must not overwrite every input');
   assert.match(app, /#save-instructions['"]\)\?\.addEventListener\(['"]click['"][\s\S]*?cleanup_instructions:\s*\$\(['"]#instructions['"]\)\.value[\s\S]*?#save-instructions['"]\)\.disabled\s*=\s*true[\s\S]*?#save-note['"]\)\.textContent\s*=\s*['"]Saved['"]/);
 });
+
+test('T-WEB-025: microphone IDs, selection, persistence and test payload', () => {
+  assert.equal(typeof forms.micDeviceId, 'function', 'micDeviceId must be exported');
+  assert.equal(forms.micDeviceId(''), null);
+  assert.equal(forms.micDeviceId(null), null);
+  assert.equal(forms.micDeviceId(undefined), null);
+  assert.equal(forms.micDeviceId('0'), 0);
+  assert.equal(forms.micDeviceId('3'), 3);
+  assert.equal(typeof forms.micSelection, 'function', 'micSelection must be exported');
+  const devices = [{ device_id: 0, is_default: true }, { device_id: 3, is_default: false }];
+  assert.equal(forms.micSelection({ microphone_id: '3' }, devices), '3');
+  assert.equal(forms.micSelection({ microphone_id: '9' }, devices), '0');
+  assert.equal(forms.micSelection({}, [{ device_id: 3, is_default: false }]), '');
+  assert.match(app, /#mic-select['"]\)\?\.addEventListener\(['"]change['"][\s\S]*?settings_update[\s\S]*?microphone_id:/);
+  assert.match(app, /#mic-select['"]\)[\s\S]*?micSelection\(state\.settings,\s*state\.microphones\)/);
+  assert.match(app, /mic_test_start[\s\S]*?device_id:\s*micDeviceId\(\$\(['"]#mic-select['"]\)\.value\)/);
+});

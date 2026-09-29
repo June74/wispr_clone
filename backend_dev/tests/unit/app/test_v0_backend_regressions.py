@@ -75,3 +75,27 @@ async def test_T_APP_053b_expired_waiting_run_never_dispatches(tmp_path: Path) -
         assert run_id not in app._controller.waiting_run_ids
     finally:
         await app.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_T_APP_054_saved_microphone_is_used_for_next_run(tmp_path: Path) -> None:
+    from wispr_clone.app import App
+
+    boundaries = Boundaries()
+    app = App(boundaries.factories(), data_dir=tmp_path)
+    try:
+        await app.startup()
+        for index, device in enumerate(("2", "0", None)):
+            updated = await command(
+                app, "settings_update", patch={"microphone_id": device}
+            )
+            assert updated.ok  # type: ignore[attr-defined]
+            started = await command(app, "run_start", request_id=f"microphone-{index}")
+            assert started.ok and started.data is not None  # type: ignore[attr-defined]
+            assert boundaries.capture_devices[-1] == (
+                int(device) if device is not None else None
+            )
+            cancelled = await command(app, "run_cancel", run_id=started.data["run_id"])  # type: ignore[attr-defined]
+            assert cancelled.ok  # type: ignore[attr-defined]
+    finally:
+        await app.shutdown()

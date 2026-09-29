@@ -2,7 +2,7 @@ import { createBridge, whenHostReady } from './lib/bridge.js';
 import { catalogNote, modelBadge, pickerOptions } from './lib/models.js';
 import { createStore, applyEvent, acceptsEvent } from './lib/store.js';
 import { shouldToastInserted, recoveryButtons } from './lib/view.js';
-import { termSaveEnabled, instructionsDirty } from './lib/forms.js';
+import { termSaveEnabled, instructionsDirty, micDeviceId, micSelection } from './lib/forms.js';
 import { messageFor } from './lib/messages.js';
 import { createWaveform } from './waveform.js';
 import { normalizeSecret } from './lib/secrets.js';
@@ -126,6 +126,9 @@ function renderSettings() {
   lastSavedInstructions = savedInstructions;
   const saveInstructions = $('#save-instructions');
   if (saveInstructions) saveInstructions.disabled = !instructionsDirty(instructions?.value ?? '', savedInstructions);
+  const devices = state.microphones ?? [];
+  const micSelect = $('#mic-select');
+  if (micSelect && document.activeElement !== micSelect) micSelect.value = micSelection(settings, devices);
   const localOnly = Boolean(settings.local_only);
   $('#local-switch')?.setAttribute('aria-checked', String(localOnly));
   $('#privacy-local-switch')?.setAttribute('aria-checked', String(localOnly));
@@ -147,7 +150,7 @@ async function refreshLists() {
   if (autostartResult?.ok) renderAutostart(autostartResult.data);
   if (historyResult?.ok) state = { ...state, history: historyResult.data.runs ?? [] };
   if (dictResult?.ok) state = { ...state, dictionary: dictResult.data.entries ?? [] };
-  if (micResult?.ok) { state = { ...state, microphones: micResult.data.devices ?? [] }; const select = $('#mic-select'); if (select) select.innerHTML = state.microphones.map((device) => `<option value="${esc(device.device_id)}">${esc(device.name)}${device.is_default ? ' (default)' : ''}</option>`).join(''); }
+  if (micResult?.ok) { state = { ...state, microphones: micResult.data.devices ?? [] }; const select = $('#mic-select'); if (select) { select.innerHTML = state.microphones.map((device) => `<option value="${esc(device.device_id)}">${esc(device.name)}${device.is_default ? ' (default)' : ''}</option>`).join(''); select.value = micSelection(state.settings, state.microphones); } }
   render();
 }
 window.wisprEvent = (jsonText) => {
@@ -224,7 +227,8 @@ $('#local-switch')?.addEventListener('click', async () => { const result = await
 $('#privacy-local-switch')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { local_only: $('#privacy-local-switch').getAttribute('aria-checked') !== 'true' } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#save-openrouter-key')?.addEventListener('click', async () => { const input = $('#openrouter-key'); const value = normalizeSecret(input.value); input.value = ''; const result = await bridge.call('secret_set', { name: 'openrouter_api_key', value }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
 $('#clear-openrouter-key')?.addEventListener('click', async () => { $('#openrouter-key').value = ''; const result = await bridge.call('secret_clear', { name: 'openrouter_api_key' }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
-$('#mic-test')?.addEventListener('click', async () => { const result = $('#mic-test').dataset.running === 'true' ? await bridge.call('mic_test_stop') : await bridge.call('mic_test_start', { device_id: Number($('#mic-select').value) || null }); if (failed(result)) return; const running = result.data.stopped === false || result.data.started === true; $('#mic-test').dataset.running = String(running); $('#mic-test').innerHTML = `${icon(running ? 'stop' : 'mic')}${running ? 'Stop test' : 'Test microphone'}`; });
+$('#mic-select')?.addEventListener('change', async () => { const microphone_id = $('#mic-select').value === '' ? null : $('#mic-select').value; const result = await bridge.call('settings_update', { patch: { microphone_id: microphone_id } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
+$('#mic-test')?.addEventListener('click', async () => { const result = $('#mic-test').dataset.running === 'true' ? await bridge.call('mic_test_stop') : await bridge.call('mic_test_start', { device_id: micDeviceId($('#mic-select').value) }); if (failed(result)) return; const running = result.data.stopped === false || result.data.started === true; $('#mic-test').dataset.running = String(running); $('#mic-test').innerHTML = `${icon(running ? 'stop' : 'mic')}${running ? 'Stop test' : 'Test microphone'}`; });
 $('#delete-all')?.addEventListener('click', () => $('#delete-modal').classList.add('is-open'));
 $('#confirm-delete')?.addEventListener('click', async () => { const result = await bridge.call('history_delete_all'); if (failed(result)) return; $('#delete-modal').classList.remove('is-open'); await refreshLists(); });
 $('#term-input')?.addEventListener('input', () => { $('#save-term').disabled = !termSaveEnabled($('#term-input').value); });
