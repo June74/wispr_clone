@@ -54,6 +54,7 @@ class ClosableCleanup(FakeCleanupEngine):
 class Boundaries:
     db_path: Path | None = None
     now: float = 1000.0
+    monotonic_now: float | None = None
     stt: FakeSttEngine = field(default_factory=lambda: FakeSttEngine("fixed text"))
     win32: FakeWin32Api = field(default_factory=FakeWin32Api)
     uia: FakeUiaApi = field(default_factory=FakeUiaApi)
@@ -97,5 +98,7 @@ class Boundaries:
             hotkey_listener=new_listener,
             webview=(lambda: self.webview) if gui else None,
             clock=lambda: self.now,
-            monotonic=lambda: self.now,
+            monotonic=lambda: (
+                self.now if self.monotonic_now is None else self.monotonic_now
+            ),
         )

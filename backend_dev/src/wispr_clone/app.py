@@ -485,7 +485,7 @@ class App:
             cast(Win32Api, self._win32),
             cast(UiaApi, self._uia),
             offload=self._offload,
-            clock=self.factories.monotonic,
+            clock=self.factories.clock,
             new_id=lambda: secrets.token_urlsafe(18),
         )
         dictionary = DictionaryRepo(self._db, clock=self.factories.clock)
