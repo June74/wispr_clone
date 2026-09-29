@@ -15,7 +15,8 @@ export function applyEvent(state, event) {
   if (!event || typeof event !== 'object') return state;
   if (event.name === 'run:state' || event.name === 'run:recovery') {
     const current = state.runs.find((run) => run.run_id === event.run_id);
-    if (current && Number(event.version) <= Number(current.version)) return state;
+    const version = Number(event.version);
+    if (current && (event.name === 'run:recovery' ? version < Number(current.version) : version <= Number(current.version))) return state;
     const next = { ...state, runs: [...state.runs] };
     const run = { ...(current ?? {}), ...event };
     delete run.name;
@@ -35,5 +36,6 @@ export function acceptsEvent(state, event) {
   const version = Number(event.version);
   if (!Number.isFinite(version)) return false;
   const current = state.runs.find((run) => run.run_id === event.run_id);
-  return !current || version > Number(current.version);
+  if (!current) return true;
+  return event.name === 'run:recovery' ? version >= Number(current.version) : version > Number(current.version);
 }

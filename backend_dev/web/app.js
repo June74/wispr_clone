@@ -103,13 +103,9 @@ function renderRun() {
   $('#dictate-hint').textContent = bridge.available() ? '' : 'Not connected';
   $('#dictate-cancel').hidden = !active || !['recording', 'processing', 'awaiting_cleanup_choice', 'awaiting_destination', 'held'].includes(status);
   if (state.lastEvent && shouldToastInserted(state.lastEvent)) { toast('success', 'Dictation inserted', 'The backend confirmed delivery.'); state.lastEvent = null; }
-  const recovery = state.lastRecovery;
-  if (recovery?.status === 'awaiting_cleanup_choice' && recovery.run_id === active?.run_id) {
-    $('#dictate-caption').textContent = messageFor(recovery.error_code ?? 'cleanup_rejected');
-    const controls = recoveryButtons(recovery).map((action) => `<button class="btn btn-secondary btn-sm" data-recover="${action}">${esc(action.replaceAll('_', ' '))}</button>`).join('');
-    $('#dictate-cancel').insertAdjacentHTML('beforebegin', controls);
-    state.lastRecovery = null;
-  }
+  if ($('#dictate-recovery')) $('#dictate-recovery').innerHTML = status === 'awaiting_cleanup_choice' && active
+    ? recoveryButtons(active).map((action) => `<button class="btn btn-secondary btn-sm" data-recover="${esc(action)}">${esc(action.replaceAll('_', ' '))}</button>`).join('') : '';
+  if (status === 'awaiting_cleanup_choice') $('#dictate-caption').textContent = "Text cleanup couldn't finish. Choose how to continue.";
   const level = state.latestLevel; waveform?.update(level?.bands ?? [], recording && level?.run_id === active?.run_id);
   const meter = $('#level-segments');
   if (meter) { const count = Math.round(36 * Math.max(0, Math.min(1, Math.max(...(level?.run_id === null ? level.bands ?? [] : [0]))))); meter.innerHTML = '<i></i>'.repeat(36); $$('i', meter).forEach((segment, index) => { if (index < count) segment.className = index >= 29 ? 'warm' : 'on'; }); if (level?.run_id === null) $('#level-state').textContent = 'Receiving microphone levels'; }
@@ -154,7 +150,7 @@ async function refreshLists() {
   render();
 }
 window.wisprEvent = (jsonText) => {
-  try { const event = JSON.parse(jsonText); if (!event || typeof event !== 'object' || typeof event.name !== 'string') return; const accepted = acceptsEvent(state, event); state = applyEvent(state, event); if (event.name.startsWith('run:')) { if (!accepted) state.lastEvent = null; else state.lastEvent = event.name === 'run:state' ? event : null; if (event.name === 'run:recovery' && accepted) state.lastRecovery = event; currentRun = event.run_id; } if (event.name === 'history:changed') void refreshLists(); render(); }
+  try { const event = JSON.parse(jsonText); if (!event || typeof event !== 'object' || typeof event.name !== 'string') return; const accepted = acceptsEvent(state, event); state = applyEvent(state, event); if (event.name.startsWith('run:')) { if (!accepted) state.lastEvent = null; else state.lastEvent = event.name === 'run:state' ? event : null; currentRun = event.run_id; } if (event.name === 'history:changed') void refreshLists(); render(); }
   catch { /* Invalid event payloads are ignored. */ }
 };
 

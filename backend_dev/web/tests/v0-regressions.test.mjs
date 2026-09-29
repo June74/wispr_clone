@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { acceptsEvent, applyEvent, createStore } from '../lib/store.js';
 
 const app = readFileSync(new URL('../app.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
@@ -45,4 +46,34 @@ test('T-WEB-025: microphone IDs, selection, persistence and test payload', () =>
   assert.match(app, /#mic-select['"]\)\?\.addEventListener\(['"]change['"][\s\S]*?settings_update[\s\S]*?microphone_id:/);
   assert.match(app, /#mic-select['"]\)[\s\S]*?micSelection\(state\.settings,\s*state\.microphones\)/);
   assert.match(app, /mic_test_start[\s\S]*?device_id:\s*micDeviceId\(\$\(['"]#mic-select['"]\)\.value\)/);
+});
+
+test('T-WEB-026: same-version recovery merges actions; stale events stay ignored', () => {
+  const state = createStore({ runs: [{ run_id: 'r', version: 3, status: 'processing', actions: [] }], active_run_id: 'r' });
+  const v4 = { name: 'run:state', run_id: 'r', version: 4, status: 'awaiting_cleanup_choice' };
+  const afterState = applyEvent(state, v4);
+  const recovery = { name: 'run:recovery', run_id: 'r', version: 4, status: 'awaiting_cleanup_choice', actions: ['retry_cleanup', 'use_original', 'copy'] };
+  assert.equal(acceptsEvent(afterState, recovery), true);
+  const afterRecovery = applyEvent(afterState, recovery);
+  assert.deepEqual(afterRecovery.runs[0].actions, recovery.actions);
+  assert.equal(afterRecovery.runs[0].status, 'awaiting_cleanup_choice');
+  assert.equal(afterRecovery.runs[0].version, 4);
+  assert.equal(afterRecovery.active_run_id, 'r');
+  const stale = { ...recovery, version: 3, actions: ['insert'] };
+  assert.equal(acceptsEvent(afterRecovery, stale), false);
+  assert.deepEqual(applyEvent(afterRecovery, stale), afterRecovery);
+  assert.equal(acceptsEvent(afterRecovery, v4), false);
+  assert.deepEqual(applyEvent(afterRecovery, v4), afterRecovery);
+});
+
+test('T-WEB-026: recovery controls render from the active run and clear otherwise', () => {
+  assert.ok(html.includes('id="dictate-recovery"'), 'dedicated recovery container is missing');
+  const renderRun = app.match(/function renderRun\(\)\s*\{[\s\S]*?\n\}/)?.[0] ?? '';
+  assert.match(renderRun, /recoveryButtons\(active\)/);
+  assert.match(renderRun, /#dictate-recovery/);
+  assert.match(renderRun, /awaiting_cleanup_choice/);
+  assert.match(renderRun, /Text cleanup couldn't finish\. Choose how to continue\./);
+  assert.match(renderRun, /#dictate-recovery['"]\)\.(?:innerHTML\s*=|replaceChildren\()/);
+  assert.doesNotMatch(app, /lastRecovery/);
+  assert.match(app, /bridge\.call\('run_recover',\s*\{\s*run_id:\s*active\.run_id,\s*expected_version:\s*active\.version,\s*action:\s*recover\.dataset\.recover\s*\}\)/);
 });
