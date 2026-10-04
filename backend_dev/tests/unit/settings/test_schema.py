@@ -50,13 +50,15 @@ def test_T_SET_001_defaults_and_json_round_trip() -> None:
     from wispr_clone.models.registry import default_registry
 
     expected = {
-        "schema_version": 3,
+        "schema_version": 4,
         "recording_mode": "toggle",
         "dictation_shortcut": "ctrl+shift+space",
         "cancel_shortcut": "escape",
         "microphone_id": None,
         "stt_model_id": "openai/whisper-large-v3-turbo",
         "cleanup_model_id": "meta-llama-3.1-8b-instruct",
+        "cleanup_provider": "lmstudio",
+        "nvidia_cleanup_model_ids": config.NVIDIA_CLEANUP_MODEL_IDS,
         "cleanup_enabled": True,
         "cleanup_instructions": "",
         "theme": "light",
@@ -66,7 +68,7 @@ def test_T_SET_001_defaults_and_json_round_trip() -> None:
         "destination_wait_limit_seconds": 600,
     }
     settings = module.default_settings()
-    assert module.SETTINGS_SCHEMA_VERSION == 3
+    assert module.SETTINGS_SCHEMA_VERSION == 4
     assert settings.model_dump() == expected
     assert settings.idle_jump_seconds == config.IDLE_JUMP_SECONDS
     assert settings.return_settle_seconds == config.RETURN_SETTLE_SECONDS
@@ -74,7 +76,10 @@ def test_T_SET_001_defaults_and_json_round_trip() -> None:
         settings.destination_wait_limit_seconds == config.DESTINATION_WAIT_LIMIT_SECONDS
     )
     data = module.settings_to_data(settings)
-    assert json.loads(json.dumps(data)) == expected
+    assert json.loads(json.dumps(data)) == {
+        **expected,
+        "nvidia_cleanup_model_ids": list(config.NVIDIA_CLEANUP_MODEL_IDS),
+    }
     assert module.parse_settings(data, default_registry()) == settings
 
 
@@ -127,10 +132,11 @@ def test_T_SET_004_upgrade_version_zero_without_mutating_input() -> None:
             0: upgrade,
             1: schema().UPGRADE_STEPS[1],
             2: schema().UPGRADE_STEPS[2],
+            3: schema().UPGRADE_STEPS[3],
         },
     )
     assert calls == [{"schema_version": 0, "theme": "dark"}]
-    assert parsed.schema_version == 3
+    assert parsed.schema_version == 4
     assert parsed.recording_mode == "hold"
     assert parsed.theme == "dark"
     assert payload == {"schema_version": 0, "theme": "dark"}
@@ -169,9 +175,10 @@ def test_T_SET_004_upgrade_cannot_mutate_nested_input_data() -> None:
             0: upgrade,
             1: schema().UPGRADE_STEPS[1],
             2: schema().UPGRADE_STEPS[2],
+            3: schema().UPGRADE_STEPS[3],
         },
     )
-    assert parsed.schema_version == 3
+    assert parsed.schema_version == 4
     assert payload == {"schema_version": 0, "legacy": {"private": "original"}}
 
 
@@ -180,7 +187,7 @@ def test_T_SET_004_upgrade_cannot_mutate_nested_input_data() -> None:
     "payload",
     [
         {"schema_version": 0},
-        {"schema_version": 4},
+        {"schema_version": 5},
         {},
         {"schema_version": "1"},
         {"schema_version": True},

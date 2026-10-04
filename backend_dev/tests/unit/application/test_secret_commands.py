@@ -91,7 +91,10 @@ async def test_T_APP_030_secret_commands_and_readiness() -> None:
     )
     before = await api.call("state_get", {})
     assert before.ok is True
-    assert before.data["secrets"] == {NAME: {"configured": False}}
+    assert before.data["secrets"] == {
+        NAME: {"configured": False},
+        "nvidia_api_key": {"configured": False},
+    }
     status = await api.call("models_status", {"session_token": "session-test"})
     assert status.ok is True
     assert status.data["models"][0]["error_code"] == "api_key_missing"
@@ -103,7 +106,10 @@ async def test_T_APP_030_secret_commands_and_readiness() -> None:
     assert set_result.ok is True
     assert set_result.data == {"configured": True}
     configured = await api.call("state_get", {})
-    assert configured.data["secrets"] == {NAME: {"configured": True}}
+    assert configured.data["secrets"] == {
+        NAME: {"configured": True},
+        "nvidia_api_key": {"configured": False},
+    }
     status = await api.call("models_status", {"session_token": "session-test"})
     assert status.data["models"][0]["ready"] is True
     assert any(event["name"] == "models:status" for event in events.events)
@@ -119,7 +125,10 @@ async def test_T_APP_030_secret_commands_and_readiness() -> None:
     assert cleared.ok is True
     assert cleared.data == {"configured": False}
     final = await api.call("state_get", {})
-    assert final.data["secrets"] == {NAME: {"configured": False}}
+    assert final.data["secrets"] == {
+        NAME: {"configured": False},
+        "nvidia_api_key": {"configured": False},
+    }
 
 
 @pytest.mark.unit
@@ -189,3 +198,42 @@ async def test_T_APP_032_secret_set_normalizes_pasted_key_boundaries() -> None:
         result = await api.call("secret_set", {**payload, "value": invalid})
         assert (result.ok, result.error) == (False, ErrorCode.VALIDATION)
         assert secrets.get(NAME) == FAKE_KEY
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_nvidia_key_has_independent_status_and_is_never_returned() -> None:
+    from wispr_clone.settings.secret_store import MemorySecretStore
+
+    secrets = MemorySecretStore()
+    settings = SettingsStub()
+    commands = SettingsCommands(
+        settings,
+        HistoryStub(),
+        ControllerStub(),
+        session_token=lambda: "session-test",
+        readiness=lambda: _empty_readiness(),
+        secret_store=secrets,
+    )
+    api = Api(commands.specs(), session_token="session-test", clock=lambda: 100.0)
+    base = {"session_token": "session-test", "deadline": 105.0}
+    for name, value in ((NAME, FAKE_KEY), ("nvidia_api_key", "nvapi-fake-only")):
+        result = await api.call("secret_set", {**base, "name": name, "value": value})
+        assert result.ok and result.data == {"configured": True}
+    state = await api.call("state_get", {})
+    assert state.data["secrets"] == {
+        NAME: {"configured": True},
+        "nvidia_api_key": {"configured": True},
+    }
+    assert "nvapi-fake-only" not in json.dumps(state.data)
+    assert FAKE_KEY not in json.dumps(state.data)
+    await api.call("secret_clear", {**base, "name": "nvidia_api_key"})
+    final = await api.call("state_get", {})
+    assert final.data["secrets"] == {
+        NAME: {"configured": True},
+        "nvidia_api_key": {"configured": False},
+    }
+
+
+async def _empty_readiness():
+    return []

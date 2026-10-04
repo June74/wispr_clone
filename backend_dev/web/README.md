@@ -34,8 +34,12 @@ a source checkout reports it as unavailable (see `src/wispr_clone/ui/autostart.p
 sends `window_drag`, `window_minimize`, `window_toggle_maximize` and `window_close` without a session
 token, and the host removes the native caption. Some reference preferences have no backend
 command/schema field and are disabled: floating-indicator preference, history enablement, and retention selection. The Models
-page fills each picker from `models_catalog` (OpenRouter speech models, LM Studio downloads) when the
-page opens and switches models with `models_select`. The Recording page switches `recording_mode`
+page fills each picker from `models_catalog` (OpenRouter speech models and the selected cleanup
+provider) when the page opens. LM Studio models use `models_select`. NVIDIA cleanup uses a
+password key field backed by `secret_set`/`secret_clear`, and an editable ordered model list saved
+with `settings_update`. Move buttons preserve keyboard focus, and model events preserve unsaved
+order edits. NVIDIA's badge means a key is saved; catalog refresh lists available models and
+does not run cleanup inference. The Recording page switches `recording_mode`
 and records a new `dictation_shortcut` from a key press, saving both with `settings_update`; the
 desktop hotkey service applies them, and browser keys never start dictation. There is no statistics
 command, so the General page's usage cards show only “—”.

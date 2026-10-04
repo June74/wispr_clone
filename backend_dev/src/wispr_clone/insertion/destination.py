@@ -109,17 +109,24 @@ def capture(
     if pid in exclude_pids:
         raise WisprError(ErrorCode.DESTINATION_UNVERIFIABLE, "insertion", "own window")
     title_hash = sha256(win32.window_title(hwnd).encode("utf-8")).hexdigest()
+    # Tree discovery can materialize a lazy provider and replace its controls.
+    # Read the focused field afterwards so its identity is current.
+    tab = uia.selected_tab(hwnd)
     field = uia.focused_element()
     snapshot = DestinationSnapshot(
         hwnd=hwnd,
         pid=pid,
         exe=exe.lower(),
         title_hash=title_hash,
-        tab=uia.selected_tab(hwnd),
+        tab=tab,
         field=field,
         field_type=uia.element_control_type(field) if field is not None else None,
         langid=win32.keyboard_layout(hwnd),
     )
     if not win32.is_window(hwnd):
         raise WisprError(ErrorCode.DESTINATION_UNVERIFIABLE, "insertion", "no window")
+    if win32.foreground_window() != hwnd:
+        raise WisprError(
+            ErrorCode.DESTINATION_UNVERIFIABLE, "insertion", "foreground changed"
+        )
     return snapshot

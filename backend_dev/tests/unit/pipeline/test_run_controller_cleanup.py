@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -88,6 +88,8 @@ async def scenario(
     cleanup: FakeCleanupEngine | None,
     enabled: bool = True,
     cleanup_for: Callable[[str], FakeCleanupEngine | None] | None = None,
+    cleanup_for_config: Callable[[Mapping[str, object]], FakeCleanupEngine | None]
+    | None = None,
 ) -> AsyncIterator[Rig]:
     migrations = [
         Migration(module.VERSION, module.NAME, module.apply)
@@ -145,6 +147,8 @@ async def scenario(
         )
         if cleanup_for is not None:
             services = replace(services, cleanup_for=cleanup_for)
+        if cleanup_for_config is not None:
+            services = replace(services, cleanup_for_config=cleanup_for_config)
         controller = RunController(services)
         yield Rig(controller, history, events, win, uia, config, inserted)
 
@@ -833,3 +837,100 @@ async def test_T_RUN_017h_cancel_without_task_by_nonterminal_status(
         assert after.status == (RunStatus.CANCELLED if cancellable else status)
         assert after.version == choice.version + int(cancellable)
         assert len(rig.events.by_name("run:state")) == events_before + int(cancellable)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_provider_and_fallback_order_are_frozen_for_run_and_retry(
+    tmp_path: Path,
+) -> None:
+    # Invalid credentials still require a choice; hosted timeouts use original.
+    cloud = FakeCleanupEngine(
+        ThirdPartyError(
+            "nvidia", "credentials", "key rejected", ErrorCode.NVIDIA_API_KEY_INVALID
+        ),
+        CLEANED,
+    )
+    local = FakeCleanupEngine(CLEANED)
+    selections: list[tuple[str, list[str]]] = []
+
+    def resolve(snapshot: Mapping[str, object]) -> FakeCleanupEngine:
+        provider = str(snapshot.get("cleanup_provider"))
+        saved = snapshot.get("nvidia_cleanup_model_ids", [])
+        assert isinstance(saved, list)
+        order = list(saved)
+        selections.append((provider, order))
+        return cloud if provider == "nvidia" else local
+
+    async with scenario(tmp_path, cleanup=None, cleanup_for_config=resolve) as rig:
+        rig.config.update(
+            {
+                "cleanup_provider": "nvidia",
+                "nvidia_cleanup_model_ids": [
+                    "deepseek-ai/deepseek-v4.1-flash",
+                    "z-ai/glm-5.3",
+                ],
+            }
+        )
+        first_id = await rig.controller.start(start_request_id="cloud-first")
+        rig.config.update(
+            {
+                "cleanup_provider": "lmstudio",
+                "nvidia_cleanup_model_ids": ["moonshotai/kimi-k3"],
+            }
+        )
+        await rig.controller.stop(first_id)
+        failed = await rig.controller.settled(first_id)
+        assert failed.status == RunStatus.AWAITING_CLEANUP_CHOICE
+        assert len(cloud.requests) == 1 and not local.requests
+        rig.inserted[0] = CLEANED
+        second_id = await rig.controller.start(start_request_id="local-second")
+        await rig.controller.stop(second_id)
+        assert (await rig.controller.settled(second_id)).status == RunStatus.DONE
+        await rig.controller.recover(
+            first_id,
+            RecoveryAction.RETRY_CLEANUP,
+            expected_version=failed.version,
+        )
+        done = await rig.controller.settled(first_id)
+        assert done.status == RunStatus.DONE and done.cleanup_status == CleanupStatus.OK
+        assert selections == [
+            ("nvidia", ["deepseek-ai/deepseek-v4.1-flash", "z-ai/glm-5.3"]),
+            ("lmstudio", ["moonshotai/kimi-k3"]),
+            ("nvidia", ["deepseek-ai/deepseek-v4.1-flash", "z-ai/glm-5.3"]),
+        ]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_cloud_cleanup_stops_later_model_uploads(
+    tmp_path: Path,
+) -> None:
+    from wispr_clone.cleanup.nvidia_cleanup import NvidiaCleanup
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    attempted: list[str] = []
+
+    async def respond(request: httpx.Request) -> httpx.Response:
+        attempted.append(str(request.url))
+        entered.set()
+        await release.wait()
+        return httpx.Response(429)
+
+    engine = NvidiaCleanup(
+        api_key=lambda: "nvapi-fake-test",
+        model_ids=("deepseek-ai/deepseek-v4.1-flash", "z-ai/glm-5.3"),
+        transport=httpx.MockTransport(respond),
+    )
+    try:
+        async with scenario(tmp_path, cleanup=engine) as rig:  # type: ignore[arg-type]
+            run_id = await rig.controller.start(start_request_id="cancel-cloud")
+            await rig.controller.stop(run_id)
+            await asyncio.wait_for(entered.wait(), timeout=1.0)
+            await rig.controller.cancel(run_id)
+            release.set()
+            cancelled = await rig.controller.settled(run_id)
+            assert cancelled.status == RunStatus.CANCELLED
+            assert len(attempted) == 1
+            assert rig.sends() == 0
+    finally:
+        release.set()
+        await engine.aclose()

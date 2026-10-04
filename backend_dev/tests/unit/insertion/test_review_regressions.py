@@ -7,6 +7,7 @@ import pytest
 from wispr_clone.contracts.common import ErrorCode, WisprError
 from wispr_clone.insertion.destination import DestinationSnapshot, capture
 from wispr_clone.insertion.inserter import (
+    ForegroundUnavailable,
     PreviousFocus,
     bring_forward,
     dispatch,
@@ -75,7 +76,7 @@ def test_T_INS_013_restores_clipboard_by_settle_deadline_if_paste_never_lands() 
     assert win.pasted == []
 
 
-@pytest.mark.parametrize("failure", ["foreground", "tab", "field", "settle"])
+@pytest.mark.parametrize("failure", ["tab", "field", "settle"])
 def test_T_INS_014_bring_forward_failure_restores_previous_focus(failure: str) -> None:
     class FailingUia(FakeUiaApi):
         def select_tab(self, hwnd: int, tab: tuple[int, ...]) -> bool:
@@ -113,6 +114,31 @@ def test_T_INS_014_bring_forward_failure_restores_previous_focus(failure: str) -
     )
     assert win.foreground == 20
     assert ("select_tab", (20, (20, 1))) in uia.calls
+
+
+def test_declined_activation_does_not_change_background_tab_or_field() -> None:
+    win = FakeWin32Api(foreground=20, switch_foreground=False)
+    uia = FakeUiaApi(focused=(20, 2))
+    with pytest.raises(ForegroundUnavailable):
+        bring_forward(_paste_snapshot(), win, uia)
+    assert win.foreground == 20
+    assert not any(name in {"select_tab", "focus_element"} for name, *_ in uia.calls)
+    assert not any(name == "send_inputs" for name, *_ in win.calls)
+    assert sum(name == "set_foreground" for name, *_ in win.calls) == 1
+
+
+def test_false_activation_result_can_settle_if_foreground_already_matches() -> None:
+    class FalseResultWin32(FakeWin32Api):
+        def set_foreground(self, hwnd: int) -> bool:
+            super().set_foreground(hwnd)
+            return False
+
+    win = FalseResultWin32(foreground=20)
+    uia = FakeUiaApi(focused=(20, 2))
+    previous = bring_forward(_paste_snapshot(), win, uia, settle_s=0.0)
+    assert previous == PreviousFocus(20, (20, 1))
+    assert win.foreground == 10
+    assert uia.focused == (1, 2)
 
 
 def test_T_INS_007_rejects_desktop_foreground_before_querying_its_process() -> None:

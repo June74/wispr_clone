@@ -406,8 +406,10 @@ def test_T_APP_044_native_hud_factory_and_fallback(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["recording", "waiting"])
+@pytest.mark.parametrize("trigger", ["hud", "shortcut"])
 async def test_T_APP_045_native_cancel_schedules_active_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str, trigger: str
 ) -> None:
     from wispr_clone.app import App
 
@@ -447,6 +449,14 @@ async def test_T_APP_045_native_cancel_schedules_active_run(
         run_id = str(started.data["run_id"])
         assert app._controller is not None
         assert app._controller.active_run_id == run_id
+        if phase == "waiting":
+            boundaries.win32.foreground = 20
+            boundaries.win32.switch_foreground = False
+            stopped = await _command(app, "run_stop", run_id=run_id)
+            assert stopped.ok
+            record = await app._controller.settled(run_id)
+            assert record.status == RunStatus.AWAITING_DESTINATION
+            assert app._controller.active_run_id is None
         original_call = app.api.call
         cancel_payloads: list[dict[str, object]] = []
 
@@ -456,15 +466,29 @@ async def test_T_APP_045_native_cancel_schedules_active_run(
             return await original_call(name, payload)
 
         monkeypatch.setattr(app.api, "call", record_call)
-        await asyncio.to_thread(callbacks[0])
-        for _ in range(100):
-            if app._controller.active_run_id is None:
-                break
-            await asyncio.sleep(0.01)
+        if trigger == "hud":
+            await asyncio.to_thread(callbacks[0])
+        else:
+            boundaries.listeners[0].service.handle(KeyAction.DOWN, "escape")
+        async with asyncio.timeout(2):
+            while not cancel_payloads:
+                await asyncio.sleep(0.01)
+            record = await app._controller.settled(run_id)
+            while record.status != RunStatus.CANCELLED:
+                await asyncio.sleep(0.01)
+                record = await app._controller.settled(run_id)
         assert app._controller.active_run_id is None
         assert len(cancel_payloads) == 1
-        assert cancel_payloads[0]["run_id"] == run_id
-        assert boundaries.captures[0].cancelled
+        if phase == "recording" and trigger == "hud":
+            assert cancel_payloads[0]["run_id"] == run_id
+        else:
+            assert "run_id" not in cancel_payloads[0]
+        if phase == "recording":
+            assert boundaries.captures[0].cancelled
+        assert app._controller.waiting_run_ids == ()
+        boundaries.win32.foreground = 10
+        await app._controller.delivery_tick()
+        assert not any(name == "send_inputs" for name, *_ in boundaries.win32.calls)
     finally:
         await app.shutdown()
 

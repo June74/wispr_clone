@@ -279,11 +279,41 @@
             <div><div class="model-title">Text cleanup</div><div class="model-sub">Adds punctuation and removes the little hesitations.</div></div>
             <span class="badge success" data-status><span class="status-dot success"></span>Checking</span>
           </div>
-          <div class="model-pick">
-            <label class="field select"><select aria-label="Text cleanup model" data-select>
-              
+          <div class="cleanup-provider">
+            <label class="field-label" for="cleanup-provider">Cleanup provider</label>
+            <label class="field select"><select id="cleanup-provider" aria-describedby="cleanup-provider-note">
+              <option value="lmstudio">LM Studio · on this device</option>
+              <option value="nvidia">NVIDIA · API key</option>
             </select><svg class="i"><use href="#i-chevron"/></svg></label>
-            <button class="btn btn-secondary" data-test><svg class="i"><use href="#i-wave"/></svg>Test model</button>
+            <p class="model-help" id="cleanup-provider-note">Cleanup runs on this device.</p>
+          </div>
+          <div id="cleanup-local-model">
+            <div class="model-pick">
+              <label class="field select"><select aria-label="Text cleanup model" data-select>
+              </select><svg class="i"><use href="#i-chevron"/></svg></label>
+              <button class="btn btn-secondary" data-test><svg class="i"><use href="#i-wave"/></svg>Test model</button>
+            </div>
+          </div>
+          <div id="cleanup-nvidia" hidden>
+            <label class="field-label" for="nvidia-key">NVIDIA API key</label>
+            <div class="model-pick key-pick">
+              <label class="field"><input id="nvidia-key" type="password" autocomplete="off" aria-label="NVIDIA API key" aria-describedby="nvidia-key-status"></label>
+              <button class="btn btn-secondary" id="save-nvidia-key">Save</button>
+              <button class="btn btn-secondary" id="clear-nvidia-key">Clear</button>
+            </div>
+            <p class="model-help" id="nvidia-key-status">No key saved</p>
+            <div class="fallback-head">
+              <div><h3 class="field-label" id="fallback-title">Model fallback order</h3><p class="model-help">Try the first model, then the next if it is rate limited or unavailable.</p></div>
+              <button class="btn btn-ghost btn-sm" id="refresh-nvidia-models"><svg class="i"><use href="#i-history"/></svg>Refresh models</button>
+            </div>
+            <ol class="model-fallback-list" id="nvidia-fallback-list" aria-labelledby="fallback-title"></ol>
+            <datalist id="nvidia-catalog-options"></datalist>
+            <div class="fallback-foot">
+              <button class="btn btn-ghost btn-sm" id="add-nvidia-model"><svg class="i"><use href="#i-plus"/></svg>Add model</button>
+              <button class="btn btn-secondary btn-sm" id="save-nvidia-models" disabled><svg class="i"><use href="#i-check"/></svg>Save order</button>
+            </div>
+            <p class="model-help" id="nvidia-fallback-note" aria-live="polite"></p>
+            <p class="model-help">Choose models available with your NVIDIA account. Switching models cannot bypass a shared account quota.</p>
           </div>
           <div class="model-meta"><span data-where>On-device</span><span>·</span><span data-model-id></span><span>·</span><span data-catalog-note></span></div>
         </div>
@@ -306,7 +336,7 @@
             <label class="field-label" for="instructions">Cleanup instructions</label>
             <textarea class="textarea" id="instructions">Remove filler words and repeated phrases. Fix punctuation and capitalization. Keep my meaning and natural tone. Do not add new information.</textarea>
             <div class="guidance-foot">
-              <span id="save-note">Sent to your cleanup model in LM Studio with each dictation.</span>
+              <span id="save-note">Sent to your selected cleanup model with each dictation.</span>
               <button class="btn btn-secondary" id="save-instructions" disabled><svg class="i"><use href="#i-check"/></svg>Save instructions</button>
             </div>
           </div>
@@ -349,11 +379,11 @@
 
       <!-- ============ SETTINGS: PRIVACY ============ -->
       <section class="page" id="page-privacy" data-title="Data · Privacy & data">
-        <div class="page-head"><div><h1>Privacy &amp; data</h1><p>Your audio is sent to OpenRouter and transcribed by the speech model chosen in Models (by default Whisper Large v3 Turbo on DeepInfra; other models use only providers that don’t collect data). Transcripts stay on this PC.</p></div></div>
+        <div class="page-head"><div><h1>Privacy &amp; data</h1><p>Your audio is sent to OpenRouter and transcribed by the speech model chosen in Models (by default Whisper Large v3 Turbo on DeepInfra; other models use only providers that don’t collect data). History is saved on this PC. When NVIDIA cleanup is selected, transcript text, cleanup instructions, and dictionary spellings are also sent to NVIDIA.</p></div></div>
 
         <div class="callout info inline-style-5">
           <svg class="i"><use href="#i-info"/></svg>
-          <div><strong>Audio leaves this device</strong>Audio is sent to OpenRouter for transcription. Recordings remain available locally for retry.</div>
+          <div><strong>Cloud processing</strong>Audio is sent to OpenRouter for transcription. NVIDIA cleanup also sends transcript text, cleanup instructions, and dictionary spellings to NVIDIA; LM Studio cleanup runs on this device. Recordings remain available locally for retry.</div>
         </div>
 
         <div class="card group">

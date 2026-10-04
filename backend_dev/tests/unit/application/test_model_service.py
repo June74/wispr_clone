@@ -462,6 +462,7 @@ async def test_T_APP_049_catalog_lists_live_models_and_keeps_current_choice(
             "error_code": None,
         }
         assert catalog["cleanup"] == {
+            "provider": "lmstudio",
             "models": [
                 {
                     "model_id": CLEANUP_ID,
@@ -531,3 +532,46 @@ async def test_T_APP_051_keeps_cleanup_model_loaded_and_backs_off(
         await rig.store.update({"cleanup_enabled": False})
         await rig.service.keep_cleanup_loaded(force=True)
         assert len(loads) == 4
+
+
+@pytest.mark.asyncio
+async def test_provider_edit_invalidates_a_pending_local_health_poll(
+    tmp_path: Path,
+) -> None:
+    from wispr_clone.application.commands.settings_commands import SettingsCommands
+
+    async with scenario(tmp_path) as rig:
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        class PausedCleanup(RecordingCleanup):
+            async def health(self) -> bool:
+                entered.set()
+                await release.wait()
+                return True
+
+        rig.service._health_timeout_s = 1.0
+        rig.cleanup_engines[CLEANUP_ID] = PausedCleanup()
+        commands = SettingsCommands(
+            rig.store,
+            None,
+            None,
+            session_token=lambda: "test-session",
+            readiness=rig.service.status,
+            model_service=rig.service,
+        )
+        poll = asyncio.create_task(rig.service.poll())
+        try:
+            await asyncio.wait_for(entered.wait(), 1.0)
+            result = await commands.specs()["settings_update"].handler(
+                {
+                    "patch": {"cleanup_provider": "nvidia"},
+                }
+            )
+            assert result["cleanup_provider"] == "nvidia"
+            await rig.service.poll()
+        finally:
+            release.set()
+            await poll
+        events = rig.events.by_name("models:status")
+        assert len(events) == 1
+        assert events[-1]["models"][1]["model_id"] == "deepseek-ai/deepseek-v4.1-flash"

@@ -41,7 +41,13 @@ def test_T_INS_011_bring_forward_times_out_and_waits_for_settle() -> None:
     def sleep(seconds: float) -> None:
         now[0] += max(seconds, 0.01)
 
-    win, uia = FakeWin32Api(foreground=20, switch_foreground=False), FakeUiaApi()
+    class SettlingUia(FakeUiaApi):
+        settled = False
+
+        def focused_element(self) -> tuple[int, ...] | None:
+            return super().focused_element() if self.settled else (99, 99)
+
+    win, uia = FakeWin32Api(foreground=20), SettlingUia()
     assert (
         bring_forward(
             _target(),
@@ -56,7 +62,7 @@ def test_T_INS_011_bring_forward_times_out_and_waits_for_settle() -> None:
     )
     assert 0.3 <= now[0] <= 0.5
     now[0] = 0.0
-    win.switch_foreground = True
+    uia.settled = True
     assert (
         bring_forward(
             _target(),
