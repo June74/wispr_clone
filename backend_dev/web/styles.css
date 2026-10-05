@@ -583,6 +583,33 @@ kbd {
 .model-pick .btn { --bh: 40px; padding: 0 var(--s-4); }
 .model-meta { display: flex; gap: 6px; align-items: center; margin-top: var(--s-3); font: 400 11px/14px var(--font-sans); color: var(--text-3); }
 
+/* Cleanup provider and ordered cloud models */
+.cleanup-provider { margin-top: var(--s-5); }
+.cleanup-provider > .field { max-width: 360px; height: 40px; }
+.model-help { margin: var(--s-2) 0 0; font: var(--t-small); color: var(--text-2); }
+#cleanup-nvidia { margin-top: var(--s-5); }
+.key-pick { margin-top: 0; }
+.fallback-head { display: flex; align-items: flex-start; gap: var(--s-3); justify-content: space-between; margin-top: var(--s-6); }
+.fallback-head .field-label { margin: 0; }
+.fallback-head .model-help { margin-top: var(--s-1); }
+.fallback-head .btn { flex: none; }
+.model-fallback-list { list-style: none; padding: 0; margin: var(--s-3) 0 0; display: grid; gap: var(--s-2); }
+.fallback-row { display: flex; align-items: center; gap: var(--s-2); min-width: 0; }
+.fallback-step { width: 22px; flex: none; text-align: center; font: var(--t-mono); color: var(--text-3); }
+.fallback-row .field { flex: 1; min-width: 0; height: 36px; }
+.fallback-row input { font: var(--t-mono); }
+.fallback-actions { display: flex; gap: var(--s-1); }
+.fallback-actions .btn { --bh: 32px; }
+.fallback-up .i { transform: rotate(180deg); }
+.fallback-foot { display: flex; justify-content: space-between; align-items: center; gap: var(--s-3); margin-top: var(--s-3); }
+.model-meta { flex-wrap: wrap; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .fallback-head { flex-direction: column; }
+  .fallback-row { gap: var(--s-1); }
+  .fallback-actions { gap: 0; }
+  .fallback-actions .btn { --bh: 28px; }
+}
+
 /* cleanup */
 .guidance { padding: var(--s-5); }
 .guidance .field-label { font-weight: 400; color: var(--text-1); margin-bottom: var(--s-2); }

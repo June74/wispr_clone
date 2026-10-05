@@ -37,6 +37,10 @@ class PreviousFocus:
     tab: RuntimeId | None
 
 
+class ForegroundUnavailable(RuntimeError):
+    """Activation did not move the foreground to the saved window."""
+
+
 def bring_forward(
     snapshot: DestinationSnapshot,
     win32: Win32Api,
@@ -50,7 +54,10 @@ def bring_forward(
     previous_hwnd = win32.foreground_window()
     previous = PreviousFocus(previous_hwnd, uia.selected_tab(previous_hwnd))
     try:
-        win32.set_foreground(snapshot.hwnd)
+        activated = win32.set_foreground(snapshot.hwnd)
+        if not activated and win32.foreground_window() != snapshot.hwnd:
+            # Do not change a background tab/field after activation is refused.
+            raise ForegroundUnavailable
         if snapshot.tab is not None and not uia.select_tab(snapshot.hwnd, snapshot.tab):
             restore(previous, win32, uia)
             return None
@@ -77,6 +84,8 @@ def bring_forward(
                 restore(previous, win32, uia)
                 return None
             sleep(min(0.01, max(0.0, deadline - now)))
+    except ForegroundUnavailable:
+        raise
     except Exception:
         restore(previous, win32, uia)
         return None

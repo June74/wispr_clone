@@ -1,5 +1,5 @@
 import { createBridge, whenHostReady } from './lib/bridge.js';
-import { catalogNote, modelBadge, pickerOptions } from './lib/models.js';
+import { catalogNote, modelBadge, pickerOptions, sameModelOrder, normalizeModelOrder, modelOrderIssue, moveModelOrder, syncModelOrderDraft } from './lib/models.js';
 import { createStore, applyEvent, acceptsEvent } from './lib/store.js';
 import { shouldToastInserted, recoveryButtons, canDiscard } from './lib/view.js';
 import { termSaveEnabled, instructionsDirty, micDeviceId, micSelection, micTestRunningAfter, micTestEnded } from './lib/forms.js';
@@ -47,15 +47,15 @@ function dateLabel(value) { if (!value) return ''; const date = new Date(value *
 function renderHistory() {
   const list = $('#history-list'); const recent = $('#recent-list');
   if (!list) return;
-  const rows = state.history.filter((item) => historyFilter === 'all' || (historyFilter === 'failed' ? item.status === 'awaiting_cleanup_choice' || item.status === 'error' : item.status === 'done'));
+  const rows = state.history.filter((item) => historyFilter === 'all' || (historyFilter === 'failed' ? item.status === 'awaiting_cleanup_choice' || item.status === 'error' || item.status === 'held' : item.status === 'done'));
   const html = (items) => items.map((item) => {
-    const status = item.status === 'awaiting_cleanup_choice' ? 'failed' : item.status === 'done' ? 'cleaned' : 'raw';
-    return `<div class="item ${status === 'failed' ? 'is-failed' : ''}" data-run-id="${esc(item.run_id)}"><span class="app-tile">W</span><div class="item-body"><div class="item-meta"><strong>Wispr Clone</strong><span>·</span><span>${esc(dateLabel(item.created_at))}</span><span class="badge ${status === 'failed' ? 'warning' : 'accent'}">${esc(status === 'failed' ? 'Needs attention' : status === 'cleaned' ? 'Complete' : 'Dictation')}</span></div><div class="item-text">${esc(item.text ?? '')}</div></div><div class="item-actions"><button class="btn btn-ghost btn-icon btn-sm" data-copy="${esc(item.run_id)}" title="Copy" aria-label="Copy">${icon('copy')}</button><button class="btn btn-ghost btn-icon btn-sm danger" data-delete="${esc(item.run_id)}" title="Delete" aria-label="Delete">${icon('trash')}</button></div></div>`;
+    const status = item.status === 'awaiting_cleanup_choice' || item.status === 'held' ? 'failed' : item.status === 'done' ? 'cleaned' : 'raw';
+    return `<div class="item ${status === 'failed' ? 'is-failed' : ''}" data-run-id="${esc(item.run_id)}"><span class="app-tile">W</span><div class="item-body"><div class="item-meta"><strong>Wispr Clone</strong><span>·</span><span>${esc(dateLabel(item.created_at))}</span><span class="badge ${status === 'failed' ? 'warning' : 'accent'}">${esc(item.status === 'held' ? 'Not pasted' : status === 'failed' ? 'Needs attention' : status === 'cleaned' ? 'Complete' : 'Dictation')}</span></div><div class="item-text">${esc(item.text ?? '')}</div></div><div class="item-actions"><button class="btn btn-ghost btn-icon btn-sm" data-copy="${esc(item.run_id)}" title="Copy" aria-label="Copy">${icon('copy')}</button><button class="btn btn-ghost btn-icon btn-sm danger" data-delete="${esc(item.run_id)}" title="Delete" aria-label="Delete">${icon('trash')}</button></div></div>`;
   }).join('');
   list.innerHTML = html(rows) || '<div class="empty"><h3>No dictations yet</h3><p class="muted">Your dictations will appear here.</p></div>';
   if (recent) recent.innerHTML = html(state.history.slice(0, 3)) || '<div class="empty"><h3>No dictations yet</h3></div>';
   $('#hist-count').textContent = state.history.length; $('#hist-nav-count').textContent = state.history.length;
-  $('.nav-item[data-page="history"] .status-dot').hidden = !state.history.some((item) => item.status === 'awaiting_cleanup_choice');
+  $('.nav-item[data-page="history"] .status-dot').hidden = !state.history.some((item) => item.status === 'awaiting_cleanup_choice' || item.status === 'held');
 }
 function renderDictionary() {
   const body = $('#dict-body'); if (!body) return;
@@ -64,27 +64,75 @@ function renderDictionary() {
   body.innerHTML = rows.map((entry) => `<tr><td class="term">${esc(entry.spelling)}</td><td><div class="chips">${(entry.aliases ?? []).map((alias) => `<span class="chip">${esc(alias)}</span>`).join('') || '<span class="faint">—</span>'}</div></td><td class="faint"></td><td class="actions"><div><button class="btn btn-ghost btn-icon btn-sm" aria-label="Edit ${esc(entry.spelling)}" data-edit-term="${esc(entry.id)}">${icon('pencil')}</button><button class="btn btn-ghost btn-icon btn-sm danger" aria-label="Delete ${esc(entry.spelling)}" data-delete-term="${esc(entry.id)}">${icon('trash')}</button></div></td></tr>`).join('');
   $('#dict-empty').hidden = rows.length > 0; $('.table thead').style.display = rows.length ? '' : 'none'; $('#dict-count').textContent = state.dictionary.length;
 }
-// Live model lists (OpenRouter speech models, LM Studio downloads), fetched when the page opens.
+// Live model lists are fetched through the host when the page opens.
 let modelCatalog = null;
+let catalogRequest = 0;
+let statusRequest = 0;
+let nvidiaFallbackDraft = null;
+let lastSavedNvidiaOrder = null;
+let renderedNvidiaOrder = null;
+let nvidiaOrderSaving = false;
+let nvidiaKeyBusy = false;
+const cleanupProvider = () => state.settings.cleanup_provider ?? 'lmstudio';
 async function refreshCatalog() {
+  const request = ++catalogRequest;
+  const provider = cleanupProvider();
   const result = await bridge.call('models_catalog');
-  if (result?.ok) { modelCatalog = result.data; renderModels(); }
+  if (result?.ok && request === catalogRequest && provider === cleanupProvider()) { modelCatalog = result.data; renderModels(); }
+  return result;
+}
+async function refreshModelStatus() {
+  const request = ++statusRequest;
+  const selection = JSON.stringify([cleanupProvider(), state.settings.cleanup_model_id, state.settings.nvidia_cleanup_model_ids]);
+  const result = await bridge.call('models_status');
+  if (result?.ok && request === statusRequest && selection === JSON.stringify([cleanupProvider(), state.settings.cleanup_model_id, state.settings.nvidia_cleanup_model_ids])) { state.models = result.data.models ?? []; renderModels(); }
+}
+function renderFallbackState() {
+  const draft = nvidiaFallbackDraft ?? [];
+  const issue = modelOrderIssue(draft);
+  const dirty = !sameModelOrder(normalizeModelOrder(draft), lastSavedNvidiaOrder ?? []);
+  const save = $('#save-nvidia-models'); if (save) save.disabled = nvidiaOrderSaving || Boolean(issue) || !dirty;
+  const add = $('#add-nvidia-model'); if (add) add.disabled = nvidiaOrderSaving || draft.length >= 12;
+  const note = $('#nvidia-fallback-note'); if (note) note.textContent = issue || (nvidiaOrderSaving ? 'Saving order…' : dirty ? 'Changes apply after Save order.' : 'Models are tried in the saved order.');
+  $$('[data-fallback-action]').forEach((button) => { const index = Number(button.dataset.index); button.disabled = nvidiaOrderSaving || (button.dataset.fallbackAction === 'up' && index === 0) || (button.dataset.fallbackAction === 'down' && index === draft.length - 1) || (button.dataset.fallbackAction === 'remove' && draft.length === 1); });
+  $$('[data-fallback-index]').forEach((input) => { input.disabled = nvidiaOrderSaving; });
+}
+function renderFallbackOrder() {
+  const saved = state.settings.nvidia_cleanup_model_ids ?? [];
+  nvidiaFallbackDraft = syncModelOrderDraft(nvidiaFallbackDraft, lastSavedNvidiaOrder, saved);
+  lastSavedNvidiaOrder = [...saved];
+  const list = $('#nvidia-fallback-list');
+  if (list && !sameModelOrder(renderedNvidiaOrder, nvidiaFallbackDraft)) {
+    list.innerHTML = nvidiaFallbackDraft.map((id, index) => `<li class="fallback-row"><span class="fallback-step" aria-hidden="true">${index + 1}</span><label class="field"><input value="${esc(id)}" data-fallback-index="${index}" aria-label="Cleanup model ${index + 1}" list="nvidia-catalog-options" autocomplete="off" spellcheck="false" placeholder="provider/model-id"></label><div class="fallback-actions"><button class="btn btn-ghost btn-icon fallback-up" data-fallback-action="up" data-index="${index}" aria-label="Move cleanup model ${index + 1} up" title="Move up">${icon('chevron')}</button><button class="btn btn-ghost btn-icon" data-fallback-action="down" data-index="${index}" aria-label="Move cleanup model ${index + 1} down" title="Move down">${icon('chevron')}</button><button class="btn btn-ghost btn-icon danger" data-fallback-action="remove" data-index="${index}" aria-label="Remove cleanup model ${index + 1}" title="Remove">${icon('x')}</button></div></li>`).join('');
+    renderedNvidiaOrder = [...nvidiaFallbackDraft];
+  }
+  const suggestions = $('#nvidia-catalog-options');
+  if (suggestions) suggestions.replaceChildren(...(modelCatalog?.cleanup?.provider === 'nvidia' ? modelCatalog.cleanup.models ?? [] : []).filter((model) => !model.missing).map((model) => { const option = document.createElement('option'); option.value = model.model_id; option.label = model.display_name || model.model_id; return option; }));
+  renderFallbackState();
 }
 function renderModels() {
+  const provider = cleanupProvider();
+  const providerSelect = $('#cleanup-provider'); if (providerSelect && document.activeElement !== providerSelect) providerSelect.value = provider;
+  const cloud = provider === 'nvidia';
+  const localPanel = $('#cleanup-local-model'); if (localPanel) localPanel.hidden = cloud;
+  const cloudPanel = $('#cleanup-nvidia'); if (cloudPanel) cloudPanel.hidden = !cloud;
+  const providerNote = $('#cleanup-provider-note'); if (providerNote) providerNote.textContent = cloud ? 'Transcript text, cleanup instructions, and dictionary spellings are sent to NVIDIA.' : 'Cleanup runs on this device.';
+  const keyStatus = $('#nvidia-key-status'); if (keyStatus) keyStatus.textContent = state.secrets?.nvidia_api_key?.configured ? 'Key saved · model availability is checked during cleanup.' : 'No key saved';
+  renderFallbackOrder();
   $$('.model-card').forEach((card) => {
     const role = card.dataset.model === 'cleanup' ? 'cleanup' : 'stt';
     const model = state.models.find((item) => item.role === role);
-    const current = model?.model_id ?? state.settings?.[`${role}_model_id`];
+    const current = role === 'cleanup' && cloud ? state.settings.nvidia_cleanup_model_ids?.[0] : model?.model_id ?? state.settings?.[`${role}_model_id`];
     const badge = $('[data-status]', card);
     const select = $('[data-select]', card);
-    if (select && document.activeElement !== select) {
+    if (select && !(role === 'cleanup' && cloud) && document.activeElement !== select) {
       select.replaceChildren(...pickerOptions(role, modelCatalog, current).map((item) => { const option = document.createElement('option'); option.value = item.value; option.textContent = item.label; option.selected = item.selected; return option; }));
       select.disabled = !modelCatalog;
     }
     const modelId = $('[data-model-id]', card); if (modelId) modelId.textContent = current ?? '';
-    const where = $('[data-where]', card); if (where) where.textContent = role === 'stt' ? 'Leaves this device' : 'On this device (LM Studio)';
-    const note = $('[data-catalog-note]', card); if (note) note.textContent = catalogNote(role, modelCatalog);
-    if (badge) { const view = modelBadge(model, messageFor); badge.className = `badge ${view.tone}`; badge.textContent = view.text; }
+    const where = $('[data-where]', card); if (where) where.textContent = role === 'stt' ? 'Leaves this device' : cloud ? 'Leaves this device (NVIDIA)' : 'On this device (LM Studio)';
+    const note = $('[data-catalog-note]', card); if (note) note.textContent = catalogNote(role, modelCatalog, role === 'cleanup' ? provider : undefined);
+    if (badge) { const view = modelBadge(model, messageFor, role === 'cleanup' ? provider : undefined); badge.className = `badge ${view.tone}`; badge.textContent = view.text; }
   });
   const dot = $('.nav-item[data-page="models"] .status-dot');
   if (dot) dot.hidden = !state.models.some((item) => !item.ready);
@@ -93,9 +141,9 @@ function renderRun() {
   const active = run(); const status = active?.status ?? 'idle';
   const card = $('#dictate');
   if (!card) return;
-  card.dataset.state = status === 'recording' ? 'recording' : status === 'processing' ? 'processing' : status === 'error' || status === 'uncertain' || status === 'awaiting_cleanup_choice' ? 'warning' : 'idle';
+  card.dataset.state = status === 'recording' ? 'recording' : status === 'processing' ? 'processing' : status === 'error' || status === 'uncertain' || status === 'awaiting_cleanup_choice' || status === 'held' ? 'warning' : 'idle';
   const recording = status === 'recording'; const pending = ['processing', 'awaiting_destination'].includes(status);
-  $('#dictate-status').textContent = recording ? 'Listening' : pending ? 'Working' : status === 'awaiting_cleanup_choice' ? 'Needs attention' : status === 'error' || status === 'uncertain' ? 'Could not confirm' : 'Ready when you are';
+  $('#dictate-status').textContent = recording ? 'Listening' : status === 'awaiting_destination' ? 'Waiting to paste' : pending ? 'Working' : status === 'held' ? 'Text not pasted' : status === 'awaiting_cleanup_choice' ? 'Needs attention' : status === 'error' || status === 'uncertain' ? 'Could not confirm' : 'Ready when you are';
   $('#dictate-eyebrow').textContent = recording ? 'Listening' : 'Backend status';
   $('#dictate-caption').textContent = recording ? 'Go ahead — say it the way you would to a friend.' : 'From a passing thought to the perfect words.';
   const btn = $('#rec-btn'); btn.disabled = !bridge.available() || pending || ['awaiting_cleanup_choice', 'awaiting_destination'].includes(status);
@@ -103,9 +151,11 @@ function renderRun() {
   $('#dictate-hint').textContent = bridge.available() ? '' : 'Not connected';
   $('#dictate-cancel').hidden = !canDiscard(status);
   if (state.lastEvent && shouldToastInserted(state.lastEvent)) { toast('success', 'Dictation inserted', 'The backend confirmed delivery.'); state.lastEvent = null; }
-  if ($('#dictate-recovery')) $('#dictate-recovery').innerHTML = status === 'awaiting_cleanup_choice' && active
+  if ($('#dictate-recovery')) $('#dictate-recovery').innerHTML = ['awaiting_cleanup_choice', 'held', 'awaiting_destination'].includes(status) && active
     ? recoveryButtons(active).map((action) => `<button class="btn btn-secondary btn-sm" data-recover="${esc(action)}">${esc(action.replaceAll('_', ' '))}</button>`).join('') : '';
   if (status === 'awaiting_cleanup_choice') $('#dictate-caption').textContent = "Text cleanup couldn't finish. Choose how to continue.";
+  if (status === 'awaiting_destination') $('#dictate-caption').textContent = 'Return to the original text field to finish pasting.';
+  if (status === 'held') $('#dictate-caption').textContent = 'Automatic paste could not finish in the original text field. Use Copy to paste your text where you want.';
   const level = state.latestLevel; waveform?.update(level?.bands ?? [], recording && level?.run_id === active?.run_id);
   const meter = $('#level-segments');
   if (meter) { const count = Math.round(36 * Math.max(0, Math.min(1, Math.max(...(level?.run_id === null ? level.bands ?? [] : [0]))))); meter.innerHTML = '<i></i>'.repeat(36); $$('i', meter).forEach((segment, index) => { if (index < count) segment.className = index >= 29 ? 'warm' : 'on'; }); if (level?.run_id === null) $('#level-state').textContent = 'Receiving microphone levels'; }
@@ -215,8 +265,75 @@ $('#cleanup-switch')?.addEventListener('click', async () => { const enabled = $(
 $('#instructions')?.addEventListener('input', () => { $('#save-instructions').disabled = !instructionsDirty($('#instructions').value, state.settings.cleanup_instructions ?? ''); });
 $('#save-instructions')?.addEventListener('click', async () => { const result = await bridge.call('settings_update', { patch: { cleanup_instructions: $('#instructions').value } }); if (failed(result)) return; state.settings = result.data; lastSavedInstructions = result.data.cleanup_instructions ?? ''; $('#save-instructions').disabled = true; $('#save-note').textContent = 'Saved'; });
 $('#autostart-switch')?.addEventListener('click', async () => { const result = await bridge.call('autostart_set', { enabled: $('#autostart-switch').getAttribute('aria-checked') !== 'true' }); if (failed(result)) return; renderAutostart(result.data); });
-$('#save-openrouter-key')?.addEventListener('click', async () => { const input = $('#openrouter-key'); const value = normalizeSecret(input.value); input.value = ''; const result = await bridge.call('secret_set', { name: 'openrouter_api_key', value }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
-$('#clear-openrouter-key')?.addEventListener('click', async () => { $('#openrouter-key').value = ''; const result = await bridge.call('secret_clear', { name: 'openrouter_api_key' }); if (failed(result)) return; state.secrets = { openrouter_api_key: result.data }; renderSettings(); });
+$('#save-openrouter-key')?.addEventListener('click', async () => { const input = $('#openrouter-key'); const value = normalizeSecret(input.value); input.value = ''; const result = await bridge.call('secret_set', { name: 'openrouter_api_key', value }); if (failed(result)) return; state.secrets = { ...state.secrets, openrouter_api_key: result.data }; renderSettings(); });
+$('#clear-openrouter-key')?.addEventListener('click', async () => { $('#openrouter-key').value = ''; const result = await bridge.call('secret_clear', { name: 'openrouter_api_key' }); if (failed(result)) return; state.secrets = { ...state.secrets, openrouter_api_key: result.data }; renderSettings(); });
+$('#cleanup-provider')?.addEventListener('change', async (event) => {
+  const select = event.target; select.disabled = true;
+  try {
+    const result = await bridge.call('settings_update', { patch: { cleanup_provider: select.value } });
+    if (!failed(result)) { state.settings = result.data; modelCatalog = null; render(); void Promise.all([refreshCatalog(), refreshModelStatus()]); }
+  } finally { select.disabled = false; select.value = cleanupProvider(); renderModels(); }
+});
+$('#save-nvidia-key')?.addEventListener('click', async () => {
+  if (nvidiaKeyBusy) return;
+  nvidiaKeyBusy = true;
+  $('#save-nvidia-key').disabled = $('#clear-nvidia-key').disabled = true;
+  const input = $('#nvidia-key'); const value = normalizeSecret(input.value); input.value = '';
+  try {
+    const result = await bridge.call('secret_set', { name: 'nvidia_api_key', value });
+    if (failed(result)) return;
+    state.secrets = { ...state.secrets, nvidia_api_key: result.data }; renderModels();
+  } finally { nvidiaKeyBusy = false; $('#save-nvidia-key').disabled = $('#clear-nvidia-key').disabled = false; }
+  await Promise.all([refreshCatalog(), refreshModelStatus()]);
+});
+$('#clear-nvidia-key')?.addEventListener('click', async () => {
+  if (nvidiaKeyBusy) return;
+  nvidiaKeyBusy = true;
+  $('#save-nvidia-key').disabled = $('#clear-nvidia-key').disabled = true;
+  $('#nvidia-key').value = '';
+  try {
+    const result = await bridge.call('secret_clear', { name: 'nvidia_api_key' });
+    if (failed(result)) return;
+    state.secrets = { ...state.secrets, nvidia_api_key: result.data }; renderModels();
+  } finally { nvidiaKeyBusy = false; $('#save-nvidia-key').disabled = $('#clear-nvidia-key').disabled = false; }
+  await Promise.all([refreshCatalog(), refreshModelStatus()]);
+});
+$('#refresh-nvidia-models')?.addEventListener('click', async () => {
+  const button = $('#refresh-nvidia-models'); button.disabled = true;
+  try { failed(await refreshCatalog()); } finally { button.disabled = false; }
+});
+$('#nvidia-fallback-list')?.addEventListener('input', (event) => {
+  const input = event.target.closest('[data-fallback-index]'); if (!input) return;
+  nvidiaFallbackDraft[Number(input.dataset.fallbackIndex)] = input.value;
+  renderedNvidiaOrder = [...nvidiaFallbackDraft]; renderFallbackState();
+});
+$('#nvidia-fallback-list')?.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-fallback-action]'); if (!button || button.disabled) return;
+  const index = Number(button.dataset.index); const action = button.dataset.fallbackAction;
+  let focusIndex = index;
+  if (action === 'remove') { if (nvidiaFallbackDraft.length <= 1) return; nvidiaFallbackDraft.splice(index, 1); focusIndex = Math.min(index, nvidiaFallbackDraft.length - 1); }
+  else { const direction = action === 'up' ? -1 : 1; nvidiaFallbackDraft = moveModelOrder(nvidiaFallbackDraft, index, direction); focusIndex += direction; }
+  renderFallbackOrder();
+  const control = action === 'remove' ? $(`[data-fallback-index="${focusIndex}"]`) : $(`[data-fallback-action="${action}"][data-index="${focusIndex}"]`);
+  (control?.disabled ? $(`[data-fallback-index="${focusIndex}"]`) : control)?.focus();
+});
+$('#add-nvidia-model')?.addEventListener('click', () => {
+  if (nvidiaOrderSaving || (nvidiaFallbackDraft?.length ?? 0) >= 12) return;
+  nvidiaFallbackDraft = [...(nvidiaFallbackDraft ?? []), '']; renderFallbackOrder();
+  $(`[data-fallback-index="${nvidiaFallbackDraft.length - 1}"]`)?.focus();
+});
+$('#save-nvidia-models')?.addEventListener('click', async () => {
+  const ids = normalizeModelOrder(nvidiaFallbackDraft ?? []);
+  if (nvidiaOrderSaving || modelOrderIssue(ids)) return;
+  nvidiaOrderSaving = true; renderFallbackState();
+  try {
+    const result = await bridge.call('settings_update', { patch: { nvidia_cleanup_model_ids: ids } });
+    if (failed(result)) return;
+    state.settings = result.data;
+    nvidiaFallbackDraft = [...result.data.nvidia_cleanup_model_ids]; lastSavedNvidiaOrder = [...nvidiaFallbackDraft];
+    renderModels(); void refreshModelStatus(); toast('success', 'Fallback order saved', 'Used from your next dictation.');
+  } finally { nvidiaOrderSaving = false; renderFallbackState(); }
+});
 function setMicTestRunning(running) { const button = $('#mic-test'); button.dataset.running = String(running); button.innerHTML = `${icon(running ? 'stop' : 'mic')}${running ? 'Stop test' : 'Test microphone'}`; }
 $('#mic-select')?.addEventListener('change', async () => { const microphone_id = $('#mic-select').value === '' ? null : $('#mic-select').value; const result = await bridge.call('settings_update', { patch: { microphone_id: microphone_id } }); if (failed(result)) return; state.settings = result.data; renderSettings(); });
 $('#mic-test')?.addEventListener('click', async () => { const button = $('#mic-test'); const wasRunning = button.dataset.running === 'true'; const command = wasRunning ? 'mic_test_stop' : 'mic_test_start'; const result = await bridge.call(command, wasRunning ? {} : { device_id: micDeviceId($('#mic-select').value) }); if (failed(result)) return; const running = micTestRunningAfter(command, result, wasRunning); setMicTestRunning(running); if (running) lastMicLevelAt = Date.now(); });

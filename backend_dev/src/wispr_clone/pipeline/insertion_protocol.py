@@ -15,6 +15,7 @@ from wispr_clone.history.retention import is_expired
 from wispr_clone.insertion.destination import DestinationSnapshot
 from wispr_clone.insertion.inserter import (
     DispatchResult,
+    ForegroundUnavailable,
     PreviousFocus,
     bring_forward,
     confirm,
@@ -90,6 +91,7 @@ class InsertionProtocol:
         self._bring_forward_settle_s = bring_forward_settle_s
         self._paste_settle_s = paste_settle_s
         self._lock = asyncio.Lock()
+        self._foreground_unavailable: set[tuple[str, str]] = set()
 
     async def attempt(
         self,
@@ -272,11 +274,17 @@ class InsertionProtocol:
         is_cancelled: Callable[[str], bool],
     ) -> tuple[str, ProtocolResult] | None:
         if not waiting:
+            async with self._lock:
+                self._foreground_unavailable.clear()
             return None
         w = min(enumerate(waiting), key=lambda pair: (pair[1].awaiting_since, pair[0]))[
             1
         ]
         async with self._lock:
+            self._foreground_unavailable.intersection_update(
+                (entry.run_id, entry.request_id) for entry in waiting
+            )
+            operation = (w.run_id, w.request_id)
             if is_cancelled(w.run_id):
                 result = ProtocolResult(ProtocolOutcome.CANCELLED, None, "cancelled")
             elif self._clock() - w.awaiting_since > (
@@ -306,6 +314,12 @@ class InsertionProtocol:
                             kind="automatic",
                             is_cancelled=lambda: is_cancelled(w.run_id),
                         )
+                elif operation in self._foreground_unavailable:
+                    # One refused activation is enough. Wait for the user to
+                    # return to the original field without more focus requests.
+                    result = ProtocolResult(
+                        ProtocolOutcome.AWAITING, None, "foreground unavailable"
+                    )
                 else:
                     idle = await self._offload(self._win32.idle_ms)
                     idle_threshold_ms = (
@@ -319,15 +333,23 @@ class InsertionProtocol:
                         )
                     else:
                         idle_start = await self._offload(self._win32.idle_ms)
-                        previous: PreviousFocus | None = await self._offload(
-                            lambda: bring_forward(
-                                w.snapshot,
-                                self._win32,
-                                self._uia,
-                                settle_s=self._bring_forward_settle_s,
+                        try:
+                            previous: PreviousFocus | None = await self._offload(
+                                lambda: bring_forward(
+                                    w.snapshot,
+                                    self._win32,
+                                    self._uia,
+                                    settle_s=self._bring_forward_settle_s,
+                                )
                             )
-                        )
-                        if previous is None:
+                        except ForegroundUnavailable:
+                            self._foreground_unavailable.add(operation)
+                            previous = None
+                        if operation in self._foreground_unavailable:
+                            result = ProtocolResult(
+                                ProtocolOutcome.AWAITING, None, "foreground unavailable"
+                            )
+                        elif previous is None:
                             result = ProtocolResult(
                                 ProtocolOutcome.HELD, None, "bring forward failed"
                             )
@@ -369,4 +391,6 @@ class InsertionProtocol:
                                 await self._offload(
                                     lambda: restore(previous, self._win32, self._uia)
                                 )
+            if result.outcome != ProtocolOutcome.AWAITING:
+                self._foreground_unavailable.discard(operation)
             return w.run_id, result

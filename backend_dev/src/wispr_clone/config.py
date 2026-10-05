@@ -10,6 +10,12 @@ RETURN_SETTLE_SECONDS: float = 0.3
 DESTINATION_WAIT_LIMIT_SECONDS: int = 10 * 60
 LM_STUDIO_ENDPOINT: str = "http://127.0.0.1:1234/v1"
 LM_STUDIO_MODEL_ID: str = "meta-llama-3.1-8b-instruct"
+NVIDIA_ENDPOINT: str = "https://integrate.api.nvidia.com/v1"
+NVIDIA_CLEANUP_MODEL_IDS: tuple[str, ...] = (
+    "deepseek-ai/deepseek-v4.1-flash",
+    "z-ai/glm-5.3",
+    "moonshotai/kimi-k3",
+)
 OPENROUTER_ENDPOINT: str = "https://openrouter.ai/api/v1"
 OPENROUTER_MODEL_ID: str = "openai/whisper-large-v3-turbo"
 DELIVERY_TICK_S: float = 0.1

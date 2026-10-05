@@ -30,6 +30,18 @@ test('T-WEB-007: HUD colors follow the run lifecycle', () => {
   }
 });
 
+test('held dictations offer copy without an unsupported cancel or implicit paste', () => {
+  const held = { status: 'held', actions: ['insert', 'copy'] };
+  assert.deepEqual(recoveryButtons(held), ['copy']);
+  assert.deepEqual(recoveryButtons({ ...held, actions: ['insert'] }), []);
+});
+
+test('waiting dictations offer only backend Copy in the recovery row', () => {
+  const pending = { status: 'awaiting_destination', actions: ['insert', 'copy'] };
+  assert.deepEqual(recoveryButtons(pending), ['copy']);
+  assert.deepEqual(recoveryButtons({ ...pending, actions: ['insert'] }), []);
+});
+
 test('T-WEB-022: the window opens on the General page', async () => {
   const { readFile } = await import('node:fs/promises');
   const app = await readFile(new URL('../app.js', import.meta.url), 'utf8');

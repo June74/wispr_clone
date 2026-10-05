@@ -16,7 +16,7 @@ from wispr_clone.cleanup.base import CleanupEngine, CleanupRequest
 from wispr_clone.cleanup.guard import check as check_cleanup
 from wispr_clone.contracts.common import ErrorCode, ThirdPartyError, WisprError
 from wispr_clone.contracts.events import EventSink
-from wispr_clone.contracts.run import CleanupStatus, RecoveryAction
+from wispr_clone.contracts.run import CleanupStatus, RecoveryAction, RunStatus
 from wispr_clone.dictionary.apply import apply_dictionary
 from wispr_clone.dictionary.repo import DictionaryRepo
 from wispr_clone.history.repo import HistoryRepo, RunRecord
@@ -72,6 +72,9 @@ class RunServices:
     cleanup: CleanupEngine | None = None
     clock: Callable[[], float] = time.time
     cleanup_for: Callable[[str], CleanupEngine | None] | None = None
+    cleanup_for_config: (
+        Callable[[Mapping[str, object]], CleanupEngine | None] | None
+    ) = None
 
 
 def events_for(result: ProtocolResult) -> tuple[RunEvent, ...]:
@@ -347,12 +350,33 @@ class RunController:
                 None,
             )
         if run_id is None:
+            # History reads await storage; a new run may start during a lookup.
+            for key in tuple(reversed(self._tasks)):
+                try:
+                    record = await self._services.history.get(key)
+                except WisprError as error:
+                    if self._is_missing_run(error):
+                        continue
+                    raise
+                if record.status in {
+                    RunStatus.AWAITING_DESTINATION,
+                    RunStatus.AWAITING_CLEANUP_CHOICE,
+                }:
+                    run_id = key
+                    break
+        if run_id is None:
             return None
         task = self._tasks.get(run_id)
-        if task is None or task.done():
-            return None
         await self.cancel(run_id)
-        return run_id if self._cancel_flags.get(run_id) else None
+        if task is not None and not task.done() and self._cancel_flags.get(run_id):
+            return run_id
+        try:
+            record = await self._services.history.get(run_id)
+        except WisprError as error:
+            if self._is_missing_run(error):
+                return None
+            raise
+        return run_id if record.status == RunStatus.CANCELLED else None
 
     async def settled(self, run_id: str) -> RunRecord:
         task = self._tasks.get(run_id)
@@ -973,11 +997,14 @@ class RunController:
             await self._transition(run_id, RunEvent.CANCEL)
             return
         model_id = config.get("cleanup_model_id")
-        engine = (
-            self._services.cleanup_for(model_id)
-            if self._services.cleanup_for is not None and isinstance(model_id, str)
-            else self._services.cleanup
-        )
+        if self._services.cleanup_for_config is not None:
+            engine = self._services.cleanup_for_config(config)
+        else:
+            engine = (
+                self._services.cleanup_for(model_id)
+                if self._services.cleanup_for is not None and isinstance(model_id, str)
+                else self._services.cleanup
+            )
         instructions = config.get("cleanup_instructions", "")
         if not isinstance(instructions, str):
             instructions = ""
@@ -989,6 +1016,10 @@ class RunController:
                     text=adjusted,
                     glossary=tuple(entry.spelling for entry in entries),
                     instructions=instructions,
+                    cancelled=lambda: (
+                        self._is_aborted(run_id)
+                        or self._cancel_flags.get(run_id, False)
+                    ),
                 )
             )
             if self._is_aborted(run_id):
@@ -1044,7 +1075,11 @@ class RunController:
         if self._cancel_flags.get(run_id, False):
             await self._transition(run_id, RunEvent.CANCEL)
             return
-        if status == CleanupStatus.FAILED and reason == "cleanup_unavailable":
+        use_original = reason == "cleanup_unavailable" or (
+            reason == "cleanup_timeout"
+            and record.config.get("cleanup_provider") == "nvidia"
+        )
+        if status == CleanupStatus.FAILED and use_original:
             updated = await self._services.history.update_run(
                 run_id,
                 expected_version=record.version,

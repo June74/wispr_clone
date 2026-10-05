@@ -26,6 +26,8 @@ class ErrorCode(StrEnum):
     STT_UNAVAILABLE = "stt_unavailable"
     API_KEY_MISSING = "api_key_missing"
     API_KEY_INVALID = "api_key_invalid"
+    NVIDIA_API_KEY_MISSING = "nvidia_api_key_missing"
+    NVIDIA_API_KEY_INVALID = "nvidia_api_key_invalid"
     MODEL_LOAD_FAILED = "model_load_failed"
     MODEL_LOADING = "model_loading"
     STT_TIMEOUT = "stt_timeout"

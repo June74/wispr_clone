@@ -12,6 +12,8 @@ from wispr_clone.pipeline.run_controller import RunController
 from wispr_clone.settings.secret_store import MemorySecretStore, SecretStore
 from wispr_clone.settings.store import SettingsStore
 
+_SECRET_NAMES = frozenset({"openrouter_api_key", "nvidia_api_key"})
+
 _ZERO_WIDTH_SECRET_CHARS = frozenset("\u200b\u200c\u200d\u2060\ufeff")
 
 
@@ -65,6 +67,8 @@ class SettingsCommands:
         if not isinstance(patch, dict):
             raise WisprError(ErrorCode.VALIDATION, "settings", "patch")
         updated = await self._store.update(patch)
+        if self._model_service is not None:
+            self._model_service.invalidate()
         return self._settings_data(updated)
 
     async def _state(self, _: Mapping[str, object]) -> Mapping[str, object]:
@@ -78,21 +82,25 @@ class SettingsCommands:
             "runs": [self._controller.run_snapshot(record) for record in records],
             "active_run_id": self._controller.active_run_id,
             "secrets": {
-                "openrouter_api_key": {
-                    "configured": bool(self._secret_store.get("openrouter_api_key"))
-                }
+                name: {"configured": bool(self._secret_store.get(name))}
+                for name in sorted(_SECRET_NAMES)
             },
         }
 
     async def _secret_set(self, payload: Mapping[str, object]) -> Mapping[str, object]:
         name, value = payload.get("name"), payload.get("value")
-        if name != "openrouter_api_key" or not isinstance(value, str):
+        if (
+            not isinstance(name, str)
+            or name not in _SECRET_NAMES
+            or not isinstance(value, str)
+        ):
             raise WisprError(ErrorCode.VALIDATION, "secrets", "name") from None
         value = _normalize_secret(value)
         if any(character in _ZERO_WIDTH_SECRET_CHARS for character in value):
             raise WisprError(ErrorCode.VALIDATION, "secrets", "value") from None
         self._secret_store.set(name, value)
         if self._model_service is not None:
+            self._model_service.invalidate()
             await self._model_service.poll()
         return {"configured": True}
 
@@ -100,10 +108,11 @@ class SettingsCommands:
         self, payload: Mapping[str, object]
     ) -> Mapping[str, object]:
         name = payload.get("name")
-        if name != "openrouter_api_key":
+        if not isinstance(name, str) or name not in _SECRET_NAMES:
             raise WisprError(ErrorCode.VALIDATION, "secrets", "name") from None
         self._secret_store.clear(name)
         if self._model_service is not None:
+            self._model_service.invalidate()
             await self._model_service.poll()
         return {"configured": False}
 

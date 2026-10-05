@@ -1,5 +1,6 @@
 """Frozen interface shared by cleanup implementations."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -11,6 +12,7 @@ class CleanupRequest:
     text: str
     glossary: tuple[str, ...] = ()
     instructions: str = ""
+    cancelled: Callable[[], bool] | None = None
 
 
 class CleanupEngine(Protocol):

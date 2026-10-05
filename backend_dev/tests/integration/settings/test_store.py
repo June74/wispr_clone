@@ -239,11 +239,16 @@ async def test_T_SET_013_upgrade_is_rewritten(tmp_path: Path) -> None:
         store = SettingsStore(
             db,
             default_registry(),
-            upgrade_steps={0: upgrade, 1: UPGRADE_STEPS[1], 2: UPGRADE_STEPS[2]},
+            upgrade_steps={
+                0: upgrade,
+                1: UPGRADE_STEPS[1],
+                2: UPGRADE_STEPS[2],
+                3: UPGRADE_STEPS[3],
+            },
         )
         loaded = await store.load()
         assert (loaded.schema_version, loaded.theme, loaded.recording_mode) == (
-            3,
+            4,
             "dark",
             "hold",
         )

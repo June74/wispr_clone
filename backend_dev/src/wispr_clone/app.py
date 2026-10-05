@@ -10,6 +10,7 @@ import secrets
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,8 @@ from wispr_clone.cleanup.lmstudio_cleanup import LmStudioCleanup
 from wispr_clone.cleanup.lmstudio_models import (
     default_models as default_lmstudio_models,
 )
+from wispr_clone.cleanup.nvidia_cleanup import NvidiaCleanup
+from wispr_clone.contracts.common import ErrorCode, ThirdPartyError
 from wispr_clone.contracts.events import EventPayload, EventSink
 from wispr_clone.contracts.run import RunStatus
 from wispr_clone.dictionary.repo import DictionaryRepo
@@ -112,6 +115,9 @@ class AppFactories:
         "enabled": False,
     }
     autostart_set: Callable[[bool], dict[str, bool]] | None = None
+    nvidia_cleanup: (
+        Callable[[tuple[str, ...], Callable[[], str | None]], CleanupEngine] | None
+    ) = None
 
 
 def real_factories() -> AppFactories:
@@ -195,6 +201,9 @@ def real_factories() -> AppFactories:
         lmstudio_models=default_lmstudio_models,
         autostart_status=autostart.status,
         autostart_set=autostart.set_enabled,
+        nvidia_cleanup=lambda model_ids, key: NvidiaCleanup(
+            api_key=key, model_ids=model_ids
+        ),
     )
 
 
@@ -353,6 +362,7 @@ class App:
         )
         self._insertion_thread_error = False
         self._cleanup_cache: dict[str, CleanupEngine] = {}
+        self._nvidia_cleanup_cache: dict[tuple[str, ...], CleanupEngine] = {}
         self._timers: list[asyncio.Task[None]] = []
         self._loop: asyncio.AbstractEventLoop | None = None
         self._worker: threading.Thread | None = None
@@ -478,6 +488,10 @@ class App:
             events=self._events,
             list_stt=stt_catalog.list_models if stt_catalog else None,
             list_cleanup=lmstudio.list_chat_models if lmstudio else None,
+            list_nvidia_cleanup=lambda: self._list_nvidia_models(
+                store.current().nvidia_cleanup_model_ids
+            ),
+            nvidia_cleanup_for=self._nvidia_cleanup,
             load_cleanup=lmstudio.ensure_loaded if lmstudio else None,
         )
         insertion = InsertionProtocol(
@@ -518,11 +532,12 @@ class App:
                 config_snapshot=lambda: (
                     self._settings.model_dump(mode="json") if self._settings else {}
                 ),
-                cleanup=self._cleanup(self._settings.cleanup_model_id)
+                cleanup=self._cleanup_for_config(self._settings.model_dump(mode="json"))
                 if self._settings and self._settings.cleanup_enabled
                 else None,
                 clock=self.factories.clock,
                 cleanup_for=self._cleanup,
+                cleanup_for_config=self._cleanup_for_config,
             )
         )
 
@@ -669,6 +684,49 @@ class App:
                 self._cleanup_cache[model_id] = adapter
         return self._cleanup_cache.get(model_id)
 
+    def _nvidia_cleanup(self, model_ids: tuple[str, ...]) -> CleanupEngine | None:
+        if self.factories.nvidia_cleanup is None:
+            return None
+        if model_ids not in self._nvidia_cleanup_cache:
+            self._nvidia_cleanup_cache[model_ids] = self.factories.nvidia_cleanup(
+                model_ids,
+                lambda: (
+                    self._secret_store.get("nvidia_api_key")
+                    if self._secret_store
+                    else None
+                ),
+            )
+        return self._nvidia_cleanup_cache[model_ids]
+
+    def _cleanup_for_config(
+        self, snapshot: Mapping[str, object]
+    ) -> CleanupEngine | None:
+        """Resolve the provider/order captured by this run, never live preferences."""
+        if snapshot.get("cleanup_provider") == "nvidia":
+            model_ids = snapshot.get(
+                "nvidia_cleanup_model_ids", config.NVIDIA_CLEANUP_MODEL_IDS
+            )
+            if (
+                not isinstance(model_ids, (tuple, list))
+                or not model_ids
+                or not all(isinstance(item, str) for item in model_ids)
+            ):
+                return None
+            return self._nvidia_cleanup(tuple(model_ids))
+        model_id = snapshot.get("cleanup_model_id", config.LM_STUDIO_MODEL_ID)
+        return self._cleanup(model_id) if isinstance(model_id, str) else None
+
+    async def _list_nvidia_models(
+        self, model_ids: tuple[str, ...]
+    ) -> list[dict[str, object]]:
+        engine = self._nvidia_cleanup(model_ids)
+        lister = getattr(engine, "list_models", None)
+        if not callable(lister):
+            raise ThirdPartyError(
+                "nvidia", "models", "unavailable", ErrorCode.CLEANUP_UNAVAILABLE
+            )
+        return cast(list[dict[str, object]], await lister())
+
     def _track_command(self, spec: CommandSpec) -> CommandSpec:
         async def tracked(payload: Any) -> Any:
             result = await spec.handler(payload)
@@ -697,17 +755,19 @@ class App:
         def schedule() -> None:
             # Read the active run on the loop thread, not the HUD thread.
             active_run_id = self._controller.active_run_id if self._controller else None
-            if active_run_id is None:
+            if self._controller is None:
                 return
 
             async def invoke() -> None:
+                payload: dict[str, object] = {
+                    "session_token": self.api.session_token,
+                    "deadline": self.factories.clock() + 10,
+                }
+                if active_run_id is not None:
+                    payload["run_id"] = active_run_id
                 await self.api.call(
                     "run_cancel",
-                    {
-                        "session_token": self.api.session_token,
-                        "deadline": self.factories.clock() + 10,
-                        "run_id": active_run_id,
-                    },
+                    payload,
                 )
 
             task = loop.create_task(invoke())
@@ -834,7 +894,14 @@ class App:
         if previous is None or (
             previous.cleanup_model_id,
             previous.cleanup_enabled,
-        ) != (settings.cleanup_model_id, settings.cleanup_enabled):
+            previous.cleanup_provider,
+            previous.nvidia_cleanup_model_ids,
+        ) != (
+            settings.cleanup_model_id,
+            settings.cleanup_enabled,
+            settings.cleanup_provider,
+            settings.nvidia_cleanup_model_ids,
+        ):
             # A new cleanup choice loads now, even inside a failed-load backoff.
             self._schedule_cleanup_load(force=True)
 
@@ -1027,7 +1094,7 @@ class App:
             pass
         self.shutdown_log.append("live_tasks")
         # The controller's cleanup adapter is one of these cached engines.
-        engines = list(self._cleanup_cache.values())
+        engines = [*self._cleanup_cache.values(), *self._nvidia_cleanup_cache.values()]
         for engine in engines:
             close = getattr(engine, "aclose", None)
             if callable(close):

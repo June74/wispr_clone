@@ -37,6 +37,9 @@ class ModelService:
         health_timeout_s: float = 3.0,
         list_stt: ModelLister | None = None,
         list_cleanup: ModelLister | None = None,
+        list_nvidia_cleanup: ModelLister | None = None,
+        nvidia_cleanup_for: Callable[[tuple[str, ...]], CleanupEngine | None]
+        | None = None,
         load_cleanup: Callable[[str], Awaitable[bool]] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -51,6 +54,8 @@ class ModelService:
         self._generation = 0
         self._list_stt = list_stt
         self._list_cleanup = list_cleanup
+        self._list_nvidia_cleanup = list_nvidia_cleanup
+        self._nvidia_cleanup_for = nvidia_cleanup_for
         self._load_cleanup = load_cleanup
         self._clock = clock
         self._loading: str | None = None
@@ -61,7 +66,7 @@ class ModelService:
         models: list[ModelStatusItem] = []
         for role, model_id in (
             ("stt", settings.stt_model_id),
-            ("cleanup", settings.cleanup_model_id),
+            ("cleanup", self._cleanup_id()),
         ):
             models.append(await self._readiness(model_id, role))
         return models
@@ -80,7 +85,13 @@ class ModelService:
         result: dict[str, object] = {}
         for role, lister, current in (
             ("stt", self._list_stt, settings.stt_model_id),
-            ("cleanup", self._list_cleanup, settings.cleanup_model_id),
+            (
+                "cleanup",
+                self._list_nvidia_cleanup
+                if settings.cleanup_provider == "nvidia"
+                else self._list_cleanup,
+                self._cleanup_id(),
+            ),
         ):
             models: list[dict[str, object]] = []
             error_code: str | None = None
@@ -113,7 +124,20 @@ class ModelService:
                         "missing": error_code is None,
                     },
                 )
-            result[role] = {"models": models, "error_code": error_code}
+            entry: dict[str, object] = {"models": models, "error_code": error_code}
+            result[role] = entry
+            if role == "cleanup":
+                entry["provider"] = settings.cleanup_provider
+                if settings.cleanup_provider == "nvidia":
+                    for saved in settings.nvidia_cleanup_model_ids:
+                        if not any(model.get("model_id") == saved for model in models):
+                            models.append(
+                                {
+                                    "model_id": saved,
+                                    "display_name": saved,
+                                    "missing": error_code is None,
+                                }
+                            )
         return result
 
     async def keep_cleanup_loaded(self, *, force: bool = False) -> None:
@@ -126,6 +150,7 @@ class ModelService:
         model_id = settings.cleanup_model_id
         if (
             self._load_cleanup is None
+            or settings.cleanup_provider != "lmstudio"
             or not settings.cleanup_enabled
             or self._loading is not None
             or (not force and self._clock() < self._load_retry_at.get(model_id, 0.0))
@@ -149,11 +174,28 @@ class ModelService:
         model = self._known_model(model_id, role)
         async with self._publication_lock:
             self._generation += 1
-            settings = await self._store.update({f"{model.role}_model_id": model_id})
+            current = self._store.current()
+            if model.role == "cleanup" and current.cleanup_provider == "nvidia":
+                order = [
+                    model_id,
+                    *(
+                        item
+                        for item in current.nvidia_cleanup_model_ids
+                        if item != model_id
+                    ),
+                ]
+                patch: dict[str, object] = {"nvidia_cleanup_model_ids": order}
+            else:
+                patch = {f"{model.role}_model_id": model_id}
+            settings = await self._store.update(patch)
             models = await self.status()
             self._events.publish({"name": "models:status", "models": deepcopy(models)})
             self._last_published = deepcopy(models)
             return {"settings": settings_to_data(settings), "models": deepcopy(models)}
+
+    def invalidate(self) -> None:
+        """Prevent health results started before a settings/key edit from publishing."""
+        self._generation += 1
 
     async def poll(self) -> None:
         try:
@@ -184,7 +226,15 @@ class ModelService:
                 # The OpenRouter engine is ready exactly when an API key is saved.
                 error_code = ErrorCode.API_KEY_MISSING.value
         else:
-            cleanup_engine = self._cleanup_for(model_id)
+            settings = self._store.current()
+            cloud = settings.cleanup_provider == "nvidia"
+            cleanup_engine = (
+                self._nvidia_cleanup_for(settings.nvidia_cleanup_model_ids)
+                if cloud and self._nvidia_cleanup_for is not None
+                else None
+                if cloud
+                else self._cleanup_for(model_id)
+            )
             if cleanup_engine is None:
                 error_code = ErrorCode.CLEANUP_UNAVAILABLE.value
             else:
@@ -195,7 +245,9 @@ class ModelService:
                     ready = health is True
                     if not ready:
                         error_code = (
-                            ErrorCode.MODEL_LOADING
+                            ErrorCode.NVIDIA_API_KEY_MISSING
+                            if cloud
+                            else ErrorCode.MODEL_LOADING
                             if self._loading == model_id
                             else ErrorCode.CLEANUP_UNAVAILABLE
                         ).value
@@ -209,6 +261,14 @@ class ModelService:
             "ready": ready,
             "error_code": error_code,
         }
+
+    def _cleanup_id(self) -> str:
+        settings = self._store.current()
+        return (
+            settings.nvidia_cleanup_model_ids[0]
+            if settings.cleanup_provider == "nvidia"
+            else settings.cleanup_model_id
+        )
 
     def _known_model(self, model_id: str, role: str | None = None) -> ModelInfo:
         model = (

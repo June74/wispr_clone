@@ -27,6 +27,12 @@ _MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.API_KEY_INVALID: (
         "The OpenRouter API key was rejected. Check it in Models."
     ),
+    ErrorCode.NVIDIA_API_KEY_MISSING: (
+        "Add your NVIDIA API key in Models to enable cloud text cleanup."
+    ),
+    ErrorCode.NVIDIA_API_KEY_INVALID: (
+        "The NVIDIA API key was rejected. Check it in Models."
+    ),
     ErrorCode.MODEL_LOAD_FAILED: "A selected model could not be loaded.",
     ErrorCode.MODEL_LOADING: "Loading the model in LM Studio…",
     ErrorCode.STT_TIMEOUT: "Speech recognition took too long.",

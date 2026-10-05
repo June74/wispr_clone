@@ -1,10 +1,11 @@
 """Strict, versioned settings values and schema upgrades."""
 
+import re
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from wispr_clone import config
 from wispr_clone.contracts.common import ErrorCode, WisprError
@@ -14,7 +15,8 @@ from wispr_clone.contracts.shortcuts import (
     validate_bindings,
 )
 
-SETTINGS_SCHEMA_VERSION: int = 3
+SETTINGS_SCHEMA_VERSION: int = 4
+_NVIDIA_MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._:-]*")
 
 
 class ModelCatalog(Protocol):
@@ -37,6 +39,10 @@ class Settings(BaseModel):
     microphone_id: str | None = Field(default=None, min_length=1, max_length=256)
     stt_model_id: str = "openai/whisper-large-v3-turbo"
     cleanup_model_id: str = "meta-llama-3.1-8b-instruct"
+    cleanup_provider: Literal["lmstudio", "nvidia"] = "lmstudio"
+    nvidia_cleanup_model_ids: tuple[str, ...] = Field(
+        default=config.NVIDIA_CLEANUP_MODEL_IDS, min_length=1, max_length=12
+    )
     cleanup_enabled: bool = True
     cleanup_instructions: str = Field(default="", max_length=2000)
     theme: Literal["system", "light", "dark"] = "light"
@@ -48,6 +54,24 @@ class Settings(BaseModel):
     destination_wait_limit_seconds: int = Field(
         default=config.DESTINATION_WAIT_LIMIT_SECONDS, ge=60, le=3600
     )
+
+    @field_validator("nvidia_cleanup_model_ids", mode="before")
+    @classmethod
+    def _model_ids_from_json(cls, value: object) -> object:
+        # JSON arrays become an immutable tuple; scalar/string coercion stays off.
+        return tuple(value) if isinstance(value, list) else value
+
+    @field_validator("nvidia_cleanup_model_ids")
+    @classmethod
+    def _validate_nvidia_model_ids(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(set(value)) != len(value) or any(
+            len(model_id) > 200
+            or ".." in model_id
+            or _NVIDIA_MODEL_ID.fullmatch(model_id) is None
+            for model_id in value
+        ):
+            raise ValueError("nvidia_cleanup_model_ids")
+        return value
 
 
 UpgradeStep = Callable[[dict[str, object]], dict[str, object]]
@@ -67,7 +91,18 @@ def _upgrade_v2(data: dict[str, object]) -> dict[str, object]:
     return data
 
 
-UPGRADE_STEPS: Mapping[int, UpgradeStep] = {1: _upgrade_v1, 2: _upgrade_v2}
+def _upgrade_v3(data: dict[str, object]) -> dict[str, object]:
+    data["schema_version"] = 4
+    data.setdefault("cleanup_provider", "lmstudio")
+    data.setdefault("nvidia_cleanup_model_ids", list(config.NVIDIA_CLEANUP_MODEL_IDS))
+    return data
+
+
+UPGRADE_STEPS: Mapping[int, UpgradeStep] = {
+    1: _upgrade_v1,
+    2: _upgrade_v2,
+    3: _upgrade_v3,
+}
 
 
 def default_settings() -> Settings:

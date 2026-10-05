@@ -447,6 +447,92 @@ async def test_T_RUN_027_cancel_removes_waiting_run(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancel_current_removes_settled_waiting_delivery(tmp_path: Path) -> None:
+    async with scenario(tmp_path) as rig:
+        run_id, _ = await rig.finish(away=True)
+        rig.win.switch_foreground = False
+        await rig.controller.delivery_tick()
+        assert rig.controller.active_run_id is None
+        assert (await rig.history.get(run_id)).status == RunStatus.AWAITING_DESTINATION
+        assert await rig.controller.cancel_current() == run_id
+        assert rig.controller.waiting_run_ids == ()
+        assert (await rig.history.get(run_id)).status == RunStatus.CANCELLED
+        rig.win.foreground = 10
+        await rig.controller.delivery_tick()
+        assert rig.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_cancel_current_resolves_settled_cleanup_choice(tmp_path: Path) -> None:
+    cleanup = FakeCleanupEngine(
+        ThirdPartyError("test", "clean", "timeout", ErrorCode.CLEANUP_TIMEOUT)
+    )
+    async with scenario(tmp_path, cleanup=cleanup, enabled=True) as rig:
+        run_id, record = await rig.finish()
+        assert record.status == RunStatus.AWAITING_CLEANUP_CHOICE
+        assert rig.controller.active_run_id is None
+        assert await rig.controller.cancel_current() == run_id
+        assert (await rig.history.get(run_id)).status == RunStatus.CANCELLED
+        assert rig.sends() == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_cancel_does_not_cancel_a_run_started_during_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with scenario(tmp_path) as rig:
+        pending_id, _ = await rig.finish(away=True)
+        rig.clock.advance(1)
+        rig.win.foreground = 10
+        finished_id, done = await rig.finish()
+        assert done.status == RunStatus.DONE
+        original_get = rig.history.get
+        newly_started: list[str] = []
+
+        async def start_during_lookup(run_id: str) -> RunRecord:
+            if run_id == finished_id and not newly_started:
+                newly_started.append(
+                    await rig.controller.start(start_request_id="new-during-cancel")
+                )
+            return await original_get(run_id)
+
+        monkeypatch.setattr(rig.history, "get", start_during_lookup)
+        assert await rig.controller.cancel_current() == pending_id
+        assert (await rig.history.get(pending_id)).status == RunStatus.CANCELLED
+        assert rig.controller.active_run_id == newly_started[0]
+        assert (await rig.history.get(newly_started[0])).status == RunStatus.RECORDING
+        await rig.controller.cancel(newly_started[0])
+        assert (
+            await rig.controller.settled(newly_started[0])
+        ).status == RunStatus.CANCELLED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["nvidia", "lmstudio"])
+async def test_hosted_cleanup_timeout_uses_original_without_blocking_dictation(
+    tmp_path: Path, provider: str
+) -> None:
+    cleanup = FakeCleanupEngine(
+        ThirdPartyError("test", "clean", "timeout", ErrorCode.CLEANUP_TIMEOUT)
+    )
+    async with scenario(tmp_path, cleanup=cleanup, enabled=True) as rig:
+        rig.config["cleanup_provider"] = provider
+        rig.inserted[0] = RAW
+        run_id, record = await rig.finish()
+        assert record.cleanup_reason == "cleanup_timeout"
+        if provider == "nvidia":
+            assert record.status == RunStatus.DONE
+            assert record.output_selection == "original"
+            assert record.cleaned_text is None
+            assert rig.sends() == 1
+            assert len(await rig.history.attempts(run_id)) == 1
+        else:
+            assert record.status == RunStatus.AWAITING_CLEANUP_CHOICE
+            assert record.output_selection is None
+            assert rig.sends() == 0
+
+
+@pytest.mark.asyncio
 async def test_T_RUN_028_closed_while_waiting_becomes_held(tmp_path: Path) -> None:
     async with scenario(tmp_path) as rig:
         run_id, _ = await rig.finish(away=True)

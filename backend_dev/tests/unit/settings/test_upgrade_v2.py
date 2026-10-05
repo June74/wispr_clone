@@ -1,4 +1,4 @@
-"""Schema v3 removes the obsolete local-only preference without resetting settings."""
+"""Versioned upgrades preserve settings through obsolete local-only removal."""
 
 import json
 from pathlib import Path
@@ -21,7 +21,7 @@ WHISPER = "openai/whisper-large-v3-turbo"
 @pytest.mark.unit
 def test_T_SET_021_defaults_and_registry() -> None:
     settings = default_settings()
-    assert SETTINGS_SCHEMA_VERSION == 3
+    assert SETTINGS_SCHEMA_VERSION == 4
     assert settings.stt_model_id == WHISPER
     assert "local_only" not in settings.model_dump()
     stt, cleanup = default_registry().list_models()
@@ -46,7 +46,7 @@ def test_T_SET_021_v1_upgrade_preserves_other_preferences() -> None:
         "cleanup_instructions": "Keep medical terms",
     }
     upgraded = parse_settings(old, default_registry())
-    assert (upgraded.schema_version, upgraded.stt_model_id) == (3, WHISPER)
+    assert (upgraded.schema_version, upgraded.stt_model_id) == (4, WHISPER)
     assert "local_only" not in upgraded.model_dump()
     assert (upgraded.recording_mode, upgraded.theme, upgraded.cleanup_instructions) == (
         "hold",
@@ -69,7 +69,7 @@ def test_T_SET_023_v2_upgrade_removes_local_only(old_value: bool) -> None:
         "microphone_id": "2",
     }
     parsed = parse_settings(old, default_registry())
-    assert parsed.schema_version == 3
+    assert parsed.schema_version == 4
     assert "local_only" not in parsed.model_dump()
     assert (parsed.recording_mode, parsed.theme, parsed.cleanup_instructions) == (
         "hold",
@@ -79,7 +79,7 @@ def test_T_SET_023_v2_upgrade_removes_local_only(old_value: bool) -> None:
     assert parsed.microphone_id == "2"
     assert old["schema_version"] == 2 and old["local_only"] is old_value
     defaults = default_settings().model_dump()
-    assert defaults["schema_version"] == 3 and "local_only" not in defaults
+    assert defaults["schema_version"] == 4 and "local_only" not in defaults
 
 
 @pytest.mark.unit
@@ -101,7 +101,7 @@ async def test_T_SET_022_real_v1_row_upgrade(tmp_path: Path) -> None:
         )
         store = SettingsStore(db, default_registry())
         upgraded = await store.load()
-        assert (upgraded.schema_version, upgraded.stt_model_id) == (3, WHISPER)
+        assert (upgraded.schema_version, upgraded.stt_model_id) == (4, WHISPER)
         assert (
             upgraded.recording_mode,
             upgraded.theme,
@@ -142,7 +142,7 @@ async def test_T_SET_024_real_v2_row_and_patch_rejection(
         )
         store = SettingsStore(db, default_registry())
         loaded = await store.load()
-        assert loaded.schema_version == 3
+        assert loaded.schema_version == 4
         assert "local_only" not in loaded.model_dump()
         assert (loaded.recording_mode, loaded.theme, loaded.microphone_id) == (
             "hold",

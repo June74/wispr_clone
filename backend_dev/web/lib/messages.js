@@ -17,6 +17,8 @@ export const messages = Object.freeze({
   stt_unavailable: 'Speech recognition is unavailable.',
   api_key_missing: 'Add your OpenRouter API key in Models to enable dictation.',
   api_key_invalid: 'The OpenRouter API key was rejected. Check it in Models.',
+  nvidia_api_key_missing: 'Add your NVIDIA API key in Models to enable cloud text cleanup.',
+  nvidia_api_key_invalid: 'The NVIDIA API key was rejected. Check it in Models.',
   model_load_failed: 'A selected model could not be loaded.',
   model_loading: 'Loading the model in LM Studio…',
   stt_timeout: 'Speech recognition took too long.',
